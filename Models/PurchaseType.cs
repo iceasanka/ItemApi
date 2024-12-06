@@ -1,0 +1,11 @@
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace ItemApi.Models
+{
+    public class PurchaseType
+    {
+        [Key]
+        public string TypeId { get; set; }
+        public string TypeName { get; set; }
+    }
+}

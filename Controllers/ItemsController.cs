@@ -1,11 +1,8 @@
-using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 using ItemApi.Data;
 using ItemApi.Models;
 using ItemApi.Repositories;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace ItemApi.Controllers
 {
@@ -39,11 +36,11 @@ namespace ItemApi.Controllers
         }
 
         [HttpGet("GetItemWithDetailsByRefCode")]
-        public async Task<ActionResult<ItemWithDetails>> GetItemWithDetailsByBarcodeAsync(string barcode)
+        public async Task<ActionResult<ItemWithDetails>> GetItemWithDetailsByRefCodeAsync(string barcode)
         {
             try
             {
-                var item = await _itemRepository.GetItemWithDetailsByBarcodeAsync(barcode);
+                var item = await _itemRepository.GetItemWithDetailsByRefCodeAsync(barcode);
                 return Ok(item);
             }
             catch (Exception ex)
@@ -65,7 +62,7 @@ namespace ItemApi.Controllers
             {
 
                 var items = await _context.Items
-                .Where(i => i.Descrip.Contains(query))
+                .Where(i => i.Descrip.Contains(query) || i.Ref_Code.Contains(query))
                 .Select(i => new { i.Item_Code, i.Descrip })
                 .Take(50) // limit to 10 results
                 .ToListAsync();

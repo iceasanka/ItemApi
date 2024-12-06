@@ -1,17 +1,9 @@
-using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 using ItemApi.Data;
 using ItemApi.Models;
 using ItemApi.Repositories;
 using ItemApi.Service;
-using Azure.Core;
-using Microsoft.Extensions.Hosting;
-using static System.Runtime.InteropServices.JavaScript.JSType;
-using System.Data;
-using System.Xml.Linq;
+using Microsoft.AspNetCore.Mvc;
+using Serilog;
 
 namespace ItemApi.Controllers
 {
@@ -38,17 +30,33 @@ namespace ItemApi.Controllers
         [HttpGet]
         public async Task<ActionResult<List<ReturnItem>>> GetAllItems()
         {
-            return Ok(await _repository.GetAllItemsAsync());
+            try
+            {
+                return Ok(await _repository.GetAllItemsAsync());
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
         }
 
         [HttpGet("{itemCode}")]
         public async Task<ActionResult<ReturnItem>> GetItemByCode(string itemCode)
         {
-            var item = await _repository.GetItemByCodeAsync(itemCode);
-            if (item == null)
-                return NotFound();
+            try
+            {
+                var item = await _repository.GetItemByCodeAsync(itemCode);
+                if (item == null)
+                    return NotFound();
 
-            return Ok(item);
+                return Ok(item);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
         }
 
         [HttpGet("GetItemsBySuppCode")]//Use
@@ -65,7 +73,7 @@ namespace ItemApi.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error GetItemsBySuppCode: {ex.Message}");
+                Log.Error($"Error: {ex}");
                 return NotFound(ex.Message);
             }
         }
@@ -73,15 +81,31 @@ namespace ItemApi.Controllers
         [HttpPost("AddReturnItem")]//use
         public async Task<ActionResult> AddItem(ReturnItem returnItem)
         {
-            await _repository.AddItemAsync(returnItem);
-            return CreatedAtAction(nameof(GetItemByCode), new { itemCode = returnItem.Item_Code }, returnItem);
+            try
+            {
+                await _repository.AddItemAsync(returnItem);
+                return CreatedAtAction(nameof(GetItemByCode), new { itemCode = returnItem.Item_Code }, returnItem);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
         }
 
         [HttpPut("{id}")]//use
         public async Task<ActionResult> UpdateItemById(int id, ReturnItem updatedItem)
         {
-            await _repository.UpdateItemAsync(id, updatedItem);
-            return NoContent();
+            try
+            {
+                await _repository.UpdateItemAsync(id, updatedItem);
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
         }
 
         [HttpPost("process")]//use
@@ -199,14 +223,15 @@ namespace ItemApi.Controllers
                     await _repository.UpdateItemStatusAsync(item.Id, 3); // Example: Set status to 3 (processed)
                 }
 
-                
+
                 printerService.PrintProcessedData(returnItems);
 
                 return Ok(new { message = "Items processed successfully.", print = true });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error processing items: {ex.Message}");
+                Log.Error($"Error: {ex}");
+
                 return StatusCode(500, "An error occurred while processing items.");
             }
         }
@@ -223,8 +248,7 @@ namespace ItemApi.Controllers
             catch (Exception ex)
             {
 
-                // Log the error
-                Console.WriteLine($"Error print items: {ex.Message}");
+                Log.Error($"Error: {ex}");
                 return StatusCode(500, "An error occurred while print items.");
             }
         }
@@ -232,8 +256,47 @@ namespace ItemApi.Controllers
         [HttpDelete("{id}")]//use
         public async Task<ActionResult> DeleteItem(int id)
         {
-            await _repository.DeleteItemAsync(id);
-            return NoContent();
+            try
+            {
+                await _repository.DeleteItemAsync(id);
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw;
+
+
+            }
+        }
+
+        [HttpGet("search")]
+        public async Task<ActionResult<List<ReturnItem>>> SearchItems(string description, string suppCode)
+        {
+            try
+            {
+                return Ok(await _repository.SearchItemsAsync(description, suppCode));
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw;
+
+            }
+        }
+
+        [HttpGet("groupBySuppCode")]
+        public async Task<ActionResult<List<IGrouping<string, ReturnItem>>>> GroupBySuppCode()
+        {
+            try
+            {
+                return Ok(await _repository.GroupBySuppCodeAsync());
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw;
+            }
         }
 
         /* public async Task UpdateItemStatusAsync(int id, int newStatus)
@@ -242,19 +305,6 @@ namespace ItemApi.Controllers
             // return NoContent();
          }*/
 
-
-
-        [HttpGet("search")]
-        public async Task<ActionResult<List<ReturnItem>>> SearchItems(string description, string suppCode)
-        {
-            return Ok(await _repository.SearchItemsAsync(description, suppCode));
-        }
-
-        [HttpGet("groupBySuppCode")]
-        public async Task<ActionResult<List<IGrouping<string, ReturnItem>>>> GroupBySuppCode()
-        {
-            return Ok(await _repository.GroupBySuppCodeAsync());
-        }
 
     }
 }

@@ -1,6 +1,7 @@
 ﻿using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.AspNetCore.Mvc;
+using Serilog;
 
 namespace ItemApi.Controllers
 {
@@ -25,6 +26,8 @@ namespace ItemApi.Controllers
             }
             catch (Exception ex)
             {
+                Log.Error($"Error: {ex}");
+
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
@@ -42,6 +45,7 @@ namespace ItemApi.Controllers
             }
             catch (Exception ex)
             {
+                Log.Error($"Error: {ex}");
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }

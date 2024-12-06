@@ -22,6 +22,10 @@ namespace ItemApi.Repositories
         public async Task<ItemWithDetails> GetItemWithDetailsByBarcodeAsync(string barcode)
         {
             return await _context.GetItemWithDetailsByBarcodeAsync(barcode);
+        } 
+        public async Task<ItemWithDetails> GetItemWithDetailsByRefCodeAsync(string barcode)
+        {
+            return await _context.GetItemWithDetailsByRefCodeAsync(barcode);
         }
 
         public async Task<List<PriceLink>> GetPriceLink(string itemCode)

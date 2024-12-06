@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ItemApi.Models;
+using Serilog;
 
 namespace ItemApi.Data
 {
@@ -20,7 +21,10 @@ namespace ItemApi.Data
 
         public async Task<StockCountResult> GetStockByItemcodeAsync(string itemcode)
         {
-            var query = @"
+            try
+            {
+
+                var query = @"
             SELECT Isnull(Cast(Sum(CASE [id]
                          WHEN 'OPB' THEN ( packsize * qty )
                          WHEN 'PCH' THEN ( packsize * qty )
@@ -42,18 +46,32 @@ namespace ItemApi.Data
                    AND status = 1
                    AND tb_stock.itemcode = {0}";
 
-            return await dbStocks.FromSqlRaw(query, itemcode).FirstOrDefaultAsync();
+                return await dbStocks.FromSqlRaw(query, itemcode).FirstOrDefaultAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw;
+            }
         }
 
         public async Task<int> GetOpbByLocaCodeAsync(string locaCode)
         {
-            string sql = @"
+            try
+            {
+                string sql = @"
                 SELECT OPB
                 FROM tb_System
                 WHERE LocaCode = {0}";
 
-            var result = await this.Database.SqlQueryRaw<int>(sql, locaCode).ToListAsync();
-            return result.FirstOrDefault();
+                var result = await this.Database.SqlQueryRaw<int>(sql, locaCode).ToListAsync();
+                return result.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw ;
+            }
 
         }
 
@@ -68,9 +86,8 @@ namespace ItemApi.Data
             }
             catch (Exception ex)
             {
-                // Log the exception if necessary
-                Console.WriteLine($"Error committing stock adjustment: {ex.Message}");
-                throw; // Rethrow the exception if you want to propagate it
+                Log.Error($"Error: {ex}");
+                throw ;
             }
         }
 
@@ -86,9 +103,8 @@ namespace ItemApi.Data
             }
             catch (Exception ex)
             {
-                // Log the exception if necessary
-                Console.WriteLine($"Error committing stock adjustment: {ex.Message}");
-                throw; // Rethrow the exception if you want to propagate it
+                Log.Error($"Error: {ex}");
+                throw ;
             }
         }
 
@@ -103,9 +119,8 @@ namespace ItemApi.Data
             }
             catch (Exception ex)
             {
-                // Log the exception if necessary
-                Console.WriteLine($"Error committing stock adjustment: {ex.Message}");
-                throw; // Rethrow the exception if you want to propagate it
+                Log.Error($"Error: {ex}");
+                throw;
             }
         }
     }

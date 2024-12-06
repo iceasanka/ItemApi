@@ -1,6 +1,6 @@
-using Microsoft.EntityFrameworkCore;
 using ItemApi.Models;
-using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 namespace ItemApi.Data
 {
@@ -28,45 +28,78 @@ namespace ItemApi.Data
 
         public async Task<int> GetPRNOByLocaCodeAsync(string locaCode)
         {
-            string sql = @"
+            try
+            {
+                string sql = @"
                 SELECT PRNO
                 FROM tb_System
                 WHERE LocaCode = {0}";
 
-            var result = await this.Database.SqlQueryRaw<int>(sql, locaCode).ToListAsync();
-            return result.FirstOrDefault();
+                var result = await this.Database.SqlQueryRaw<int>(sql, locaCode).ToListAsync();
+                return result.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw ;
+            }
 
         }
 
         public async Task<List<ReturnMode>> GetReturnModesAsync()
         {
-            string sql = @"
+            try
+            {
+                string sql = @"
         SELECT TypeId, TypeName
         FROM tb_ReturnMode";
 
-            var result = await this.Database.SqlQueryRaw<ReturnMode>(sql).ToListAsync();
-            return result;
+                var result = await this.Database.SqlQueryRaw<ReturnMode>(sql).ToListAsync();
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw;
+            }
         }
 
         public async Task<List<PurchaseType>> GetPurchaseTypesAsync()
         {
-            string sql = @"
+            try
+            {
+                string sql = @"
         SELECT TypeId, TypeName
         FROM tb_PurchaseType";
 
-            var result = await this.Database.SqlQueryRaw<PurchaseType>(sql).ToListAsync();
-            return result;
+                var result = await this.Database.SqlQueryRaw<PurchaseType>(sql).ToListAsync();
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
         }
 
         public async Task<Supplier> GetSupplierByCodeAsync(string suppCode)
         {
-            string sql = @"
+            try
+            {
+
+                string sql = @"
         SELECT Supp_Code, Supp_Name
         FROM dbo.TB_SUPPLIER
         WHERE Supp_Code = {0}";
 
-            var result = await this.Database.SqlQueryRaw<Supplier>(sql, suppCode).ToListAsync();
-            return result.FirstOrDefault();
+                var result = await this.Database.SqlQueryRaw<Supplier>(sql, suppCode).ToListAsync();
+                return result.FirstOrDefault();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw ;
+            }
         }
 
         public async Task UpdateReturnItemToTempPurchaseAsync(ReturnUpdateRequest request)
@@ -134,14 +167,17 @@ namespace ItemApi.Data
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error committing stock adjustment: {ex.Message}");
-                throw; 
+                Log.Error($"Error: {ex.Message}");
+                throw ;
             }
         }
 
         public async Task CommitReturnToPurchaseAsync(CommitReturnItems request)
         {
-            var sql = @"
+            try
+            {
+
+                var sql = @"
         EXEC [dbo].[sp_UPDATE_PURCHASE_RTN] 
             @SerialNo = {0}, 
             @RefNo = {1}, 
@@ -164,32 +200,41 @@ namespace ItemApi.Data
             @Nbt = {18}, 
             @Disc = {19}";
 
-            await this.Database.ExecuteSqlRawAsync(sql,
-                request.SerialNo,
-                request.RefNo,
-                request.PNDate,
-                request.SuppCode,
-                request.SuppName,
-                request.PODNo,
-                request.PType,
-                request.PMode,
-                request.GrossAmount,
-                request.TotDiscount,
-                request.SubTotDiscount,
-                request.Tax,
-                request.Advance,
-                request.NetAmount,
-                request.UserName,
-                request.LocaCode,
-                request.Status,
-                request.IsExp,
-                request.Nbt,
-                request.Disc);
+                await this.Database.ExecuteSqlRawAsync(sql,
+                    request.SerialNo,
+                    request.RefNo,
+                    request.PNDate,
+                    request.SuppCode,
+                    request.SuppName,
+                    request.PODNo,
+                    request.PType,
+                    request.PMode,
+                    request.GrossAmount,
+                    request.TotDiscount,
+                    request.SubTotDiscount,
+                    request.Tax,
+                    request.Advance,
+                    request.NetAmount,
+                    request.UserName,
+                    request.LocaCode,
+                    request.Status,
+                    request.IsExp,
+                    request.Nbt,
+                    request.Disc);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw ;
+            }
         }
 
         public async Task DeleteTempPurchaseAsync(DeleteTempPurchaseRequest request)
         {
-            var sql = @"
+            try
+            {
+
+                var sql = @"
 EXEC [dbo].[Sp_DELETE_TEMP_PURCHASE]
     @SerialNo = {0}, 
     @ID = {1}, 
@@ -200,15 +245,21 @@ EXEC [dbo].[Sp_DELETE_TEMP_PURCHASE]
     @IdNo = {6}, 
     @CancelAll = {7}";
 
-            await this.Database.ExecuteSqlRawAsync(sql,
-                request.SerialNo,
-                request.ID,
-                request.LocaCode,
-                request.UserName,
-                request.ItemCode,
-                request.Cost,
-                request.IdNo,
-                request.CancelAll);
+                await this.Database.ExecuteSqlRawAsync(sql,
+                    request.SerialNo,
+                    request.ID,
+                    request.LocaCode,
+                    request.UserName,
+                    request.ItemCode,
+                    request.Cost,
+                    request.IdNo,
+                    request.CancelAll);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw ;
+            }
         }
 
 

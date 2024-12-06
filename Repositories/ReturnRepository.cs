@@ -1,8 +1,6 @@
 using ItemApi.Data;
 using ItemApi.Models;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using System.Threading.Tasks;
 namespace ItemApi.Repositories
 {
 

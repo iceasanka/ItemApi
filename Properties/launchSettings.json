@@ -23,10 +23,10 @@
       "launchBrowser": true,
       "launchUrl": "swagger",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Production"
       },
       "dotnetRunMessages": true,
-      "applicationUrl": "http://192.168.1.5:5000;"
+      "applicationUrl": "http://192.168.132.21:5000;"
     }
   },
   "iisSettings": {

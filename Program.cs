@@ -14,6 +14,7 @@ using ItemApi.Interface;
 
 var builder = WebApplication.CreateBuilder(args);
 
+
 // Configure Serilog
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)

@@ -27,12 +27,26 @@ namespace ItemApi.Controllers
             printerService = new PrinterService();
         }
 
-        [HttpGet]
+        [HttpGet("GetAllItems")]
         public async Task<ActionResult<List<ReturnItem>>> GetAllItems()
         {
             try
             {
                 return Ok(await _repository.GetAllItemsAsync());
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
+        }
+
+        [HttpGet("GetAllItemsWithSuppliers")]
+        public async Task<ActionResult<List<ReturnItem>>> GetAllItemsWithSuppliers()
+        {
+            try
+            {
+                return Ok(await _repository.GetAllItemsWithSuppliersAsync());
             }
             catch (Exception ex)
             {
@@ -94,7 +108,7 @@ namespace ItemApi.Controllers
         }
 
         [HttpPut("{id}")]//use
-        public async Task<ActionResult> UpdateItemById(int id, ReturnItem updatedItem)
+        public async Task<ActionResult> UpdateItemById(int id, [FromBody] ReturnItem updatedItem)
         {
             try
             {
@@ -178,7 +192,7 @@ namespace ItemApi.Controllers
                     {
                         SerialNo = _serialNo,
                         RefNo = "ice123",
-                        PNDate = DateTime.Parse("2024-11-25T00:00:00"),
+                        PNDate = DateTime.Now.ToString("yyyy-MM-dd 00:00:00:000"),
                         SuppCode = supplier.Supp_Code, //"OTHR",
                         SuppName = supplier.Supp_Name,//"OTHER",
                         PODNo = "",

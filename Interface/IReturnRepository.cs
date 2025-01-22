@@ -6,6 +6,8 @@ namespace ItemApi.Repositories
     public interface IReturnRepository
     {
         Task<List<ReturnItem>> GetAllItemsAsync();
+
+        Task<List<ReturnItem>> GetAllItemsWithSuppliersAsync();
         Task<ReturnItem> GetItemByCodeAsync(string itemCode);
         Task<List<ReturnItem>> GetItemsBySuppCodeAsync(string suppCode);
         Task<List<ReturnItem>> SearchItemsAsync(string description, string suppCode);

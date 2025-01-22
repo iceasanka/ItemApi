@@ -14,6 +14,9 @@ namespace ItemApi.Models
         public string Barcode { get; set; }
         public string Descrip { get; set; }
         public string Supp_Code { get; set; }
+
+        [NotMapped]
+        public string? Supp_Name { get; set; }
         public int? Status { get; set; }
         public string StatusText {
             get
@@ -22,7 +25,7 @@ namespace ItemApi.Models
                 {
                     1 => "Added",
                     2 => "Returned",
-                    3 => "PRNDone",
+                    3 => "PRN-Done",
                     _ => "Unknown" // Default case for null or other values
                 };
             }

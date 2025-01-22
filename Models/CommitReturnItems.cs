@@ -4,7 +4,7 @@
     {
         public string SerialNo { get; set; }
         public string RefNo { get; set; }
-        public DateTime PNDate { get; set; }
+        public string PNDate { get; set; }
         public string SuppCode { get; set; }
         public string SuppName { get; set; }
         public string PODNo { get; set; }

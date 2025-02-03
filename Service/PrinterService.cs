@@ -100,7 +100,8 @@ namespace ItemApi.Service
             // Print event handler
             printDocument.PrintPage += (sender, e) =>
             {
-                e.Graphics.DrawString(printContent, new Font("Courier New", 10, FontStyle.Regular), Brushes.Black, new PointF(0, 0));
+                //e.Graphics.DrawString(printText, new Font("Courier New", 10, FontStyle.Bold), Brushes.Black, new PointF(0, 0));
+                e.Graphics.DrawString(printContent, new Font("Courier New", 10, FontStyle.Bold), Brushes.Black, new PointF(0, 0));
             };
 
             // Print the document

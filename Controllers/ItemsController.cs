@@ -91,5 +91,36 @@ namespace ItemApi.Controllers
 
         }
 
+
+        [HttpPost("AddPriceLink")]
+        public async Task<IActionResult> AddPriceLink([FromBody] PriceLinkUpdateDTO dto)
+        {
+            if (dto == null || string.IsNullOrEmpty(dto.ItemCode))
+            {
+                return BadRequest("Invalid request data.");
+            }
+
+            try
+            {
+                int rowsAffected = await _itemRepository.UpdatePriceLink(dto);
+
+                if (rowsAffected > 0)
+                    return Ok(new { message = "Price Link updated successfully." });
+
+                return NotFound(new { message = "No record updated." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        [HttpDelete("{itemCode}")]
+        public IActionResult DeletePriceLink(string itemCode)
+        {
+            return Ok(new { message = "OK" });
+        }
+
+
     }
 }

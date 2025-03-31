@@ -124,7 +124,7 @@ namespace ItemApi.Service
             string content = "";
 
             // Cash Breakdown Section
-            content += "========== CASH BREAKDOWN ==========\n";
+            content += "========== TOTAL CASH ==========\n";
             content += $"{"Cash",-10}{"Qty",-10}{"Amount",-15}\n";
             content += "------------------------------------------\n";
 
@@ -141,8 +141,10 @@ namespace ItemApi.Service
             content += $"Total: {cashTotal}\n\n";
 
             // Credit Table Section
-            content += "========== CREDIT TABLE ==========\n";
-            content += $"{"Credit Description",-20}{"Amount",-15}\n";
+            content += "========== CASH IN ==========\n";
+            content += $"\n";
+            content += $"\n";
+            content += $"{"Description",-20}{"Amount",-15}\n";
             content += "------------------------------------------\n";
             foreach (var row in creditData)
             {
@@ -155,8 +157,10 @@ namespace ItemApi.Service
             content += $"Total Credit: {creditTotal}\n\n";
 
             // Debit Table Section
-            content += "========== DEBIT TABLE ==========\n";
-            content += $"{"Debit Description",-20}{"Amount",-15}\n";
+            content += "========== CASH OUT ==========\n";
+            content += $"\n";
+            content += $"\n";
+            content += $"{"Description",-20}{"Amount",-15}\n";
             content += "------------------------------------------\n";
             foreach (var row in debitData)
             {
@@ -170,8 +174,18 @@ namespace ItemApi.Service
 
             // Final Cash Balance
             decimal totalCashBalance = cashTotal + creditTotal - debitTotal;
-            content += $"========== TOTAL CASH BALANCE ==========\n";
-            content += $"Total Cash Balance: {totalCashBalance}\n";
+            content += $"\n";
+            content += $"\n";
+            content += $"==========CASH BALANCE ==========\n";
+            content += $"\n";
+            content += $"\n";
+            content += $"Cash Balance: {totalCashBalance}\n";
+            content += $"\n";
+            content += $"\n";
+            content += $"Date: {DateTime.Today.ToString()}\n";
+            content += $"                                 \n";
+            content += $"                                 \n";
+            content += $"                                 \n";
 
             return content;
         }

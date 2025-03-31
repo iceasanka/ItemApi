@@ -144,5 +144,46 @@ namespace ItemApi.Data
                 throw ex;
             }
         }
+
+        public async Task<int> UpdatePriceLink(PriceLinkUpdateDTO dto)
+        {
+            string sql = @"
+        EXEC [dbo].[Sp_UpdatePriceLink] 
+            @ITEMCODE = @p0, 
+            @ITEMDESCRIP = @p1, 
+            @LOCA = @p2, 
+            @USERNAME = @p3, 
+            @STATUS = @p4, 
+            @PRICE = @p5, 
+            @COSTPRICE = @p6, 
+            @PACKSIZE = @p7, 
+            @EWHOLEPRICE = @p8, 
+            @PRETPRICE = @p9, 
+            @PWHOLEPRICE = @p10, 
+            @ISUPDATEALLLOCATION = @p11";
+
+            try
+            {
+                return await this.Database.ExecuteSqlRawAsync(sql,
+                    dto.ItemCode,
+                    dto.ItemDescrip,
+                    dto.Loca,
+                    dto.UserName,
+                    dto.Status,
+                    dto.Price,
+                    dto.CostPrice,
+                    dto.PackSize,
+                    dto.EWholePrice,
+                    dto.PRetPrice,
+                    dto.PWholePrice,
+                    dto.IsUpdateAllLocation);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error updating PriceLink: {ex.Message}");
+                throw;
+            }
+        }
+
     }
 }

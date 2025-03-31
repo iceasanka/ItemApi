@@ -11,5 +11,8 @@ namespace ItemApi.Repositories
         Task<ItemWithDetails> GetItemWithDetailsByRefCodeAsync(string barcode);
 
         Task<List<PriceLink>> GetPriceLink(string itemCode);
+
+         Task<int> UpdatePriceLink(PriceLinkUpdateDTO dto);
+       
     }
 }

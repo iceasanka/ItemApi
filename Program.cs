@@ -11,6 +11,8 @@ using Serilog;
 using ItemApi.Utility;
 using Microsoft.Extensions.Configuration;
 using ItemApi.Interface;
+using ItemApi.Controllers;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,6 +42,10 @@ builder.Services.AddDbContext<ReturnContext>(options =>
 builder.Services.AddDbContext<SupplierContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddDbContext<PosStockContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection")));
+
+builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSettings"));
 
 
 
@@ -47,19 +53,12 @@ builder.Services.AddScoped<IItemRepository, ItemRepository>();
 builder.Services.AddScoped<IStockRepository, StockRepository>();
 builder.Services.AddScoped<IReturnRepository, ReturnRepository>();
 builder.Services.AddScoped<ISupplierRepository, SupplierRepository>();
-
-
-// Register the service
 builder.Services.AddScoped<StockService>();
+
+builder.Services.AddScoped<IPosStockRepository, PosStockRepository>();
 
 // Register the service
 builder.Services.AddControllers();
-
-
-    
-
-
-
 
 
 builder.Services.AddCors(options =>

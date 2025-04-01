@@ -12,10 +12,13 @@ namespace ItemApi.Controllers
         private readonly PosStockContext _context;
         private readonly IPosStockRepository _repository;
 
-        public PosStockController(PosStockContext context, IPosStockRepository repository)
+        private readonly IPosCountedStockRepository _posCountedRepository;
+
+        public PosStockController(PosStockContext context, IPosStockRepository repository, IPosCountedStockRepository posCountedRepository)
         {
             _context = context;
             _repository = repository;
+            _posCountedRepository = posCountedRepository;
         }
 
         [HttpGet("GetPosStock")]
@@ -23,8 +26,15 @@ namespace ItemApi.Controllers
         {
             try
             {
-                var posStocks = await _repository.GetSumQtyAsync(itemCode);
-                return Ok(posStocks);
+                double toBeUpdateStock = 0;
+
+                double countedStocks = await _posCountedRepository.GetSumQtyAsync(itemCode);
+
+                decimal posStocks = await _repository.GetSumQtyAsync(itemCode);
+
+                toBeUpdateStock = (double)posStocks - countedStocks;
+
+                return Ok(toBeUpdateStock);
             }
             catch (Exception ex)
             {

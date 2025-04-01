@@ -6,8 +6,10 @@ namespace ItemApi.Models
     public class StockUpdateRequest
     {
 
-    public string Id { get; set; }
-    public decimal Stock { get; set; }
-    public ItemWithDetails Item { get; set; }
+        public string Id { get; set; }
+        public decimal Stock { get; set; }
+        public ItemWithDetails Item { get; set; }
+
+        public double CountedStock { get; set; }
     }
 }

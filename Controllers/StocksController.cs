@@ -1,4 +1,5 @@
 using ItemApi.Data;
+using ItemApi.Interface;
 using ItemApi.Models;
 using ItemApi.Repositories;
 using ItemApi.Service;
@@ -16,10 +17,13 @@ namespace ItemApi.Controllers
 
         private readonly StockService _stockService;
 
-        public StocksController(StockContext context, IStockRepository stockRepository, StockService stockService)
+        private readonly IPosCountedStockRepository _posCountedStockRepository;
+
+        public StocksController(StockContext context, IStockRepository stockRepository, StockService stockService, IPosCountedStockRepository posCountedStockRepository)
         {
             _context = context;
             _stockRepository = stockRepository;
+            _posCountedStockRepository = posCountedStockRepository;
 
             _stockService = stockService;
         }
@@ -125,6 +129,18 @@ namespace ItemApi.Controllers
 
                     // Commit the stock adjustment
                     await _stockRepository.CommitStockAdjustmentAsync(commitStockAdjustmentParams);
+
+                    if (request.CountedStock > 0)
+                    {
+                        PosCountedStock// Add the stock to the counted stock
+                            posCountedStock = new PosCountedStock
+                            {
+                                ItemCode = request.Item.Item_Code,
+                                Qty = request.CountedStock
+                            };
+
+                        await _posCountedStockRepository.AddPosCountedStock(posCountedStock);
+                    }
 
                     return Ok();
 

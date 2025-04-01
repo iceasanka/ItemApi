@@ -42,6 +42,9 @@ builder.Services.AddDbContext<ReturnContext>(options =>
 builder.Services.AddDbContext<SupplierContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddDbContext<PosCountedStockContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 builder.Services.AddDbContext<PosStockContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection")));
 
@@ -56,6 +59,7 @@ builder.Services.AddScoped<ISupplierRepository, SupplierRepository>();
 builder.Services.AddScoped<StockService>();
 
 builder.Services.AddScoped<IPosStockRepository, PosStockRepository>();
+builder.Services.AddScoped<IPosCountedStockRepository, PosCountedStockRepository>();
 
 // Register the service
 builder.Services.AddControllers();

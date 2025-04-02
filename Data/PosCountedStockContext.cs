@@ -63,20 +63,37 @@ namespace ItemApi.Data
         //implement delete method
         public async Task DeletePosCountedStock(string itemCode)
         {
-            var existing = await PosCountedStock.FirstOrDefaultAsync(p => p.ItemCode == itemCode);
-
-            if (existing != null)
+            try
             {
-                PosCountedStock.Remove(existing);
+                var existing = await PosCountedStock.FirstOrDefaultAsync(p => p.ItemCode == itemCode);
+
+                if (existing != null)
+                {
+                    PosCountedStock.Remove(existing);
+                }
+                await SaveChangesAsync();
             }
-            await SaveChangesAsync();
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw ex;
+            }
         }
 
         //implement delete all the table data in the database table
         public async Task DeleteAllPosCountedStock()
         {
-            PosCountedStock.RemoveRange(PosCountedStock);
-            await SaveChangesAsync();
+            try
+            {
+                //generate try catch block here
+                PosCountedStock.RemoveRange(PosCountedStock);
+                await SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw ex;
+            }
         }
 
 

@@ -1,5 +1,6 @@
 ﻿using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 namespace ItemApi.Data
 {
@@ -18,8 +19,16 @@ namespace ItemApi.Data
 
         internal async Task<decimal> GetSumQtyAsync(string itemCode)
         {
-            decimal sumQty = (decimal)await PosStock.Where(stock => stock.ItemCode == itemCode).SumAsync(stock => stock.Qty);
-            return sumQty;
+            try
+            {
+                decimal sumQty = (decimal)await PosStock.Where(stock => stock.ItemCode == itemCode).SumAsync(stock => stock.Qty);
+                return sumQty;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw ex;
+            }
         }
     }
 }

@@ -105,8 +105,19 @@ namespace ItemApi.Data
             }
         }
 
-
-
+        public async Task<GrnTemp> GetGrnTempByIdAsync(int id)
+        {
+            try
+            {
+                var grnRef = await _grnTemp.FindAsync(id);
+                return grnRef; // return the found entity or null if not found
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                throw;
+            }
+        } 
 
     }
 }

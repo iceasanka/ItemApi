@@ -21,8 +21,16 @@ namespace ItemApi.Repositories
 
         public async Task<IEnumerable<Supplier>> SearchSuppliersAsync(string query)
         {
+            //return await _context.Suppliers
+            //    .Where(s => s.Supp_Code.Contains(query) || s.Supp_Name.Contains(query))
+            //    .ToListAsync();
+
+            query = query?.Trim();
+
             return await _context.Suppliers
-                .Where(s => s.Supp_Code.Contains(query) || s.Supp_Name.Contains(query))
+                .Where(s =>
+                    EF.Functions.Like(s.Supp_Code, $"%{query}%") ||
+                    EF.Functions.Like(s.Supp_Name, $"%{query}%"))
                 .ToListAsync();
         }
     }

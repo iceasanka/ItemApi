@@ -38,8 +38,9 @@ namespace ItemApi.Controllers
             try
             {
                 var suppliers = await _repository.SearchSuppliersAsync(query);
+                
                 if (suppliers == null || !suppliers.Any())
-                    return Ok("No suppliers found matching the search criteria.");
+                    return new List<Supplier>();
 
                 return Ok(suppliers);
             }

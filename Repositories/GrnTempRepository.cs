@@ -28,7 +28,7 @@ namespace ItemApi.Repositories
         }
 
         //get ist of grnitems by  GrnReference and status
-        public async Task<IQueryable<GrnTemp>> GetGrnTempByGrnReferenceAndStatusAsync(string grnReference, int status)
+        public async Task<List<GrnTemp>> GetGrnTempByGrnReferenceAndStatusAsync(string grnReference, int status)
         {
             return await _context.GetGrnTempByGrnReferenceAndStatusAsync(grnReference, status);
         }

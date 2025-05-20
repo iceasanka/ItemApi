@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ItemApi.Models
 {
@@ -16,5 +17,10 @@ namespace ItemApi.Models
         public double Qty { get; set; }
         public DateTime Date { get; set; }
         public int Status { get; set; }
+
+        [NotMapped]
+        public decimal? itemCostPrice { get; set; }
+        [NotMapped]
+        public decimal? itemERetPrice { get; set; }
     }
 }

@@ -9,7 +9,7 @@ namespace ItemApi.Interface
         Task<GrnTemp> UpdateGrnTempAsync(GrnTemp grnRef);
         Task<GrnTemp> DeleteGrnTempAsync(int id);
 
-        Task<IQueryable<GrnTemp>> GetGrnTempByGrnReferenceAndStatusAsync(string grnReference, int status);
+        Task<List<GrnTemp>> GetGrnTempByGrnReferenceAndStatusAsync(string grnReference, int status);
 
         Task<GrnTemp> UpdateGrnTempStatusAsync(int id, int status);
 

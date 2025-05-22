@@ -60,7 +60,7 @@ namespace ItemApi.Data
         @RowNo = {22},
         @Nbt = {23},
         @Tax = {24},
-        @ManufactureDate{25}";
+        @ManufactureDate = {25}";
                
 
                 await this.Database.ExecuteSqlRawAsync(

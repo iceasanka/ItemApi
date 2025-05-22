@@ -134,8 +134,8 @@ namespace ItemApi.Controllers
 
                 if (_serial > 0)
                 {
-                    var returnModes = await _repository.GetReturnModesAsync();
-                    var purchaseTypes = await _repository.GetPurchaseTypesAsync();
+                 //   var returnModes = await _repository.GetReturnModesAsync();
+                   // var purchaseTypes = await _repository.GetPurchaseTypesAsync();
 
                     var supplier = await _repository.GetSupplierByCodeAsync(returnItems.FirstOrDefault().Supp_Code);
 

@@ -6,7 +6,6 @@ namespace ItemApi.Repositories
     public interface IReturnRepository
     {
         Task<List<ReturnItem>> GetAllItemsAsync();
-
         Task<List<ReturnItem>> GetAllItemsWithSuppliersAsync();
         Task<ReturnItem> GetItemByCodeAsync(string itemCode);
         Task<List<ReturnItem>> GetItemsBySuppCodeAsync(string suppCode);
@@ -16,18 +15,15 @@ namespace ItemApi.Repositories
         Task UpdateItemStatusAsync(int id, int status);
         Task DeleteItemAsync(int id);
         Task<List<IGrouping<string, ReturnItem>>> GroupBySuppCodeAsync();
-
         Task<int> GetPRNOByLocaCodeAsync(string locaCode);
-
         Task<List<ReturnMode>> GetReturnModesAsync();
         Task<List<PurchaseType>> GetPurchaseTypesAsync();
-
         Task<Supplier> GetSupplierByCodeAsync(string suppCode);
-
         Task UpdateReturnItemToTempPurchaseAsync(ReturnUpdateRequest request);
-
         Task CommitReturnToPurchaseAsync(CommitReturnItems request);
-
         Task DeleteTempPurchaseAsync(DeleteTempPurchaseRequest request);
+        //Task<List<PurchaseMode>> GetPurchaseModesAsync();
     }
+   
+        
 }

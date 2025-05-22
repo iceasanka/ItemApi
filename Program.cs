@@ -48,6 +48,9 @@ builder.Services.AddDbContext<PosCountedStockContext>(options =>
 builder.Services.AddDbContext<GrnTempContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddDbContext<PurchaseContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 builder.Services.AddDbContext<PosStockContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection")));
 
@@ -60,6 +63,7 @@ builder.Services.AddScoped<IStockRepository, StockRepository>();
 builder.Services.AddScoped<IReturnRepository, ReturnRepository>();
 builder.Services.AddScoped<ISupplierRepository, SupplierRepository>();
 builder.Services.AddScoped<IGrnTempRepository, GrnTempRepository>();
+builder.Services.AddScoped<IPurchaseRepository, PurchaseRepository>();
 builder.Services.AddScoped<StockService>();
 
 builder.Services.AddScoped<IPosStockRepository, PosStockRepository>();

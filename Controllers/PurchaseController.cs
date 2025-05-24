@@ -14,17 +14,17 @@ namespace ItemApi.Controllers
     {
         private readonly IPurchaseRepository _repository;
         private readonly PurchaseContext _contextPurchase;
-        private readonly ItemContext _contextItem;
         private readonly IItemRepository _itemRepository;
         private PrinterService printerService;
+        private readonly IGrnTempRepository _grnTempRepository;
 
-        public PurchaseController(PurchaseContext contextPurchase, IPurchaseRepository repository, ItemContext contextItem, IItemRepository itemRepository)
+        public PurchaseController(PurchaseContext contextPurchase, IPurchaseRepository repository,  IItemRepository itemRepository, IGrnTempRepository grnTempRepository)
         {
             _contextPurchase = contextPurchase;
             _repository = repository;
 
-            _contextItem = contextItem;
             _itemRepository = itemRepository;
+            _grnTempRepository = grnTempRepository;
             printerService = new PrinterService();
         }
 
@@ -49,18 +49,12 @@ namespace ItemApi.Controllers
         [HttpPost("SaveGrnItems")]
         public async Task<ActionResult> ProcessPurchaseItems([FromBody] PurchasePayload purchasePayload/*[FromBody] List<PurchaseItem> purchaseItems*/)
         {
-
+          //  return StatusCode(500, "An error occurred while processing items.");
             var summary = purchasePayload.Summary;
             var purchaseItems = purchasePayload.Items;
 
-            //return Ok(new { message = "Items processed successfully.", success = true, });
-
-            //return Ok(new { message = "GrnTemp added successfully.", data = insertedGrnTemp });
-
             if (purchaseItems == null || purchaseItems.Count == 0)
                 return BadRequest("No items provided for processing.");
-
-
 
             try
             {
@@ -107,7 +101,7 @@ namespace ItemApi.Controllers
                 {
                     SerialNo = summary.SeriaNo,
                     RefNo = "icePN",
-                    RefNo2 = "",
+                    RefNo2 = summary.notes,
                     PNDate = DateTime.Now.ToString("yyyy-MM-dd 00:00:00:000"),
                     SuppCode = summary.SuppCode,
                     SuppName = summary.SuppName,
@@ -136,25 +130,10 @@ namespace ItemApi.Controllers
 
                 await _repository.CommitPurchaseAsync(commitPurchaseItems);
 
-                /*var deleteTempPurchaseRequest = new DeleteTempPurchaseRequest
+                foreach (var item in purchaseItems)
                 {
-                    SerialNo = _serialNo,
-                    ID = "PRN",
-                    LocaCode = "01",
-                    UserName = "EASYWAY",
-                    ItemCode = "",
-                    Cost = 0,
-                    IdNo = "0",
-                    CancelAll = 1
-                };
-
-                await _repository.DeleteTempPurchaseAsync(deleteTempPurchaseRequest);*/
-
-
-                /* foreach (var item in purchaseItems)
-                 {
-                     await _repository.UpdateItemStatusAsync(item.Id, 3);
-                 }*/
+                    await _grnTempRepository.UpdateGrnTempStatusAsync(item.Id, 3);
+                }
 
                 // printerService.PrintProcessedData(purchaseItems);
 

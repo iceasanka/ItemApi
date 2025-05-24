@@ -8,5 +8,7 @@
         public string SuppName { get; set; }
 
         public string SeriaNo { get; set; }
+
+        public string notes { get; set; }
     }
 }

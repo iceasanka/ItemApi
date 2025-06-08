@@ -103,12 +103,15 @@ else
 }
 
 app.UseHttpsRedirection();
+
+// Use the custom request/response logging middleware
+app.UseMiddleware<RequestResponseLoggingMiddleware>();
+
 app.UseRouting();
 app.UseCors("AllowAllOrigins");
 app.UseAuthorization();
 
-// Use the custom request/response logging middleware
-app.UseMiddleware<RequestResponseLoggingMiddleware>();
+
 
 app.MapControllers();
 

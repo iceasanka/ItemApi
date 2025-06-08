@@ -17,11 +17,14 @@
 
         public async Task InvokeAsync(HttpContext context)
         {
-            Log.Information("Request Start-----------------------------------------------------");
-            var request = await FormatRequest(context.Request);
-            Log.Information("Incoming Request: {Request}", request);
+            if (!context.Items.ContainsKey("RequestLogged"))
+            {
+                context.Items["RequestLogged"] = true;
+                var request = await FormatRequest(context.Request);
+                Log.Information("Incoming Request: {Request}", request);
 
-            await _next(context);
+                await _next(context);
+            }
         }
 
         private async Task<string> FormatRequest(HttpRequest request)

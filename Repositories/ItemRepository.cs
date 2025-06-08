@@ -37,5 +37,12 @@ namespace ItemApi.Repositories
         {
             return await _context.UpdatePriceLink(dto);
         }
+
+        public async Task<int> UpdateItemRetPrice(string itemCode, decimal eRetPrice)
+        {
+            return await _context.UpdateItemRetPrice(itemCode, eRetPrice);
+        }
+
+        
     }
 }

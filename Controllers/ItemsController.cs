@@ -121,6 +121,23 @@ namespace ItemApi.Controllers
             return Ok(new { message = "OK" });
         }
 
+        [HttpPost("UpdateItemRetPrice")]
+        public async Task<IActionResult> UpdateItemRetPrice([FromBody] ItemPrice itemPrice)
+        {
+            if (itemPrice == null || string.IsNullOrEmpty(itemPrice.ItemCode))
+                return BadRequest("Invalid request data.");
+
+            // Example repository call
+            int rowsAffected = await _itemRepository.UpdateItemRetPrice(itemPrice.ItemCode, itemPrice.ERetPrice);
+
+            if (rowsAffected > 0)
+                return Ok(new { message = "Price updated successfully." });
+
+            return NotFound(new { message = "No record updated." });
+        }
+
+        
+
 
     }
 }

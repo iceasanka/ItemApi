@@ -13,6 +13,6 @@ namespace ItemApi.Repositories
         Task<List<PriceLink>> GetPriceLink(string itemCode);
 
          Task<int> UpdatePriceLink(PriceLinkUpdateDTO dto);
-       
+        Task<int> UpdateItemRetPrice(string itemCode, decimal eRetPrice);
     }
 }

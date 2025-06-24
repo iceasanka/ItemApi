@@ -26,6 +26,10 @@ namespace ItemApi.Controllers
             try
             {
                 var item = await _itemRepository.GetItemWithDetailsByBarcodeAsync(barcode);
+
+                if (item == null)
+                    return NotFound("Item not found for the given barcode.");
+
                 return Ok(item);
             }
             catch (Exception ex)

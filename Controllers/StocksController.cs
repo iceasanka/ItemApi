@@ -142,7 +142,7 @@ namespace ItemApi.Controllers
                         await _posCountedStockRepository.AddPosCountedStock(posCountedStock);
                     }
 
-                    return Ok();
+                    return Ok(string.Format("Updated {0}", request.Item.Item_Code));
 
                 }
                 return BadRequest("Can't update: serial error.");

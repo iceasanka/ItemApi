@@ -22,7 +22,7 @@ Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
      .WriteTo.Console()
-     .WriteTo.File("Logs/log-.txt", rollingInterval: RollingInterval.Day)
+     //.WriteTo.File("Logs/log-.txt", rollingInterval: RollingInterval.Day)
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -48,6 +48,9 @@ builder.Services.AddDbContext<PosCountedStockContext>(options =>
 builder.Services.AddDbContext<GrnTempContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddDbContext<FileLocationContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 builder.Services.AddDbContext<PurchaseContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
@@ -68,6 +71,8 @@ builder.Services.AddScoped<StockService>();
 
 builder.Services.AddScoped<IPosStockRepository, PosStockRepository>();
 builder.Services.AddScoped<IPosCountedStockRepository, PosCountedStockRepository>();
+
+builder.Services.AddScoped<IFileLocationRepository, FileLocationRepository>();
 
 // Register the service
 builder.Services.AddControllers();

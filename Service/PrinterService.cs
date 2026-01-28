@@ -5,6 +5,8 @@ using System;
 using System.Drawing;
 using Serilog;
 using System.Text.Json;
+using static ItemApi.Controllers.UtilController;
+using System.Text;
 
 namespace ItemApi.Service
 {
@@ -212,6 +214,9 @@ namespace ItemApi.Service
 
             return new PaperSize("Custom", paperWidth, paperHeight);
         }
+
+
+        
     }
 
 }

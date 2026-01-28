@@ -1,17 +1,12 @@
-
+﻿
 using BarTender;
-using ItemApi.Data;
 using ItemApi.Models;
-using ItemApi.Repositories;
 using ItemApi.Service;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
-using Serilog;
-using System.Drawing.Drawing2D;
-using System.Linq;
+using System.Text.Json;
 using System.Text;
-using System.Xml.Linq;
+
 
 namespace ItemApi.Controllers
 {
@@ -69,7 +64,7 @@ namespace ItemApi.Controllers
 
                 try
                 {
-                  
+
 
                     ItemWithDetails itemDetails = request.ItemDetails;
                     var labelCount = request.LabelCount;
@@ -119,20 +114,78 @@ namespace ItemApi.Controllers
             }
 
         }
-
-
-        //
-
-
-
-        public class PrintBarcodeRequest
+       
+        public async Task<ActionResult> PrintLocalAgent( PrintItem item)
         {
-            public ItemWithDetails ItemDetails { get; set; }
-            public int LabelCount { get; set; }
+            try
+            {
+                using var client = new HttpClient();
 
-            public string expireDate { get; set; }
-            public string mrDate { get; set; }
+                var json = JsonSerializer.Serialize(item);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                // Local Print Agent endpoint
+                var response = await client.PostAsync(
+                    "http://localhost:9001/print/",
+                    content
+                );
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return StatusCode(500, "Print agent failed");
+                }
+
+                return Ok(new { message = "Print request sent to local agent." });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                {
+                    message = "Error sending print request",
+                    error = ex.Message
+                });
+            }
         }
+
+
+        [HttpPost("printprice")]
+        public async Task<ActionResult> PrintPrice([FromBody] PrintItem item)
+        {
+            try
+            {
+                item.printerName = _appSettings.PrinterName;
+                item.printTemplatePath = _appSettings.PricePrintTemplatePath;
+                item.printType = 1; // Price Print
+                await PrintLocalAgent(item);
+                return Ok(new { message = "Print request processed successfully." });
+            }
+            catch (Exception ex)
+            {
+
+                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+            }
+        }
+
+        [HttpPost("printDiscountPrice")]
+        public async Task<ActionResult> PrintDiscountPrice([FromBody] PrintItem item)
+        {
+            try
+            {
+                item.printerName = _appSettings.PrinterName; ;
+                item.printTemplatePath = _appSettings.DiscountPrintTemplatePath;
+                item.printType= 2; // Discount Print
+                await PrintLocalAgent(item);
+                return Ok(new { message = "Print request processed successfully." });
+            }
+            catch (Exception ex)
+            {
+
+                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+            }
+        }
+
+
+
 
 
 

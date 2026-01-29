@@ -11,5 +11,7 @@
         public string PricePrintTemplatePath { get; set; }
 
         public string PrinterName { get; set; }
+
+        public string DiscountPercentagePrintTemplatePath { get; set; }
     }
 }

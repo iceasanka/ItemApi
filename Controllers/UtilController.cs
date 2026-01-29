@@ -114,8 +114,8 @@ namespace ItemApi.Controllers
             }
 
         }
-       
-        public async Task<ActionResult> PrintLocalAgent( PrintItem item)
+
+        public async Task<ActionResult> PrintLocalAgent(PrintItem item)
         {
             try
             {
@@ -156,6 +156,7 @@ namespace ItemApi.Controllers
                 item.printerName = _appSettings.PrinterName;
                 item.printTemplatePath = _appSettings.PricePrintTemplatePath;
                 item.printType = 1; // Price Print
+                item.printLanguage = item.printLanguage;
                 await PrintLocalAgent(item);
                 return Ok(new { message = "Print request processed successfully." });
             }
@@ -171,9 +172,17 @@ namespace ItemApi.Controllers
         {
             try
             {
-                item.printerName = _appSettings.PrinterName; ;
-                item.printTemplatePath = _appSettings.DiscountPrintTemplatePath;
-                item.printType= 2; // Discount Print
+                item.printerName = _appSettings.PrinterName;
+
+                if (!string.IsNullOrEmpty(item.tax3) && item.tax3 != "0")
+                    item.printTemplatePath = _appSettings.DiscountPrintTemplatePath;
+                else if (!string.IsNullOrEmpty(item.tax2) && item.tax2 != "0")
+                    item.printTemplatePath = _appSettings.DiscountPercentagePrintTemplatePath;
+                else
+                    item.printTemplatePath = string.Empty;
+
+                item.printType = 2; // Discount Print
+                item.printLanguage = item.printLanguage;
                 await PrintLocalAgent(item);
                 return Ok(new { message = "Print request processed successfully." });
             }

@@ -36,7 +36,10 @@ namespace ItemApi.Models
        // [JsonIgnore]
         public string? printTemplatePath { get; set; }
 
-        public int printType { get; set; } // 1= Price, 2= Discount
+        /// <summary>
+        /// 1= Price, 2= Discount, 3=LandScape,4= Cheque
+        /// </summary>
+        public int printType { get; set; }
 
         [JsonPropertyName("printLanguage")]
         public int printLanguage { get; set; } // 1= English, 2= Sinhala

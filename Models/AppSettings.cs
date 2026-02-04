@@ -11,7 +11,13 @@
         public string PricePrintTemplatePath { get; set; }
 
         public string PrinterName { get; set; }
+        public string PrinterHP { get; set; }
 
         public string DiscountPercentagePrintTemplatePath { get; set; }
+
+        public string LandScapePricePrintTemplatePath { get; set; }
+
+
+        public string ChequePrintTemplatePath { get; set; }
     }
 }

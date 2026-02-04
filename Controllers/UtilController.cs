@@ -115,37 +115,30 @@ namespace ItemApi.Controllers
 
         }
 
-        public async Task<ActionResult> PrintLocalAgent(PrintItem item)
+        public async Task<ActionResult> PrintLocalAgent<T>(PrintJobType type, T payload)
         {
-            try
+            using var client = new HttpClient();
+
+            var request = new
             {
-                using var client = new HttpClient();
+                Type = type,
+                Data = payload
+            };
 
-                var json = JsonSerializer.Serialize(item);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var json = JsonSerializer.Serialize(request);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                // Local Print Agent endpoint
-                var response = await client.PostAsync(
-                    "http://localhost:9001/print/",
-                    content
-                );
+            var response = await client.PostAsync(
+                "http://localhost:9001/print/",
+                content
+            );
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    return StatusCode(500, "Print agent failed");
-                }
+            if (!response.IsSuccessStatusCode)
+                return StatusCode(500, "Print agent failed");
 
-                return Ok(new { message = "Print request sent to local agent." });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new
-                {
-                    message = "Error sending print request",
-                    error = ex.Message
-                });
-            }
+            return Ok(new { message = "Print request sent." });
         }
+
 
 
         [HttpPost("printprice")]
@@ -157,7 +150,7 @@ namespace ItemApi.Controllers
                 item.printTemplatePath = _appSettings.PricePrintTemplatePath;
                 item.printType = 1; // Price Print
                 item.printLanguage = item.printLanguage;
-                await PrintLocalAgent(item);
+                await PrintLocalAgent(PrintJobType.ItemLabel, item);
                 return Ok(new { message = "Print request processed successfully." });
             }
             catch (Exception ex)
@@ -183,7 +176,7 @@ namespace ItemApi.Controllers
 
                 item.printType = 2; // Discount Print
                 item.printLanguage = item.printLanguage;
-                await PrintLocalAgent(item);
+                await PrintLocalAgent(PrintJobType.ItemLabel, item);
                 return Ok(new { message = "Print request processed successfully." });
             }
             catch (Exception ex)
@@ -193,6 +186,44 @@ namespace ItemApi.Controllers
             }
         }
 
+
+        [HttpPost("printitempricelandscape")]
+        public async Task<ActionResult> PrintItemPriceLandscape([FromBody] PrintItem item)
+        {
+            try
+            {
+                item.printerName = _appSettings.PrinterName;
+                item.printTemplatePath = _appSettings.LandScapePricePrintTemplatePath;
+                item.printType = 3; // landscape Print
+                item.printLanguage = item.printLanguage;
+                await PrintLocalAgent(PrintJobType.ItemLabel, item);
+                return Ok(new { message = "Print request processed successfully." });
+            }
+            catch (Exception ex)
+            {
+
+                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+            }
+        }
+
+
+        [HttpPost("printCheque")]
+        public async Task<ActionResult> PrintCheque([FromBody] Cheque cheque)
+        {
+            try
+            {
+                cheque.printerName = _appSettings.PrinterHP;
+                cheque.printTemplatePath = _appSettings.ChequePrintTemplatePath;
+                cheque.printType = 4; // Cheque Print
+
+                await PrintLocalAgent(PrintJobType.Cheque, cheque);
+                return Ok(new { message = "Print request processed successfully." });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+            }
+        }
 
 
 

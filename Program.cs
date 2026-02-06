@@ -57,6 +57,13 @@ builder.Services.AddDbContext<PurchaseContext>(options =>
 builder.Services.AddDbContext<PosStockContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection")));
 
+builder.Services.AddDbContext<ChequeCreateContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+
+builder.Services.AddDbContext<PayeeContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSettings"));
 
 
@@ -73,6 +80,10 @@ builder.Services.AddScoped<IPosStockRepository, PosStockRepository>();
 builder.Services.AddScoped<IPosCountedStockRepository, PosCountedStockRepository>();
 
 builder.Services.AddScoped<IFileLocationRepository, FileLocationRepository>();
+
+builder.Services.AddScoped<IChequeCreateRepository, ChequeCreateRepository>();
+
+builder.Services.AddScoped<IPayeeRepository, PayeeRepository>();
 
 // Register the service
 builder.Services.AddControllers();

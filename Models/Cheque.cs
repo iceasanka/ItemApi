@@ -21,5 +21,14 @@ namespace ItemApi.Models
         public string? printTemplatePath { get; set; }
 
         public int printType { get; set; }
+
+        [JsonPropertyName("payeeId")]
+        public int payeeId { get; set; }
+
+        [JsonPropertyName("supplierName")]
+        public string supplierName { get; set; }
+
+        [JsonPropertyName("chequeNumber")]
+        public int chequeNumber { get; set; }
     }
 }

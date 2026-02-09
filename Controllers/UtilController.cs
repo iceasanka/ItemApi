@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text;
+using ItemApi.Interface;
 
 
 namespace ItemApi.Controllers
@@ -15,11 +16,13 @@ namespace ItemApi.Controllers
     public class UtilController : ControllerBase
     {
         private PrinterService printerService;
+        private readonly IChequeCreateRepository _repository;
         private readonly AppSettings _appSettings;
-        public UtilController(IOptions<AppSettings> appSettings)
+        public UtilController(IOptions<AppSettings> appSettings, IChequeCreateRepository repository)
         {
             _appSettings = appSettings.Value;
             printerService = new PrinterService();
+            _repository = repository;
         }
 
 
@@ -217,6 +220,17 @@ namespace ItemApi.Controllers
                 cheque.printType = 4; // Cheque Print
 
                 await PrintLocalAgent(PrintJobType.Cheque, cheque);
+
+                ChequeCreate chequeCreate = new ChequeCreate();
+                chequeCreate.Amount  = cheque.amount;
+                chequeCreate.ChequeDate = cheque.chequeDate;
+                chequeCreate.PayeeId    = cheque.payeeId;
+                chequeCreate.SupplierName= cheque.supplierName;
+                chequeCreate.ChequeNumber = cheque.chequeNumber;
+
+
+                await _repository.AddChequeAsync(chequeCreate);
+
                 return Ok(new { message = "Print request processed successfully." });
             }
             catch (Exception ex)

@@ -15,8 +15,17 @@ namespace ItemApi.Repositories
 
         public async Task AddChequeAsync(ChequeCreate cheque)
         {
-            await _context.Cheques.AddAsync(cheque);
-            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.Cheques.AddAsync(cheque);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+
+                throw ex;
+            }
+           
         }
 
         // Search cheques by a date range

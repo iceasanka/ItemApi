@@ -42,10 +42,7 @@ namespace ItemApi.Controllers
         }
 
         [HttpGet("search")]
-        public async Task<IActionResult> SearchChequesByDateRange(
-            [FromQuery] DateTime fromDate,
-            [FromQuery] DateTime toDate
-        )
+        public async Task<IActionResult> SearchChequesByDateRange( [FromQuery] DateTime fromDate,[FromQuery] DateTime toDate )
         {
             var cheques = await _repository.SearchChequesByDateRangeAsync(fromDate, toDate);
             return Ok(cheques);

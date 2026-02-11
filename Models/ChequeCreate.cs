@@ -18,6 +18,9 @@ namespace ItemApi.Models
         [JsonPropertyName("chequeDate")]
         public DateTime ChequeDate { get; set; }
 
+        [JsonPropertyName("chequeWrittenDate")]
+        public DateTime ChequeWrittenDate { get; set; } = DateTime.Now;
+
         public int PayeeId { get; set; }
 
         [JsonPropertyName("supplierName")]

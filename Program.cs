@@ -66,6 +66,8 @@ builder.Services.AddDbContext<PayeeContext>(options =>
 
 builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSettings"));
 
+builder.Services.AddScoped<IGoogleSheetService, GoogleSheetService>();
+
 
 
 builder.Services.AddScoped<IItemRepository, ItemRepository>();

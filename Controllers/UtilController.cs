@@ -219,6 +219,7 @@ namespace ItemApi.Controllers
                 cheque.printTemplatePath = _appSettings.ChequePrintTemplatePath;
                 cheque.printType = 4; // Cheque Print
 
+                //Asanka
                 await PrintLocalAgent(PrintJobType.Cheque, cheque);
 
                 ChequeCreate chequeCreate = new ChequeCreate();
@@ -227,9 +228,30 @@ namespace ItemApi.Controllers
                 chequeCreate.PayeeId    = cheque.payeeId;
                 chequeCreate.SupplierName= cheque.supplierName;
                 chequeCreate.ChequeNumber = cheque.chequeNumber;
+                chequeCreate.IsSync = 0;
 
 
                 await _repository.AddChequeAsync(chequeCreate);
+
+
+                bool isSyncSuccess = false;
+
+                try
+                {
+                    await _repository.SyncPrintedChequeAsync(chequeCreate);
+                    isSyncSuccess = true;
+                }
+                catch (Exception syncEx)
+                {
+                    Console.WriteLine($"Cheque sync failed: {syncEx.Message}");
+                }
+
+                if (isSyncSuccess)
+                {
+                    chequeCreate.IsSync = 1;
+                    await _repository.UpdateChequeAsync(chequeCreate);
+                }
+               //Asanka message
 
                 return Ok(new { message = "Print request processed successfully." });
             }
@@ -238,6 +260,8 @@ namespace ItemApi.Controllers
                 return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
             }
         }
+
+
 
 
 

@@ -1,6 +1,7 @@
 ﻿using ItemApi.Data;
 using ItemApi.Interface;
 using ItemApi.Models;
+using ItemApi.Service;
 using Microsoft.EntityFrameworkCore;
 
 namespace ItemApi.Repositories
@@ -8,9 +9,11 @@ namespace ItemApi.Repositories
     public class ChequeCreateRepository : IChequeCreateRepository
     {
         private readonly ChequeCreateContext _context;
-        public ChequeCreateRepository(ChequeCreateContext context)
+        private readonly IGoogleSheetService _googleSheetService;
+        public ChequeCreateRepository(ChequeCreateContext context, IGoogleSheetService googleSheetService)
         {
             _context = context;
+            _googleSheetService = googleSheetService;
         }
 
         public async Task AddChequeAsync(ChequeCreate cheque)
@@ -68,7 +71,19 @@ namespace ItemApi.Repositories
             await _context.SaveChangesAsync();
         }
 
+        public async Task SyncChequesAsync(IEnumerable<ChequeCreate> cheques)
+        {
+            foreach (var cheque in cheques)
+            {
+                
+                await _googleSheetService.InsertOrUpdateChequeAsync(cheque);
+            }
+        }
 
+        public async Task SyncPrintedChequeAsync(ChequeCreate cheque)
+        {
+                await _googleSheetService.InsertOrUpdateChequeAsync(cheque);
+        }
 
 
 

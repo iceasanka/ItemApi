@@ -1,5 +1,6 @@
 ﻿using ItemApi.Interface;
 using ItemApi.Models;
+using ItemApi.Service;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ItemApi.Controllers
@@ -12,22 +13,52 @@ namespace ItemApi.Controllers
 
 
         private readonly IChequeCreateRepository _repository;
+        
 
         public ChequeCreateController(IChequeCreateRepository repository)
         {
             _repository = repository;
+         
         }
 
-        [HttpPost]
-        public async Task<IActionResult> CreateCheque([FromBody] ChequeCreate cheque)
+        [HttpPost("AddCheque")]
+        public async Task<IActionResult> CreateCheque([FromBody] Cheque cheque)
         {
             if (cheque == null)
             {
                 return BadRequest("Cheque data is required.");
             }
 
-            await _repository.AddChequeAsync(cheque);
-            return CreatedAtAction(nameof(GetChequeById), new { id = cheque.ChequeId }, cheque);
+            ChequeCreate chequeCreate = new ChequeCreate();
+            chequeCreate.Amount = cheque.amount;
+            chequeCreate.ChequeDate = cheque.chequeDate;
+            chequeCreate.PayeeId = cheque.payeeId;
+            chequeCreate.SupplierName = cheque.supplierName;
+            chequeCreate.ChequeNumber = cheque.chequeNumber;
+            chequeCreate.IsSync = 0;
+
+            await _repository.AddChequeAsync(chequeCreate);
+
+            bool isSyncSuccess = false;
+
+            try
+            {
+                await _repository.SyncPrintedChequeAsync(chequeCreate);
+                isSyncSuccess = true;
+            }
+            catch (Exception syncEx)
+            {
+                Console.WriteLine($"Cheque sync failed: {syncEx.Message}");
+            }
+
+            if (isSyncSuccess)
+            {
+                chequeCreate.IsSync = 1;
+                await _repository.UpdateChequeAsync(chequeCreate);
+            }
+            //Asanka message
+
+            return CreatedAtAction(nameof(GetChequeById), new { id = chequeCreate.ChequeId }, cheque);
         }
 
         [HttpGet("{id}")]
@@ -81,7 +112,27 @@ namespace ItemApi.Controllers
         }
 
 
+        [HttpPost("sync")]
+        public async Task<IActionResult> SyncCheques([FromBody] IEnumerable<ChequeCreate> cheques)
+        {
+            if (cheques == null || !cheques.Any())
+                return BadRequest("No cheque data received.");
 
+        
+            //Asanak :TOdo : i one fail what to do DB update
+            await _repository.SyncChequesAsync(cheques);
+
+            foreach (var cheque in cheques)
+            {
+                cheque.IsSync = 1;
+                await _repository.UpdateChequeAsync(cheque);
+            }
+            
+
+            return Ok(new { message = "Cheques synced successfully." });
+        }
+
+      
 
     }
 }

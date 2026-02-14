@@ -17,5 +17,9 @@ namespace ItemApi.Interface
         Task UpdateChequeAsync(ChequeCreate cheque);
         Task DeleteChequeAsync(int id);
 
+        Task SyncChequesAsync(IEnumerable<ChequeCreate> cheques);
+
+        Task SyncPrintedChequeAsync(ChequeCreate cheque);
+
     }
 }

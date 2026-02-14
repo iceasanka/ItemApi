@@ -19,5 +19,7 @@
 
 
         public string ChequePrintTemplatePath { get; set; }
+
+        public string Apicre { get; set; }
     }
 }

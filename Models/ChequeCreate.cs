@@ -25,5 +25,12 @@ namespace ItemApi.Models
 
         [JsonPropertyName("supplierName")]
         public string SupplierName { get; set; }
+
+
+        /// <summary>
+        /// 1=sync, 0=not sync
+        /// </summary>
+        [JsonPropertyName("isSync")]
+        public int IsSync { get; set; }
     }
 }

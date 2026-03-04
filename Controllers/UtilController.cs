@@ -243,7 +243,7 @@ namespace ItemApi.Controllers
                 }
                 catch (Exception syncEx)
                 {
-                    Console.WriteLine($"Cheque sync failed: {syncEx.Message}");
+                    return BadRequest(new { message = "Error Sync Printed Cheque.", error = syncEx.Message });
                 }
 
                 if (isSyncSuccess)

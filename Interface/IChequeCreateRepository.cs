@@ -6,10 +6,7 @@ namespace ItemApi.Interface
     {
         Task AddChequeAsync(ChequeCreate cheque);
 
-        Task<IEnumerable<ChequeCreate>> SearchChequesByDateRangeAsync(
-            DateTime fromDate,
-            DateTime toDate
-        );
+        Task<IEnumerable<ChequeCreate>> SearchChequesByDateRangeAsync(DateTime fromDate, DateTime toDate,int? chequeNumber,string? supplierName,decimal? amount);
 
         Task<IEnumerable<ChequeCreate>> GetChequesByPayeeIdAsync(int payeeId);
 
@@ -20,6 +17,6 @@ namespace ItemApi.Interface
         Task SyncChequesAsync(IEnumerable<ChequeCreate> cheques);
 
         Task SyncPrintedChequeAsync(ChequeCreate cheque);
-
+        Task ProcessFile(string filePath);
     }
 }

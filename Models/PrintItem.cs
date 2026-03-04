@@ -37,7 +37,7 @@ namespace ItemApi.Models
         public string? printTemplatePath { get; set; }
 
         /// <summary>
-        /// 1= Price, 2= Discount, 3=LandScape,4= Cheque
+        /// 1= Price, 2= Discount, 3=LandScape,4= Cheque,5=LandScapeWithDiscount
         /// </summary>
         public int printType { get; set; }
 

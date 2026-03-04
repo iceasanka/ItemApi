@@ -31,64 +31,6 @@
 
         }
 
-        //public async Task InsertOrUpdateChequeAsync(ChequeCreate cheque)
-        //{
-        //    var range = $"{_sheetName}!A2:D";
-
-        //    var getRequest = _service.Spreadsheets.Values.Get(_spreadsheetId, range);
-        //    var getResponse = await getRequest.ExecuteAsync();
-        //    var rows = getResponse.Values;
-
-        //    int rowIndex = -1;
-
-        //    if (rows != null)
-        //    {
-        //        for (int i = 0; i < rows.Count; i++)
-        //        {
-        //            if (rows[i][0].ToString() == cheque.ChequeId.ToString())
-        //            {
-        //                rowIndex = i + 2;
-        //                break;
-        //            }
-        //        }
-        //    }
-
-        //    var newRow = new List<object>
-        //{
-        //    cheque.ChequeId,
-        //    cheque.SupplierName,
-        //    cheque.Amount,
-        //    cheque.ChequeDate.ToString("yyyy-MM-dd")
-        //};
-
-        //    if (rowIndex > -1)
-        //    {
-        //        var updateRange = $"{_sheetName}!A{rowIndex}:D{rowIndex}";
-
-        //        var updateRequest = _service.Spreadsheets.Values.Update(
-        //            new ValueRange { Values = new List<IList<object>> { newRow } },
-        //            _spreadsheetId,
-        //            updateRange);
-
-        //        updateRequest.ValueInputOption =
-        //            SpreadsheetsResource.ValuesResource.UpdateRequest.ValueInputOptionEnum.RAW;
-
-        //        await updateRequest.ExecuteAsync();
-        //    }
-        //    else
-        //    {
-        //        var appendRequest = _service.Spreadsheets.Values.Append(
-        //            new ValueRange { Values = new List<IList<object>> { newRow } },
-        //            _spreadsheetId,
-        //            range);
-
-        //        appendRequest.ValueInputOption =
-        //            SpreadsheetsResource.ValuesResource.AppendRequest.ValueInputOptionEnum.RAW;
-
-        //        await appendRequest.ExecuteAsync();
-        //    }
-        //}
-
         public async Task InsertOrUpdateChequeAsync(ChequeCreate cheque)
         {
             string sheetName = _sheetName;
@@ -196,6 +138,167 @@
             }
             return columnLetter;
         }
+
+        public async Task MarkChequeAsDebitedAsync(ChequeCreate cheque)
+        {
+            try
+            {
+                await EnsureSheetInitializedAsync();
+
+                string sheetName = _sheetName;
+
+                var range = $"{sheetName}!A1:N1000";
+                var getRequest = _service.Spreadsheets.Values.Get(_spreadsheetId, range);
+                var response = await getRequest.ExecuteAsync();
+                var rows = response.Values;
+
+                if (rows == null || rows.Count == 0)
+                    return;
+
+                // 1️⃣ Find month block (Column A)
+                int monthStartRowIndex = -1;
+
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    if (rows[i].Count > 0 && DateTime.TryParse(rows[i][0].ToString(), out DateTime rowDate))
+                    {
+                        if (rowDate.Month == cheque.ChequeDate.Month &&
+                            rowDate.Year == cheque.ChequeDate.Year)
+                        {
+                            monthStartRowIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (monthStartRowIndex == -1)
+                    return;
+
+                int headerRowIndex = monthStartRowIndex + 1;
+                int dataStartRowIndex = headerRowIndex + 1;
+
+                int dateColIndex = 1; // B
+                var chequeColIndexes = Enumerable.Range(6, 8).ToList(); // G → N
+
+                int targetRowIndex = -1;
+
+                for (int i = dataStartRowIndex; i < rows.Count; i++)
+                {
+                    if (rows[i].Count > dateColIndex &&
+                        int.TryParse(rows[i][dateColIndex]?.ToString(), out int day))
+                    {
+                        if (day == cheque.ChequeDate.Day)
+                        {
+                            targetRowIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (targetRowIndex == -1)
+                    return;
+
+                var row = rows[targetRowIndex];
+
+                string formattedAmount = cheque.Amount.ToString("N0");
+
+                foreach (var colIdx in chequeColIndexes)
+                {
+                    if (row.Count > colIdx)
+                    {
+                        var cellValue = row[colIdx]?.ToString()?.Replace(",", "");
+
+                        if (decimal.TryParse(cellValue, out decimal sheetAmount))
+                        {
+                            if (Math.Round(sheetAmount, 2) == Math.Round(cheque.Amount, 2))
+                            {
+                                await ColorCellGreen(targetRowIndex, colIdx);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+
+                throw ex;
+            }
+        }
+
+        private int _sheetId;
+        private async Task EnsureSheetInitializedAsync()
+        {
+            if (_sheetId != 0)
+                return;
+
+            var spreadsheet = await _service.Spreadsheets
+                .Get(_spreadsheetId)
+                .ExecuteAsync();
+
+            var sheet = spreadsheet.Sheets
+                .FirstOrDefault(s => s.Properties.Title == _sheetName);
+
+            if (sheet == null)
+                throw new Exception($"Sheet '{_sheetName}' not found.");
+
+            _sheetId = sheet.Properties.SheetId.Value;
+        }
+
+
+        private async Task ColorCellGreen(int rowIndex, int colIndex)
+        {
+            try
+            {
+                int sheetId = _sheetId;
+
+                // 3️⃣ Build formatting request
+                var request = new Request
+                {
+                    RepeatCell = new RepeatCellRequest
+                    {
+                        Range = new GridRange
+                        {
+                            SheetId = sheetId,
+                            StartRowIndex = rowIndex,
+                            EndRowIndex = rowIndex + 1,
+                            StartColumnIndex = colIndex,
+                            EndColumnIndex = colIndex + 1
+                        },
+                        Cell = new CellData
+                        {
+                            UserEnteredFormat = new CellFormat
+                            {
+                                BackgroundColor = new Color
+                                {
+                                    Red = 0.6f,
+                                    Green = 0.9f,
+                                    Blue = 0.6f
+                                }
+                            }
+                        },
+                        Fields = "userEnteredFormat.backgroundColor"
+                    }
+                };
+
+                var batchUpdateRequest = new BatchUpdateSpreadsheetRequest
+                {
+                    Requests = new List<Request> { request }
+                };
+
+                await _service.Spreadsheets
+                    .BatchUpdate(batchUpdateRequest, _spreadsheetId)
+                    .ExecuteAsync();
+
+            }
+            catch (Exception ex)
+            {
+
+                throw ex;
+            }
+        }
+
+
 
 
 

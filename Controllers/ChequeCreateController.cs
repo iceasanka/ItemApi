@@ -73,9 +73,14 @@ namespace ItemApi.Controllers
         }
 
         [HttpGet("search")]
-        public async Task<IActionResult> SearchChequesByDateRange( [FromQuery] DateTime fromDate,[FromQuery] DateTime toDate )
+        public async Task<IActionResult> SearchChequesByDateRange( 
+            [FromQuery] DateTime fromDate,
+            [FromQuery] DateTime toDate, 
+            [FromQuery] int? chequeNumber,
+            [FromQuery] string? supplierName,
+            [FromQuery] decimal? amount)
         {
-            var cheques = await _repository.SearchChequesByDateRangeAsync(fromDate, toDate);
+            var cheques = await _repository.SearchChequesByDateRangeAsync(fromDate, toDate, chequeNumber, supplierName, amount);
             return Ok(cheques);
         }
 
@@ -132,7 +137,28 @@ namespace ItemApi.Controllers
             return Ok(new { message = "Cheques synced successfully." });
         }
 
-      
+        [HttpPost("upload")]
+        public async Task<IActionResult> UploadFile(IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest("No file uploaded.");
+
+            var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
+
+            if (!Directory.Exists(uploadsFolder))
+                Directory.CreateDirectory(uploadsFolder);
+
+            var filePath = Path.Combine(uploadsFolder, file.FileName);
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream);
+            }
+            await _repository.ProcessFile(filePath);
+
+            return Ok(new { message = "File uploaded successfully." });
+        }
+
 
     }
 }

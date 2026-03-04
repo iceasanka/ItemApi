@@ -32,5 +32,11 @@ namespace ItemApi.Models
         /// </summary>
         [JsonPropertyName("isSync")]
         public int IsSync { get; set; }
+
+        /// <summary>
+        /// 1=Debited, 0=not Debited
+        /// </summary>
+        [JsonPropertyName("isDebited")]
+        public int IsDebited { get; set; }
     }
 }

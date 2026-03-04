@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using ItemApi.Interface;
 using ItemApi.Controllers;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -99,6 +100,12 @@ builder.Services.AddCors(options =>
             builder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
         });
 });
+
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 104857600; // 100MB
+});
+
 
 builder.Services.AddSwaggerGen(c =>
 {

@@ -69,6 +69,13 @@ builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSet
 
 builder.Services.AddScoped<IGoogleSheetService, GoogleSheetService>();
 
+builder.Services.AddDbContext<SupplierzContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddDbContext<CategoryContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+
 
 
 builder.Services.AddScoped<IItemRepository, ItemRepository>();
@@ -87,6 +94,8 @@ builder.Services.AddScoped<IFileLocationRepository, FileLocationRepository>();
 builder.Services.AddScoped<IChequeCreateRepository, ChequeCreateRepository>();
 
 builder.Services.AddScoped<IPayeeRepository, PayeeRepository>();
+builder.Services.AddScoped<ISupplierzRepository, SupplierzRepository>();
+builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 
 // Register the service
 builder.Services.AddControllers();

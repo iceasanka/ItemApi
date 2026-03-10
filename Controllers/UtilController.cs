@@ -230,6 +230,9 @@ namespace ItemApi.Controllers
                 chequeCreate.ChequeNumber = cheque.chequeNumber;
                 chequeCreate.IsSync = 0;
 
+                //Asanka : Need to remove
+                //return Ok(new { message = "Print request processed successfully." });
+
 
                 await _repository.AddChequeAsync(chequeCreate);
 

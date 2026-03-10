@@ -74,7 +74,12 @@ builder.Services.AddDbContext<SupplierzContext>(options =>
 
 builder.Services.AddDbContext<CategoryContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-
+builder.Services.AddDbContext<SubCategoryContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<UnitContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<ItemzContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 
 
@@ -96,6 +101,9 @@ builder.Services.AddScoped<IChequeCreateRepository, ChequeCreateRepository>();
 builder.Services.AddScoped<IPayeeRepository, PayeeRepository>();
 builder.Services.AddScoped<ISupplierzRepository, SupplierzRepository>();
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+builder.Services.AddScoped<ISubCategoryRepository, SubCategoryRepository>();
+builder.Services.AddScoped<IUnitRepository, UnitRepository>();
+builder.Services.AddScoped<IItemzRepository, ItemzRepository>();
 
 // Register the service
 builder.Services.AddControllers();

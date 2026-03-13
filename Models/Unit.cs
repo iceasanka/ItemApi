@@ -18,7 +18,7 @@ namespace ItemApi.Models
 
         public DateTime? CDate { get; set; }
 
-        public int UserId { get; set; }
+        public int? UserId { get; set; }
 
         public int IsDefault { get; set; }
     }

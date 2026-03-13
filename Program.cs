@@ -80,6 +80,12 @@ builder.Services.AddDbContext<UnitContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddDbContext<ItemzContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<TempPurchaseSummaryContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<TempPurchaseContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<SystemContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 
 
@@ -104,6 +110,9 @@ builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<ISubCategoryRepository, SubCategoryRepository>();
 builder.Services.AddScoped<IUnitRepository, UnitRepository>();
 builder.Services.AddScoped<IItemzRepository, ItemzRepository>();
+builder.Services.AddScoped<ITempPurchaseSummaryRepository, TempPurchaseSummaryRepository>();
+builder.Services.AddScoped<ITempPurchaseRepository, TempPurchaseRepository>();
+builder.Services.AddScoped<ISystemRepository, SystemRepository>();
 
 // Register the service
 builder.Services.AddControllers();

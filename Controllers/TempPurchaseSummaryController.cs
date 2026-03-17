@@ -120,8 +120,8 @@ namespace ItemApi.Controllers
             }
         }
 
-        [HttpPost("Commit")]
-        public async Task<IActionResult> Commit(string grnNo)
+        [HttpPost("Commit/{grnNo}")]
+        public async Task<IActionResult> Commit([FromRoute]  string grnNo)
         {
             try
             {

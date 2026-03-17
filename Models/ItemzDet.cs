@@ -17,7 +17,7 @@ namespace ItemApi.Models
         public decimal? SpecialPrice { get; set; }
         public decimal? CostPrice { get; set; }
         public decimal? AverageCost { get; set; }
-        public string? Unit { get; set; }
+        public int? UnitId { get; set; }
         public decimal? WholesaleMargin { get; set; }
         public decimal? RetailMargin { get; set; }
         public bool IsSaleLocked { get; set; } = false;

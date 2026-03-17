@@ -14,7 +14,7 @@ namespace ItemApi.Models
         [MaxLength(20)]
         public string GrnNo { get; set; }
 
-        public int? LocationId { get; set; }
+        public int? LocaId { get; set; }
 
         public int ItemId { get; set; }
 
@@ -33,9 +33,6 @@ namespace ItemApi.Models
         public DateOnly? ExpDate { get; set; }
 
         public int? Status { get; set; }
-
-        [MaxLength(10)]
-        public string? Type { get; set; }
 
         public DateTime? UDate { get; set; }
 

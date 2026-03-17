@@ -15,13 +15,13 @@ namespace ItemApi.Models
 
         // From z_tb_ItemDet
         public int ItemDetId { get; set; }
-        public int LocationId { get; set; }
+        public int LocaId { get; set; }
         public decimal? RetailPrice { get; set; }
         public decimal? WholesalePrice { get; set; }
         public decimal? SpecialPrice { get; set; }
         public decimal? CostPrice { get; set; }
         public decimal? AverageCost { get; set; }
-        public string? Unit { get; set; }
+        public int? UnitId { get; set; }
         public decimal? WholesaleMargin { get; set; }
         public decimal? RetailMargin { get; set; }
         public bool IsSaleLocked { get; set; }

@@ -25,5 +25,18 @@ namespace ItemApi.Repositories
                 throw;
             }
         }
+
+        public async Task<string> UpdateNextGrnNoAsync(string locaCode)
+        {
+            try
+            {
+                return await _context.UpdateNextGrnNoAsync(locaCode);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
     }
 }

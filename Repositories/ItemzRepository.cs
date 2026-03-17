@@ -32,6 +32,17 @@ namespace ItemApi.Repositories
         {
             return await _context.SearchItemzAsync(query);
         }
+        
+        public async Task<List<ItemzWithDetails>> SearchByCodeItemzAsync(string query)
+        {
+            return await _context.SearchByCodeItemzAsync(query);
+        }
+        public async Task<List<ItemzWithDetails>> SearchByDesItemzAsync(string query)
+        {
+            return await _context.SearchByDesItemzAsync(query);
+        }
+
+      
 
         public async Task<Itemz> InsertItemzAsync(Itemz item)
         {

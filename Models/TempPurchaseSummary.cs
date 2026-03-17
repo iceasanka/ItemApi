@@ -14,7 +14,7 @@ namespace ItemApi.Models
         [MaxLength(20)]
         public string GrnNo { get; set; }
 
-        public int? LocaCode { get; set; }
+        public int? LocaId { get; set; }
 
         [MaxLength(30)]
         public string? RefNo { get; set; }
@@ -22,17 +22,14 @@ namespace ItemApi.Models
         public DateTime? PDate { get; set; }
 
         [MaxLength(20)]
-        public string? SuppCode { get; set; }
+        public string? SuppId { get; set; }
 
-        [MaxLength(10)]
-        public string? PMode { get; set; }
+        public int? PMode { get; set; }
 
         public decimal? GAmount { get; set; }
 
         [MaxLength(20)]
         public string? POderNo { get; set; }
-
-        public decimal? Disc { get; set; }
 
         public decimal? SubTotDisc { get; set; }
 
@@ -42,12 +39,9 @@ namespace ItemApi.Models
 
         public decimal? Returns { get; set; }
 
-        public decimal? Balance { get; set; }
-
         public decimal? Qty { get; set; }
 
-        [MaxLength(10)]
-        public string? Type { get; set; }
+        public int? Type { get; set; }
 
         public int? Status { get; set; }
 

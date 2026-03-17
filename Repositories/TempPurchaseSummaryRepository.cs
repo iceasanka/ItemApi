@@ -66,19 +66,18 @@ namespace ItemApi.Repositories
                     throw new Exception($"Record with Idx {summary.Idx} not found.");
 
                 existing.GrnNo        = summary.GrnNo;
-                existing.LocaCode     = summary.LocaCode;
+                existing.LocaId     = summary.LocaId;
                 existing.RefNo        = summary.RefNo;
                 existing.PDate        = summary.PDate;
-                existing.SuppCode     = summary.SuppCode;
+                existing.SuppId     = summary.SuppId;
                 existing.PMode        = summary.PMode;
                 existing.GAmount      = summary.GAmount;
                 existing.POderNo      = summary.POderNo;
-                existing.Disc         = summary.Disc;
                 existing.SubTotDisc   = summary.SubTotDisc;
                 existing.NetAmount    = summary.NetAmount;
                 existing.Advance      = summary.Advance;
                 existing.Returns      = summary.Returns;
-                existing.Balance      = summary.Balance;
+                //existing.Balance      = summary.Balance;
                 existing.Qty          = summary.Qty;
                 existing.Type         = summary.Type;
                 existing.Status       = summary.Status;
@@ -125,7 +124,7 @@ namespace ItemApi.Repositories
                     query = query.Where(x => EF.Functions.Like(x.GrnNo, $"%{request.GrnNo}%"));
 
                 if (!string.IsNullOrWhiteSpace(request.SuppCode))
-                    query = query.Where(x => EF.Functions.Like(x.SuppCode, $"%{request.SuppCode}%"));
+                    query = query.Where(x => EF.Functions.Like(x.SuppId, $"%{request.SuppCode}%"));
 
                 if (!string.IsNullOrWhiteSpace(request.POderNo))
                     query = query.Where(x => EF.Functions.Like(x.POderNo, $"%{request.POderNo}%"));

@@ -40,7 +40,7 @@ namespace ItemApi.Repositories
                     throw new Exception($"Record with Idx {tempPurchase.Idx} not found.");
 
                 existing.GrnNo      = tempPurchase.GrnNo;
-                existing.LocationId = tempPurchase.LocationId;
+                existing.LocaId = tempPurchase.LocaId;
                 existing.ItemId     = tempPurchase.ItemId;
                 existing.PDate      = tempPurchase.PDate;
                 existing.Cost       = tempPurchase.Cost;
@@ -50,7 +50,6 @@ namespace ItemApi.Repositories
                 existing.GAmount    = tempPurchase.GAmount;
                 existing.ExpDate    = tempPurchase.ExpDate;
                 existing.Status     = tempPurchase.Status;
-                existing.Type       = tempPurchase.Type;
                 existing.UserId     = tempPurchase.UserId;
                 existing.UDate      = DateTime.Now;
 

@@ -25,16 +25,32 @@ namespace ItemApi.Data
         {
             string sql = @"
                 SELECT 
-                    i.ItemId, i.RefCode, i.Barcode, i.Descrip, i.SinhalaDescrip,
-                    i.CatId, i.SubCatId, i.SupId, i.UseExp,
-                    d.ItemDetId, d.LocationId, d.RetailPrice, d.WholesalePrice, d.SpecialPrice,
-                    d.CostPrice, d.AverageCost, d.Unit, d.WholesaleMargin, d.RetailMargin,
-                    d.IsSaleLocked, d.NoDiscount, d.ReorderLevel, d.ReorderQty,
-                    d.QtyLevel2, d.PriceLevel2, d.QtyLevel3, d.PriceLevel3,
-                    d.QtyLevel4, d.PriceLevel4, d.DiscountAmount, d.DiscountPercent
+                    i.*,
+    d.ItemDetId,
+    d.LocaId ,
+    d.RetailPrice,
+    d.WholesalePrice,
+    d.SpecialPrice,
+    d.CostPrice,
+    d.AverageCost,
+    d.UnitId,
+    d.WholesaleMargin,
+    d.RetailMargin,
+    d.IsSaleLocked,
+    d.NoDiscount,
+    d.ReorderLevel,
+    d.ReorderQty,
+    d.QtyLevel2,
+    d.PriceLevel2,
+    d.QtyLevel3,
+    d.PriceLevel3,
+    d.QtyLevel4,
+    d.PriceLevel4,
+    d.DiscountAmount,
+    d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.ItemId = {0}";
+                WHERE i.ItemId = {0} and d.LocaId = 1";
 
             try
             {
@@ -51,16 +67,32 @@ namespace ItemApi.Data
         {
             string sql = @"
                 SELECT 
-                    i.ItemId, i.RefCode, i.Barcode, i.Descrip, i.SinhalaDescrip,
-                    i.CatId, i.SubCatId, i.SupId, i.UseExp,
-                    d.ItemDetId, d.LocationId, d.RetailPrice, d.WholesalePrice, d.SpecialPrice,
-                    d.CostPrice, d.AverageCost, d.Unit, d.WholesaleMargin, d.RetailMargin,
-                    d.IsSaleLocked, d.NoDiscount, d.ReorderLevel, d.ReorderQty,
-                    d.QtyLevel2, d.PriceLevel2, d.QtyLevel3, d.PriceLevel3,
-                    d.QtyLevel4, d.PriceLevel4, d.DiscountAmount, d.DiscountPercent
+                    i.*,
+    d.ItemDetId,
+    d.LocaId ,
+    d.RetailPrice,
+    d.WholesalePrice,
+    d.SpecialPrice,
+    d.CostPrice,
+    d.AverageCost,
+    d.UnitId,
+    d.WholesaleMargin,
+    d.RetailMargin,
+    d.IsSaleLocked,
+    d.NoDiscount,
+    d.ReorderLevel,
+    d.ReorderQty,
+    d.QtyLevel2,
+    d.PriceLevel2,
+    d.QtyLevel3,
+    d.PriceLevel3,
+    d.QtyLevel4,
+    d.PriceLevel4,
+    d.DiscountAmount,
+    d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.Barcode = {0}";
+                WHERE i.Barcode = {0} and d.LocaId = 1";
 
             try
             {
@@ -77,16 +109,32 @@ namespace ItemApi.Data
         {
             string sql = @"
                 SELECT 
-                    i.ItemId, i.RefCode, i.Barcode, i.Descrip, i.SinhalaDescrip,
-                    i.CatId, i.SubCatId, i.SupId, i.UseExp,
-                    d.ItemDetId, d.LocationId, d.RetailPrice, d.WholesalePrice, d.SpecialPrice,
-                    d.CostPrice, d.AverageCost, d.Unit, d.WholesaleMargin, d.RetailMargin,
-                    d.IsSaleLocked, d.NoDiscount, d.ReorderLevel, d.ReorderQty,
-                    d.QtyLevel2, d.PriceLevel2, d.QtyLevel3, d.PriceLevel3,
-                    d.QtyLevel4, d.PriceLevel4, d.DiscountAmount, d.DiscountPercent
+                    i.*,
+    d.ItemDetId,
+    d.LocaId ,
+    d.RetailPrice,
+    d.WholesalePrice,
+    d.SpecialPrice,
+    d.CostPrice,
+    d.AverageCost,
+    d.UnitId,
+    d.WholesaleMargin,
+    d.RetailMargin,
+    d.IsSaleLocked,
+    d.NoDiscount,
+    d.ReorderLevel,
+    d.ReorderQty,
+    d.QtyLevel2,
+    d.PriceLevel2,
+    d.QtyLevel3,
+    d.PriceLevel3,
+    d.QtyLevel4,
+    d.PriceLevel4,
+    d.DiscountAmount,
+    d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.RefCode = {0}";
+                WHERE i.RefCode = {0} and d.LocaId = 1";
 
             try
             {
@@ -103,18 +151,121 @@ namespace ItemApi.Data
         {
             string sql = @"
                 SELECT 
-                    i.ItemId, i.RefCode, i.Barcode, i.Descrip, i.SinhalaDescrip,
-                    i.CatId, i.SubCatId, i.SupId, i.UseExp,
-                    d.ItemDetId, d.LocationId, d.RetailPrice, d.WholesalePrice, d.SpecialPrice,
-                    d.CostPrice, d.AverageCost, d.Unit, d.WholesaleMargin, d.RetailMargin,
-                    d.IsSaleLocked, d.NoDiscount, d.ReorderLevel, d.ReorderQty,
-                    d.QtyLevel2, d.PriceLevel2, d.QtyLevel3, d.PriceLevel3,
-                    d.QtyLevel4, d.PriceLevel4, d.DiscountAmount, d.DiscountPercent
+                   i.*,
+    d.ItemDetId,
+ 
+    d.LocaId,
+    d.RetailPrice,
+    d.WholesalePrice,
+    d.SpecialPrice,
+    d.CostPrice,
+    d.AverageCost,
+    d.UnitId,
+    d.WholesaleMargin,
+    d.RetailMargin,
+    d.IsSaleLocked,
+    d.NoDiscount,
+    d.ReorderLevel,
+    d.ReorderQty,
+    d.QtyLevel2,
+    d.PriceLevel2,
+    d.QtyLevel3,
+    d.PriceLevel3,
+    d.QtyLevel4,
+    d.PriceLevel4,
+    d.DiscountAmount,
+    d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
                 WHERE i.Descrip LIKE {0}
                    OR i.RefCode LIKE {0}
-                   OR i.Barcode LIKE {0}";
+                   OR i.Barcode LIKE {0} and d.LocaId = 1";
+
+            try
+            {
+                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%").ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error searching itemz: {ex.Message}");
+                throw;
+            }
+        }  
+        
+        public async Task<List<ItemzWithDetails>> SearchByCodeItemzAsync(string query)
+        {
+            string sql = @"
+                SELECT 
+                    i.*,
+    d.ItemDetId,
+    d.LocaId ,
+    d.RetailPrice,
+    d.WholesalePrice,
+    d.SpecialPrice,
+    d.CostPrice,
+    d.AverageCost,
+    d.UnitId,
+    d.WholesaleMargin,
+    d.RetailMargin,
+    d.IsSaleLocked,
+    d.NoDiscount,
+    d.ReorderLevel,
+    d.ReorderQty,
+    d.QtyLevel2,
+    d.PriceLevel2,
+    d.QtyLevel3,
+    d.PriceLevel3,
+    d.QtyLevel4,
+    d.PriceLevel4,
+    d.DiscountAmount,
+    d.DiscountPercent
+                FROM z_tb_Item i
+                JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
+                WHERE i.ItemId LIKE {0}
+                   OR i.RefCode LIKE {0}
+                   OR i.Barcode LIKE {0} and d.LocaId = 1";
+
+            try
+            {
+                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%").ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error searching itemz: {ex.Message}");
+                throw;
+            }
+        }  
+        
+        public async Task<List<ItemzWithDetails>> SearchByDesItemzAsync(string query)
+        {
+            string sql = @"
+                SELECT 
+                    i.*,
+    d.ItemDetId,
+    d.LocaId,
+    d.RetailPrice,
+    d.WholesalePrice,
+    d.SpecialPrice,
+    d.CostPrice,
+    d.AverageCost,
+    d.UnitId,
+    d.WholesaleMargin,
+    d.RetailMargin,
+    d.IsSaleLocked,
+    d.NoDiscount,
+    d.ReorderLevel,
+    d.ReorderQty,
+    d.QtyLevel2,
+    d.PriceLevel2,
+    d.QtyLevel3,
+    d.PriceLevel3,
+    d.QtyLevel4,
+    d.PriceLevel4,
+    d.DiscountAmount,
+    d.DiscountPercent
+                FROM z_tb_Item i
+                JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
+                WHERE i.Descrip LIKE {0} and d.LocaId = 1";
 
             try
             {

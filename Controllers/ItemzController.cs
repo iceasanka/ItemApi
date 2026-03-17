@@ -90,6 +90,42 @@ namespace ItemApi.Controllers
             }
         }
 
+        [HttpGet("SearchByCode")]
+        public async Task<ActionResult<List<ItemzWithDetails>>> SearchByCode([FromQuery] string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return BadRequest("Query parameter is required.");
+
+            try
+            {
+                var items = await _repository.SearchByCodeItemzAsync(query);
+                return Ok(items);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
+        }
+
+        [HttpGet("SearchByDes")]
+        public async Task<ActionResult<List<ItemzWithDetails>>> SearchByDes([FromQuery] string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return BadRequest("Query parameter is required.");
+
+            try
+            {
+                var items = await _repository.SearchByDesItemzAsync(query);
+                return Ok(items);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return NotFound(ex.Message);
+            }
+        }
+
         // ─── POST ─────────────────────────────────────────────────────────────────
 
         [HttpPost("AddItem")]

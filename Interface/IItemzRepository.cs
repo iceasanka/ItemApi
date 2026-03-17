@@ -9,6 +9,11 @@ namespace ItemApi.Interface
         Task<ItemzWithDetails?> GetItemzWithDetailsByBarcodeAsync(string barcode);
         Task<ItemzWithDetails?> GetItemzWithDetailsByRefCodeAsync(string refCode);
         Task<List<ItemzWithDetails>> SearchItemzAsync(string query);
+        Task<List<ItemzWithDetails>> SearchByCodeItemzAsync(string query);
+        Task<List<ItemzWithDetails>> SearchByDesItemzAsync(string query);
+
+
+
 
         // Itemz CRUD
         Task<Itemz> InsertItemzAsync(Itemz item);

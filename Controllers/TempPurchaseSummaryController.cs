@@ -119,5 +119,20 @@ namespace ItemApi.Controllers
                 return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
             }
         }
+
+        [HttpPost("Commit")]
+        public async Task<IActionResult> Commit(string grnNo)
+        {
+            try
+            {
+                //var result = await _repository.CommitAsync(request);
+                return Ok(new { message = "Commit successful.", data = grnNo });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+
+        }
     }
 }

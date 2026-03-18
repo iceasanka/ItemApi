@@ -10,9 +10,14 @@ namespace ItemApi.Controllers
     {
         private readonly ITempPurchaseSummaryRepository _repository;
 
-        public TempPurchaseSummaryController(ITempPurchaseSummaryRepository repository)
+        private readonly ISystemRepository _systemrepository;
+
+    
+
+        public TempPurchaseSummaryController(ITempPurchaseSummaryRepository repository, ISystemRepository systemRepository)
         {
             _repository = repository;
+            _systemrepository = systemRepository;
         }
 
         // GET: api/TempPurchaseSummary/GetAll
@@ -58,6 +63,7 @@ namespace ItemApi.Controllers
             try
             {
                 var result = await _repository.InsertAsync(summary);
+                var updateGrnNo = await _systemrepository.UpdateNextGrnNoAsync("01");
                 return Ok(new { message = "Record inserted successfully.", data = result });
             }
             catch (Exception ex)
@@ -126,6 +132,8 @@ namespace ItemApi.Controllers
             try
             {
                 //var result = await _repository.CommitAsync(request);
+
+                //var updateGrnNo = await _systemrepository.UpdateNextGrnNoAsync("01");
                 return Ok(new { message = "Commit successful.", data = grnNo });
             }
             catch (Exception ex)

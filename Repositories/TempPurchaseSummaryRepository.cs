@@ -118,27 +118,40 @@ namespace ItemApi.Repositories
         {
             try
             {
-                var query = _context.TempPurchaseSummaries.AsQueryable();
+                var query = from t in _context.TempPurchaseSummaries
+                            join s in _context.dbSetSuppliers
+                                on t.SuppId equals s.SuppId into sup
+                            from s in sup.DefaultIfEmpty()
+                            select new TempPurchaseSummary
+                            {
+                                Idx = t.Idx,
+                                GrnNo = t.GrnNo,
+                                RefNo = t.RefNo,
+                                PDate = t.PDate,
+                                SuppId = t.SuppId,
+                                SuppName = s != null ? s.SuppName : "",
+                                NetAmount = t.NetAmount,
+                                Qty = t.Qty,
+                                Status = t.Status,
+                                Remark = t.Remark
+                            };
 
+                // Filters
                 if (!string.IsNullOrWhiteSpace(request.GrnNo))
                     query = query.Where(x => EF.Functions.Like(x.GrnNo, $"%{request.GrnNo}%"));
 
-                if (!string.IsNullOrWhiteSpace(request.SuppCode))
-                    query = query.Where(x => EF.Functions.Like(x.SuppId, $"%{request.SuppCode}%"));
-
-                if (!string.IsNullOrWhiteSpace(request.POderNo))
-                    query = query.Where(x => EF.Functions.Like(x.POderNo, $"%{request.POderNo}%"));
+                if (!string.IsNullOrWhiteSpace(request.RefNo))
+                    query = query.Where(x => EF.Functions.Like(x.RefNo, $"%{request.RefNo}%"));
 
                 if (!string.IsNullOrWhiteSpace(request.Remark))
                     query = query.Where(x => EF.Functions.Like(x.Remark, $"%{request.Remark}%"));
 
-                if (request.PDateFrom.HasValue)
-                    query = query.Where(x => x.PDate >= request.PDateFrom.Value);
+                if (request.SuppId != null && request.SuppId != 0)
+                    query = query.Where(x => x.SuppId == request.SuppId);
 
-                if (request.PDateTo.HasValue)
-                    query = query.Where(x => x.PDate <= request.PDateTo.Value.AddDays(1).AddSeconds(-1));
-
-                return await query.OrderByDescending(x => x.PDate).ToListAsync();
+                return await query
+                    .OrderByDescending(x => x.PDate)
+                    .ToListAsync();
             }
             catch (Exception ex)
             {

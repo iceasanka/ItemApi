@@ -21,8 +21,9 @@ namespace ItemApi.Models
 
         public DateTime? PDate { get; set; }
 
-        [MaxLength(20)]
-        public string? SuppId { get; set; }
+        public int? SuppId { get; set; }
+
+        public string? SuppName { get; set; }
 
         public int? PMode { get; set; }
 

@@ -14,6 +14,9 @@ using ItemApi.Interface;
 using ItemApi.Controllers;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.OData;
+using Microsoft.OData.Edm;
+using Microsoft.OData.ModelBuilder;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -137,6 +140,23 @@ builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Item API", Version = "v1" });
 });
+
+// Add this alongside your existing AddControllers()
+//builder.Services.AddControllers()
+//    .AddOData(opt => opt
+//        .AddRouteComponents("odata", GetEdmModel())
+//        .Select()
+//        .Filter()
+//        .OrderBy()
+//        .SetMaxTop(100)
+//        .Count());
+
+//static IEdmModel GetEdmModel()
+//{
+//    var builder = new ODataConventionModelBuilder();
+//    builder.EntitySet<GrnHeader>("Grn"); // your GRN model
+//    return builder.GetEdmModel();
+//}
 
 var app = builder.Build();
 

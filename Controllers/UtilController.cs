@@ -63,56 +63,25 @@ namespace ItemApi.Controllers
         {
             try
             {
-                Application btApp = new Application();
+                ItemWithDetails itemDetails = request.ItemDetails;
 
-                try
-                {
+                PrintBarCode barPrint = new PrintBarCode();
+                barPrint.Item_Code = itemDetails.Item_Code;
+                barPrint.Barcode = itemDetails.Barcode;
+                barPrint.Descrip = itemDetails.Descrip;
+                barPrint.ERet_Price = itemDetails.ERet_Price.ToString("0.00");
+                barPrint.expireDate = DateTime.Parse(request.expireDate).ToString("dd-MM-yyyy");
+                barPrint.mrDate = DateTime.Parse(request.mrDate).ToString("dd-MM-yyyy");
+                barPrint.printerName = _appSettings.PrinterZebra;
+                barPrint.printTemplatePath = _appSettings.StickerExpireDatePrint;
+                barPrint.lblCount = request.LabelCount; 
 
-
-                    ItemWithDetails itemDetails = request.ItemDetails;
-                    var labelCount = request.LabelCount;
-                    DateTime expireDate = DateTime.Parse(request.expireDate);
-                    DateTime mrDate = DateTime.Parse(request.mrDate);
-
-                    string templatePath = _appSettings.TemplatePath;
-                    string printerName = "ZDesigner ZP888 203DPI";
-                    string dataTextFilePath = _appSettings.DataTextFilePath;
-
-                    string columnNames = "Item_Code,Barcode,Descrip,ERet_Price,expireDate,mrDate";
-                    string data = $"{itemDetails.Item_Code},{itemDetails.Barcode},{itemDetails.Descrip},{itemDetails.ERet_Price},{expireDate.ToString("dd-MM-yyyy")},{mrDate.ToString("dd-MM-yyyy")}";
-
-
-                    if (System.IO.File.Exists(dataTextFilePath))
-                        System.IO.File.WriteAllText(dataTextFilePath, string.Empty);
-
-                    System.IO.File.WriteAllText(dataTextFilePath, $"{columnNames}\n{data}");
-
-
-                    btApp.Visible = false;
-                    Format btFormat = btApp.Formats.Open(templatePath, false, printerName);
-                    //btFormat.SetNamedSubStringValue("Items_Data", dataTextFilePath);
-                    btFormat.PrintSetup.IdenticalCopiesOfLabel = labelCount;
-
-                    btFormat.PrintOut(true, true);
-
-                    btFormat.Close(BtSaveOptions.btDoNotSaveChanges);
-                    btApp.Quit(BtSaveOptions.btDoNotSaveChanges);
-
-                    return Ok(new { message = "Print request processed successfully." });
-
-                }
-                catch (Exception ex)
-                {
-                    return BadRequest(new { message = "Error processing print request.", error = ex.Message });
-                }
-                finally
-                {
-                    btApp.Quit(BtSaveOptions.btDoNotSaveChanges);
-                }
-
+                await PrintLocalAgent(PrintJobType.BarCode, barPrint);
+                return Ok(new { message = "BarCode Print request processed successfully." });
             }
             catch (Exception ex)
             {
+
                 return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
             }
 
@@ -265,7 +234,23 @@ namespace ItemApi.Controllers
         }
 
 
+        [HttpPost("printCashierSettlement")]
+        public async Task<ActionResult> PrintCashierSettlement([FromBody] CashierSettlement settlement)
+        {
+            try
+            {
+                settlement.printerName = _appSettings.PrinterName;
+                settlement.printTemplatePath = _appSettings.SettlementTemplatePath;
 
+                await PrintLocalAgent(PrintJobType.Settlement, settlement);
+                return Ok(new { message = "Settlement Print request processed successfully." });
+            }
+            catch (Exception ex)
+            {
+
+                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+            }
+        }
 
 
 

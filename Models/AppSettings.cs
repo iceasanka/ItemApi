@@ -19,6 +19,9 @@
 
 
         public string ChequePrintTemplatePath { get; set; }
+        public string SettlementTemplatePath { get; set; }
+        public string StickerExpireDatePrint { get; set; }
+        public string PrinterZebra { get; set; }
 
         public string Apicre { get; set; }
     }

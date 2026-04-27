@@ -73,7 +73,7 @@ namespace ItemApi.Controllers
 
                 if (deletedGrnTemp == null)
                 {
-                    return NotFound(new { message = "No record found to delete.",status=false });
+                    return NotFound(new { message = "No record found to delete.", status = false });
                 }
 
                 return Ok(new { message = "GrnTemp deleted successfully.", data = deletedGrnTemp, status = true });
@@ -98,7 +98,7 @@ namespace ItemApi.Controllers
 
                 if (grnItems == null || !grnItems.Any())
                 {
-                    return Ok(new { message = "No records found", data = grnItems }); 
+                    return Ok(new { message = "No records found", data = grnItems });
                 }
 
                 return Ok(new { message = "GrnTemp records retrieved successfully.", data = grnItems });
@@ -134,7 +134,7 @@ namespace ItemApi.Controllers
             }
         }
 
-            
+
 
 
     }

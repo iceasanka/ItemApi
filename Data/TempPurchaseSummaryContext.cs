@@ -18,5 +18,7 @@ namespace ItemApi.Data
             modelBuilder.Entity<SupplierEntity>().ToTable("z_tb_Supplier");
             base.OnModelCreating(modelBuilder);
         }
+
+        //
     }
 }

@@ -89,6 +89,8 @@ builder.Services.AddDbContext<TempPurchaseContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddDbContext<SystemContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddDbContext<SupplierLedgerContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 
 
@@ -116,6 +118,7 @@ builder.Services.AddScoped<IItemzRepository, ItemzRepository>();
 builder.Services.AddScoped<ITempPurchaseSummaryRepository, TempPurchaseSummaryRepository>();
 builder.Services.AddScoped<ITempPurchaseRepository, TempPurchaseRepository>();
 builder.Services.AddScoped<ISystemRepository, SystemRepository>();
+builder.Services.AddScoped<ISupplierLedgerRepository, SupplierLedgerRepository>();
 
 // Register the service
 builder.Services.AddControllers();

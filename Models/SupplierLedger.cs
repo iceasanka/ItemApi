@@ -10,7 +10,7 @@ namespace ItemApi.Models
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int LedgerId { get; set; }
 
-        public int SuppId { get; set; }
+        public int? SuppId { get; set; }
 
         public DateTime TxnDate { get; set; }
 
@@ -33,9 +33,9 @@ namespace ItemApi.Models
 
         public int? UserId { get; set; }
 
-        public DateTime CDate { get; set; } = DateTime.Now;
+        public DateTime? CDate { get; set; } 
 
-        public DateTime UDate { get; set; } = DateTime.Now;
+        public DateTime? UDate { get; set; } 
 
         /// <summary>
         /// Computed by stored procedure — not mapped to a column

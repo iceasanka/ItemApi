@@ -29,6 +29,17 @@ namespace ItemApi.Controllers
                 return BadRequest("Cheque data is required.");
             }
 
+            if (await _repository.ChequeNumberExistsAsync(cheque.chequeNumber))
+            {
+                return Conflict(new
+                {
+                    code = "DUPLICATE_CHEQUE_NUMBER",
+                    message = $"Cheque number {cheque.chequeNumber} already exists."
+                });
+            }
+
+           
+
             ChequeCreate chequeCreate = new ChequeCreate();
             chequeCreate.Amount = cheque.amount;
             chequeCreate.ChequeDate = cheque.chequeDate;
@@ -43,7 +54,7 @@ namespace ItemApi.Controllers
 
             try
             {
-                await _repository.SyncPrintedChequeAsync(chequeCreate);
+               // await _repository.SyncPrintedChequeAsync(chequeCreate);
                 isSyncSuccess = true;
             }
             catch (Exception syncEx)

@@ -18,5 +18,12 @@ namespace ItemApi.Interface
 
         Task SyncPrintedChequeAsync(ChequeCreate cheque);
         Task ProcessFile(string filePath);
+
+        Task<bool> ChequeNumberExistsAsync(int chequeNumber);
+
+
+
+
+
     }
 }

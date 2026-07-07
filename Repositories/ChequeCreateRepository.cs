@@ -200,7 +200,11 @@ namespace ItemApi.Repositories
             return result;
         }
 
-
+        public async Task<bool> ChequeNumberExistsAsync(int chequeNumber)
+        {
+            return await _context.Cheques
+                .AnyAsync(c => c.ChequeNumber == chequeNumber);
+        }
 
     }
 }

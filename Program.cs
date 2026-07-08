@@ -92,6 +92,9 @@ builder.Services.AddDbContext<SystemContext>(options =>
 builder.Services.AddDbContext<SupplierLedgerContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddDbContext<SalaryContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 
 
 builder.Services.AddScoped<IItemRepository, ItemRepository>();
@@ -119,6 +122,14 @@ builder.Services.AddScoped<ITempPurchaseSummaryRepository, TempPurchaseSummaryRe
 builder.Services.AddScoped<ITempPurchaseRepository, TempPurchaseRepository>();
 builder.Services.AddScoped<ISystemRepository, SystemRepository>();
 builder.Services.AddScoped<ISupplierLedgerRepository, SupplierLedgerRepository>();
+
+builder.Services.AddScoped<ISalaryConfigRepository, SalaryConfigRepository>();
+builder.Services.AddScoped<ISalaryEmployeeRepository, SalaryEmployeeRepository>();
+builder.Services.AddScoped<ISalaryHolidayRepository, SalaryHolidayRepository>();
+builder.Services.AddScoped<ISalaryAttendanceRepository, SalaryAttendanceRepository>();
+builder.Services.AddScoped<ISalaryAdvanceRepository, SalaryAdvanceRepository>();
+builder.Services.AddScoped<ISalaryPayslipRepository, SalaryPayslipRepository>();
+builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>();
 
 // Register the service
 builder.Services.AddControllers();

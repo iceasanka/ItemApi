@@ -54,7 +54,7 @@ namespace ItemApi.Controllers
 
             try
             {
-               // await _repository.SyncPrintedChequeAsync(chequeCreate);
+                await _repository.SyncPrintedChequeAsync(chequeCreate);
                 isSyncSuccess = true;
             }
             catch (Exception syncEx)

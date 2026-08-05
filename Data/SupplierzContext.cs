@@ -1,5 +1,7 @@
+using ItemApi.Common;
 using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -34,13 +36,14 @@ namespace ItemApi.Data
             await SaveChangesAsync();
         }
 
-        // Delete a supplier by Id
+        // "Delete" a supplier by Id — soft delete: mark inactive instead of removing the row
         public async Task DeleteSupplierAsync(int id)
         {
             var entity = await _suppliers.FindAsync(id);
             if (entity != null)
             {
-                _suppliers.Remove(entity);
+                entity.Status = (int)Meta.SupplierStatus.Inactive;
+                entity.UDate = DateTime.Now;
                 await SaveChangesAsync();
             }
         }

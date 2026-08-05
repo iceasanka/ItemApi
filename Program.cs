@@ -1,6 +1,3 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using ItemApi.Data;
@@ -9,14 +6,8 @@ using ItemApi.Repositories;
 using ItemApi.Service;
 using Serilog;
 using ItemApi.Utility;
-using Microsoft.Extensions.Configuration;
 using ItemApi.Interface;
-using ItemApi.Controllers;
-using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.AspNetCore.OData;
-using Microsoft.OData.Edm;
-using Microsoft.OData.ModelBuilder;
 
 var builder = WebApplication.CreateBuilder(args);
 

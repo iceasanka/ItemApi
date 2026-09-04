@@ -12,16 +12,14 @@ namespace ItemApi.Controllers
     [ApiController]
     public class StocksController : ControllerBase
     {
-        private readonly StockContext _context;
         private readonly IStockRepository _stockRepository;
 
         private readonly StockService _stockService;
 
         private readonly IPosCountedStockRepository _posCountedStockRepository;
 
-        public StocksController(StockContext context, IStockRepository stockRepository, StockService stockService, IPosCountedStockRepository posCountedStockRepository)
+        public StocksController(IStockRepository stockRepository, StockService stockService, IPosCountedStockRepository posCountedStockRepository)
         {
-            _context = context;
             _stockRepository = stockRepository;
             _posCountedStockRepository = posCountedStockRepository;
 

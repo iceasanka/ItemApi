@@ -1,33 +1,27 @@
-﻿using ItemApi.Models;
-using Microsoft.AspNetCore.Mvc;
+using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 namespace ItemApi.Data
 {
-    public class PosCountedStockContext : DbContext
+    // Counted POS stock (z_tb_PosCountedStock) — consolidated from the former PosCountedStockContext.
+    // NOTE: despite the "Pos" name this lives on the DefaultConnection database, not PosConnection —
+    // see Data/PosDbContext.cs for the entity that actually lives on PosConnection (PosStock).
+    public partial class AppDbContext
     {
-
-        public PosCountedStockContext(DbContextOptions<PosCountedStockContext> options) : base(options) { }
-
         public DbSet<PosCountedStock> PosCountedStock { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigurePosCountedStock(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<PosCountedStock>().ToTable("z_tb_PosCountedStock");
-            base.OnModelCreating(modelBuilder);
         }
 
         public async Task<double> GetSumQtyAsync(string itemCode)
         {
-            //insert try catch block
             try
             {
-
-
                 double sumQty = await PosCountedStock.Where(stock => stock.ItemCode == itemCode).SumAsync(stock => (double?)stock.Qty) ?? 0;
                 return sumQty;
-
             }
             catch (Exception ex)
             {
@@ -35,7 +29,6 @@ namespace ItemApi.Data
                 throw ex;
             }
         }
-
 
         public async Task AddPosCountedStock(PosCountedStock posCountedStock)
         {
@@ -60,7 +53,6 @@ namespace ItemApi.Data
             }
         }
 
-        //implement delete method
         public async Task DeletePosCountedStock(string itemCode)
         {
             try
@@ -80,12 +72,10 @@ namespace ItemApi.Data
             }
         }
 
-        //implement delete all the table data in the database table
         public async Task DeleteAllPosCountedStock()
         {
             try
             {
-                //generate try catch block here
                 PosCountedStock.RemoveRange(PosCountedStock);
                 await SaveChangesAsync();
             }
@@ -95,8 +85,5 @@ namespace ItemApi.Data
                 throw ex;
             }
         }
-
-
-
     }
 }

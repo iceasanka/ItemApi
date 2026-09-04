@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 
     public class StockRepository : IStockRepository
     {
-        private readonly StockContext _context;
+        private readonly AppDbContext _context;
 
-        public StockRepository(StockContext context)
+        public StockRepository(AppDbContext context)
         {
             _context = context;
         }

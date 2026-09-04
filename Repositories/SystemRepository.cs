@@ -6,9 +6,9 @@ namespace ItemApi.Repositories
 {
     public class SystemRepository : ISystemRepository
     {
-        private readonly SystemContext _context;
+        private readonly AppDbContext _context;
 
-        public SystemRepository(SystemContext context)
+        public SystemRepository(AppDbContext context)
         {
             _context = context;
         }

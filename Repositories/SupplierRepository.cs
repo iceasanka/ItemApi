@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 {
     public class SupplierRepository : ISupplierRepository
     {
-        private readonly SupplierContext _context;
+        private readonly AppDbContext _context;
 
-        public SupplierRepository(SupplierContext context)
+        public SupplierRepository(AppDbContext context)
         {
             _context = context;
         }

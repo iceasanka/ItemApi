@@ -4,16 +4,14 @@ using Serilog;
 
 namespace ItemApi.Data
 {
-    public class SystemContext : DbContext
+    // System counters (z_tb_System) — consolidated from the former SystemContext.
+    public partial class AppDbContext
     {
-        public SystemContext(DbContextOptions<SystemContext> options) : base(options) { }
-
         public DbSet<ItemApi.Models.System> Systems { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureSystem(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<ItemApi.Models.System>().ToTable("z_tb_System");
-            base.OnModelCreating(modelBuilder);
         }
 
         public async Task<string> GenerateNextGrnNoAsync(string locaCode)

@@ -1,12 +1,17 @@
-﻿using ItemApi.Models;
+using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 namespace ItemApi.Data
 {
-    public class PosStockContext : DbContext
+    /// <summary>
+    /// DbContext for the entities that live on the separate "PosConnection" database.
+    /// Currently just PosStock (tbStock) — kept as its own context/connection rather than folded
+    /// into AppDbContext because it genuinely points at a different database.
+    /// </summary>
+    public class PosDbContext : DbContext
     {
-        public PosStockContext(DbContextOptions<PosStockContext> options) : base(options) { }
+        public PosDbContext(DbContextOptions<PosDbContext> options) : base(options) { }
 
         public DbSet<PosStock> PosStock { get; set; }
 
@@ -15,7 +20,6 @@ namespace ItemApi.Data
             modelBuilder.Entity<PosStock>().ToTable("tbStock");
             base.OnModelCreating(modelBuilder);
         }
-
 
         internal async Task<decimal> GetSumQtyAsync(string itemCode)
         {

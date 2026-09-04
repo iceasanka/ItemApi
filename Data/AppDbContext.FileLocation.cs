@@ -3,16 +3,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ItemApi.Data
 {
-    public class FileLocationContext : DbContext
+    // File locations (z_tb_FileLocation) — consolidated from the former FileLocationContext.
+    public partial class AppDbContext
     {
-        public FileLocationContext(DbContextOptions<FileLocationContext> options)
-            : base(options)
-        {
-        }
-
         public DbSet<FileLocation> FileLocations { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureFileLocation(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<FileLocation>().ToTable("z_tb_FileLocation");
         }
@@ -57,4 +53,3 @@ namespace ItemApi.Data
         }
     }
 }
-

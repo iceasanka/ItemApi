@@ -4,15 +4,16 @@ using Serilog;
 
 namespace ItemApi.Data
 {
-    public class ItemzContext : DbContext
+    // Itemz / ItemzDet (z_tb_Item, z_tb_ItemDet) — consolidated from the former ItemzContext.
+    // NOTE: this is a different table/entity family from Item (tb_Item) in AppDbContext.Item.cs —
+    // kept deliberately separate on the user's instruction, do not merge the two.
+    public partial class AppDbContext
     {
-        public ItemzContext(DbContextOptions<ItemzContext> options) : base(options) { }
-
         public DbSet<Itemz> Itemzs { get; set; }
         public DbSet<ItemzDet> ItemzDets { get; set; }
         public DbSet<ItemzWithDetails> ItemzWithDetails { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureItemz(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Itemz>().ToTable("z_tb_Item");
             modelBuilder.Entity<ItemzDet>().ToTable("z_tb_ItemDet");
@@ -24,7 +25,7 @@ namespace ItemApi.Data
         public async Task<ItemzWithDetails?> GetItemzWithDetailsByItemIdAsync(int itemId)
         {
             string sql = @"
-                SELECT 
+                SELECT
                     i.*,
     d.ItemDetId,
     d.LocaId ,
@@ -66,7 +67,7 @@ namespace ItemApi.Data
         public async Task<ItemzWithDetails?> GetItemzWithDetailsByBarcodeAsync(string barcode)
         {
             string sql = @"
-                SELECT 
+                SELECT
                     i.*,
     d.ItemDetId,
     d.LocaId ,
@@ -108,7 +109,7 @@ namespace ItemApi.Data
         public async Task<ItemzWithDetails?> GetItemzWithDetailsByRefCodeAsync(string refCode)
         {
             string sql = @"
-                SELECT 
+                SELECT
                     i.*,
     d.ItemDetId,
     d.LocaId ,
@@ -150,10 +151,10 @@ namespace ItemApi.Data
         public async Task<List<ItemzWithDetails>> SearchItemzAsync(string query)
         {
             string sql = @"
-                SELECT 
+                SELECT
                    i.*,
     d.ItemDetId,
- 
+
     d.LocaId,
     d.RetailPrice,
     d.WholesalePrice,
@@ -190,12 +191,12 @@ namespace ItemApi.Data
                 Log.Error($"Error searching itemz: {ex.Message}");
                 throw;
             }
-        }  
-        
+        }
+
         public async Task<List<ItemzWithDetails>> SearchByCodeItemzAsync(string query)
         {
             string sql = @"
-                SELECT 
+                SELECT
                     i.*,
     d.ItemDetId,
     d.LocaId ,
@@ -234,12 +235,12 @@ namespace ItemApi.Data
                 Log.Error($"Error searching itemz: {ex.Message}");
                 throw;
             }
-        }  
-        
+        }
+
         public async Task<List<ItemzWithDetails>> SearchByDesItemzAsync(string query)
         {
             string sql = @"
-                SELECT 
+                SELECT
                     i.*,
     d.ItemDetId,
     d.LocaId,

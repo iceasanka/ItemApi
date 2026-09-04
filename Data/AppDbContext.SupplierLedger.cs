@@ -4,18 +4,16 @@ using Serilog;
 
 namespace ItemApi.Data
 {
-    public class SupplierLedgerContext : DbContext
+    // Supplier ledger (z_tb_SupplierLedger) — consolidated from the former SupplierLedgerContext.
+    public partial class AppDbContext
     {
-        public SupplierLedgerContext(DbContextOptions<SupplierLedgerContext> options) : base(options) { }
-
         public DbSet<SupplierLedger> SupplierLedgers { get; set; }
         public DbSet<SupplierLedgerSummary> SupplierLedgerSummaries { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureSupplierLedger(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<SupplierLedger>().ToTable("z_tb_SupplierLedger");
             modelBuilder.Entity<SupplierLedgerSummary>().HasNoKey();
-            base.OnModelCreating(modelBuilder);
         }
 
         // Insert a new ledger entry

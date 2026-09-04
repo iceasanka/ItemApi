@@ -1,15 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using ItemApi.Models;
 using Serilog;
-using Microsoft.Data.SqlClient;
-using System.Data;
 
 namespace ItemApi.Data
 {
-    public class ItemContext : DbContext
+    // Item / ItemDetail (tb_Item, tb_ItemDet) — consolidated from the former ItemContext.
+    // NOTE: this is a different table/entity family from Itemz (z_tb_Item) in AppDbContext.Itemz.cs —
+    // kept deliberately separate, do not merge the two.
+    public partial class AppDbContext
     {
-        public ItemContext(DbContextOptions<ItemContext> options) : base(options) { }
-
         public DbSet<Item> Items { get; set; }
 
         public DbSet<ItemDetail> ItemDetails { get; set; }
@@ -19,7 +18,7 @@ namespace ItemApi.Data
         public DbSet<ItemWithDetails> ItemWithDetails { get; set; }
         public DbSet<PriceLink> PriceLinks { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureItem(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Item>().ToTable("tb_Item");
             modelBuilder.Entity<ItemDetail>().ToTable("tb_ItemDet");
@@ -31,8 +30,8 @@ namespace ItemApi.Data
         public async Task<ItemWithDetails> GetItemWithDetailsByBarcodeAsync(string barcode)
         {
             string sql = @"
-                SELECT 
-                    tb_item.*, 
+                SELECT
+                    tb_item.*,
                     tb_itemdet.Item_Code AS Detail_Item_Code, tb_itemdet.Loca_Code, tb_itemdet.PRet_Price, tb_itemdet.PWhole_Price, tb_itemdet.PSp_Price,
                     tb_itemdet.ERet_Price, tb_itemdet.EWhole_Price, tb_itemdet.ESp_Price, tb_itemdet.Cost_Price, tb_itemdet.AvgCost, tb_itemdet.Cost_Code,
                     tb_itemdet.Lock_S, tb_itemdet.Lock_P, tb_itemdet.NoDiscount, tb_itemdet.Re_Qty, tb_itemdet.Rol, tb_itemdet.Qty, tb_itemdet.User_Id,
@@ -64,8 +63,8 @@ namespace ItemApi.Data
         public async Task<ItemWithDetails> GetItemWithDetailsByRefCodeAsync(string refCode)
         {
             string sql = @"
-                SELECT 
-                    tb_item.*, 
+                SELECT
+                    tb_item.*,
                     tb_itemdet.Item_Code AS Detail_Item_Code, tb_itemdet.Loca_Code, tb_itemdet.PRet_Price, tb_itemdet.PWhole_Price, tb_itemdet.PSp_Price,
                     tb_itemdet.ERet_Price, tb_itemdet.EWhole_Price, tb_itemdet.ESp_Price, tb_itemdet.Cost_Price, tb_itemdet.AvgCost, tb_itemdet.Cost_Code,
                     tb_itemdet.Lock_S, tb_itemdet.Lock_P, tb_itemdet.NoDiscount, tb_itemdet.Re_Qty, tb_itemdet.Rol, tb_itemdet.Qty, tb_itemdet.User_Id,
@@ -95,8 +94,8 @@ namespace ItemApi.Data
         public async Task<ItemWithDetails> GetItemWithDetailsByItemCodeAsync(string itemCode)
         {
             string sql = @"
-                SELECT 
-                    tb_item.*, 
+                SELECT
+                    tb_item.*,
                     tb_itemdet.Item_Code AS Detail_Item_Code, tb_itemdet.Loca_Code, tb_itemdet.PRet_Price, tb_itemdet.PWhole_Price, tb_itemdet.PSp_Price,
                     tb_itemdet.ERet_Price, tb_itemdet.EWhole_Price, tb_itemdet.ESp_Price, tb_itemdet.Cost_Price, tb_itemdet.AvgCost, tb_itemdet.Cost_Code,
                     tb_itemdet.Lock_S, tb_itemdet.Lock_P, tb_itemdet.NoDiscount, tb_itemdet.Re_Qty, tb_itemdet.Rol, tb_itemdet.Qty, tb_itemdet.User_Id,
@@ -132,9 +131,9 @@ namespace ItemApi.Data
                pwholeprice
                     FROM tb_pricelink
                     WHERE itemcode = {0}
-                    AND status = 1 
+                    AND status = 1
                     AND loca = '01'
-                    ORDER  BY createdate DESC 
+                    ORDER  BY createdate DESC
     ";
             // status = 1 AND
 
@@ -153,18 +152,18 @@ namespace ItemApi.Data
         public async Task<int> UpdatePriceLink(PriceLinkUpdateDTO dto)
         {
             string sql = @"
-        EXEC [dbo].[Sp_UpdatePriceLink] 
-            @ITEMCODE = @p0, 
-            @ITEMDESCRIP = @p1, 
-            @LOCA = @p2, 
-            @USERNAME = @p3, 
-            @STATUS = @p4, 
-            @PRICE = @p5, 
-            @COSTPRICE = @p6, 
-            @PACKSIZE = @p7, 
-            @EWHOLEPRICE = @p8, 
-            @PRETPRICE = @p9, 
-            @PWHOLEPRICE = @p10, 
+        EXEC [dbo].[Sp_UpdatePriceLink]
+            @ITEMCODE = @p0,
+            @ITEMDESCRIP = @p1,
+            @LOCA = @p2,
+            @USERNAME = @p3,
+            @STATUS = @p4,
+            @PRICE = @p5,
+            @COSTPRICE = @p6,
+            @PACKSIZE = @p7,
+            @EWHOLEPRICE = @p8,
+            @PRETPRICE = @p9,
+            @PWHOLEPRICE = @p10,
             @ISUPDATEALLLOCATION = @p11";
 
             try
@@ -232,7 +231,7 @@ namespace ItemApi.Data
                     i.OpenPrice AS UseOpenPrice,
                     i.QrCodeDescrip,
                     i.Use_Exp,
-    
+
                     d.ERet_Price AS EachRetail,
                     d.EWhole_Price AS EachWholeSale,
                     d.PRet_Price AS PackRetail,
@@ -247,7 +246,7 @@ namespace ItemApi.Data
                     d.C_Price AS CCPrice,
                     d.Re_Qty AS ReOrderQty,
                     d.Rol AS ReOrderLevel,
-    
+
                     d.SPQ AS SecondPriceQty,
                     d.SPR AS SecondPriceRate,
                     d.TPQ AS ThirdPriceQty,
@@ -263,7 +262,7 @@ namespace ItemApi.Data
                     d.EIPQ AS EightthPriceQty,
                     d.EIPR AS EightthPriceRate,
                     d.Commission,
-    
+
                     d.User_Id AS UserId,
                     d.Loca_Code AS LocaCode,
                     '' AS CatName,
@@ -303,75 +302,75 @@ namespace ItemApi.Data
 
                 // Call SP
                 var sql2 = @"
-                    EXEC [dbo].[Sp_ITEM_UPDATE_PRL] 
-                        @ERR_SQL = {0}, 
-                        @LOCA_CODE = {1}, 
-                        @ITEM_CODE = {2}, 
-                        @BARCODE = {3}, 
-                        @REF_CODE = {4}, 
-                        @INV_DESCRIPTION = {5}, 
-                        @DESCRIPTION = {6}, 
-                        @SINHALADESCRIP = {7}, 
-                        @SUPP_CODE = {8}, 
-                        @CAT_CODE = {9}, 
-                        @SUBCAT_CODE = {10}, 
-                        @L1_CODE = {11}, 
-                        @L2_CODE = {12}, 
-                        @L3_CODE = {13}, 
-                        @L4_CODE = {14}, 
-                        @L5_CODE = {15}, 
-                        @L6_CODE = {16}, 
-                        @L7_CODE = {17}, 
-                        @PACK_SIZE = {18}, 
-                        @COST_PRICE = {19}, 
-                        @R_MARGINE = {20}, 
-                        @W_MARGINE = {21}, 
-                        @ERET_PRICE = {22}, 
-                        @EWHOLE_PRICE = {23}, 
-                        @E_UNIT = {24}, 
-                        @PRET_PRICE = {25}, 
-                        @PWHOLE_PRICE = {26}, 
-                        @P_UNIT = {27}, 
-                        @ROL = {28}, 
-                        @RE_QTY = {29}, 
-                        @COST_CODE = {30}, 
-                        @LOCK_S = {31}, 
-                        @LOCK_P = {32}, 
-                        @TAX1 = {33}, 
-                        @TAX2 = {34}, 
-                        @TAX3 = {35}, 
-                        @USER_ID = {36}, 
-                        @STATUS = {37}, 
-                        @COUNTABLE = {38}, 
-                        @BINNO = {39}, 
-                        @COMRATE = {40}, 
-                        @ITEMTYPE = {41}, 
-                        @CONFACT = {42}, 
-                        @CONFACTUNIT = {43}, 
-                        @NODISCOUNT = {44}, 
-                        @USEEXP = {45}, 
-                        @SP_QTY = {46}, 
-                        @SPRICE = {47}, 
-                        @TP_QTY = {48}, 
-                        @TPRICE = {49}, 
-                        @FP_QTY = {50}, 
-                        @FPRICE = {51}, 
-                        @CONS = {52}, 
-                        @FIPQ = {53}, 
-                        @FIPR = {54}, 
-                        @SIPQ = {55}, 
-                        @SIPR = {56}, 
-                        @SEPQ = {57}, 
-                        @SEPR = {58}, 
-                        @EIPQ = {59}, 
-                        @EIPR = {60}, 
-                        @PRICETYPE = {61}, 
-                        @MAXPRICE = {62}, 
-                        @ISCOMBINED = {63}, 
-                        @ISTAXAPPLY = {64}, 
-                        @Commission = {65}, 
-                        @ISNBTAPPLY = {66}, 
-                        @QrCodeDescrip = {67}, 
+                    EXEC [dbo].[Sp_ITEM_UPDATE_PRL]
+                        @ERR_SQL = {0},
+                        @LOCA_CODE = {1},
+                        @ITEM_CODE = {2},
+                        @BARCODE = {3},
+                        @REF_CODE = {4},
+                        @INV_DESCRIPTION = {5},
+                        @DESCRIPTION = {6},
+                        @SINHALADESCRIP = {7},
+                        @SUPP_CODE = {8},
+                        @CAT_CODE = {9},
+                        @SUBCAT_CODE = {10},
+                        @L1_CODE = {11},
+                        @L2_CODE = {12},
+                        @L3_CODE = {13},
+                        @L4_CODE = {14},
+                        @L5_CODE = {15},
+                        @L6_CODE = {16},
+                        @L7_CODE = {17},
+                        @PACK_SIZE = {18},
+                        @COST_PRICE = {19},
+                        @R_MARGINE = {20},
+                        @W_MARGINE = {21},
+                        @ERET_PRICE = {22},
+                        @EWHOLE_PRICE = {23},
+                        @E_UNIT = {24},
+                        @PRET_PRICE = {25},
+                        @PWHOLE_PRICE = {26},
+                        @P_UNIT = {27},
+                        @ROL = {28},
+                        @RE_QTY = {29},
+                        @COST_CODE = {30},
+                        @LOCK_S = {31},
+                        @LOCK_P = {32},
+                        @TAX1 = {33},
+                        @TAX2 = {34},
+                        @TAX3 = {35},
+                        @USER_ID = {36},
+                        @STATUS = {37},
+                        @COUNTABLE = {38},
+                        @BINNO = {39},
+                        @COMRATE = {40},
+                        @ITEMTYPE = {41},
+                        @CONFACT = {42},
+                        @CONFACTUNIT = {43},
+                        @NODISCOUNT = {44},
+                        @USEEXP = {45},
+                        @SP_QTY = {46},
+                        @SPRICE = {47},
+                        @TP_QTY = {48},
+                        @TPRICE = {49},
+                        @FP_QTY = {50},
+                        @FPRICE = {51},
+                        @CONS = {52},
+                        @FIPQ = {53},
+                        @FIPR = {54},
+                        @SIPQ = {55},
+                        @SIPR = {56},
+                        @SEPQ = {57},
+                        @SEPR = {58},
+                        @EIPQ = {59},
+                        @EIPR = {60},
+                        @PRICETYPE = {61},
+                        @MAXPRICE = {62},
+                        @ISCOMBINED = {63},
+                        @ISTAXAPPLY = {64},
+                        @Commission = {65},
+                        @ISNBTAPPLY = {66},
+                        @QrCodeDescrip = {67},
                         @CreditCustomerPrice = {68}";
 
                 await this.Database.ExecuteSqlRawAsync(sql2,
@@ -457,6 +456,5 @@ namespace ItemApi.Data
                 throw;
             }
         }
-
     }
 }

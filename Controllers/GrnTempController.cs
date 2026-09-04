@@ -10,12 +10,10 @@ namespace ItemApi.Controllers
     [Route("api/[controller]")]
     public class GrnTempController : ControllerBase
     {
-        private readonly GrnTempContext _context;
         private readonly IGrnTempRepository _repository;
 
-        public GrnTempController(GrnTempContext context, IGrnTempRepository repository)
+        public GrnTempController(IGrnTempRepository repository)
         {
-            _context = context;
             _repository = repository;
         }
 

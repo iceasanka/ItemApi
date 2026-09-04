@@ -1,23 +1,17 @@
 using ItemApi.Common;
 using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace ItemApi.Data
 {
-    public class SupplierzContext : DbContext
+    // SupplierEntity (z_tb_Supplier) — consolidated from the former SupplierzContext.
+    // Shared by AppDbContext.TempPurchaseSummary.cs (summary rows join against the supplier list).
+    // NOTE: not the same table/entity as Supplier (tb_Supplier) in AppDbContext.Supplier.cs.
+    public partial class AppDbContext
     {
-        public SupplierzContext(DbContextOptions<SupplierzContext> options)
-            : base(options)
-        {
-        }
+        public DbSet<SupplierEntity> SupplierEntities { get; set; }
 
-        public DbSet<SupplierEntity> _suppliers { get; set; }
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureSupplierz(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<SupplierEntity>().ToTable("z_tb_Supplier");
         }
@@ -25,21 +19,21 @@ namespace ItemApi.Data
         // Add a new supplier
         public async Task AddSupplierAsync(SupplierEntity supplier)
         {
-            _suppliers.Add(supplier);
+            SupplierEntities.Add(supplier);
             await SaveChangesAsync();
         }
 
         // Update an existing supplier
         public async Task UpdateSupplierAsync(SupplierEntity supplier)
         {
-            _suppliers.Update(supplier);
+            SupplierEntities.Update(supplier);
             await SaveChangesAsync();
         }
 
         // "Delete" a supplier by Id — soft delete: mark inactive instead of removing the row
         public async Task DeleteSupplierAsync(int id)
         {
-            var entity = await _suppliers.FindAsync(id);
+            var entity = await SupplierEntities.FindAsync(id);
             if (entity != null)
             {
                 entity.Status = (int)Meta.SupplierStatus.Inactive;
@@ -51,13 +45,13 @@ namespace ItemApi.Data
         // Get a supplier by Id
         public async Task<SupplierEntity> GetSupplierByIdAsync(int id)
         {
-            return await _suppliers.FindAsync(id);
+            return await SupplierEntities.FindAsync(id);
         }
 
         // Search suppliers by SuppName
         public async Task<List<SupplierEntity>> SearchSupplierByNameAsync(string suppName)
         {
-            return await _suppliers
+            return await SupplierEntities
                 .Where(s => s.SuppName.Contains(suppName))
                 .ToListAsync();
         }
@@ -65,8 +59,7 @@ namespace ItemApi.Data
         // Get all suppliers
         public async Task<List<SupplierEntity>> GetAllSuppliersAsync()
         {
-            return await _suppliers.ToListAsync();
+            return await SupplierEntities.ToListAsync();
         }
     }
 }
-

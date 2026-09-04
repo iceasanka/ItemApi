@@ -4,26 +4,21 @@ using Serilog;
 
 namespace ItemApi.Data
 {
-    public class ReturnContext : DbContext
+    // Return items (z_tb_ReturnItem) — consolidated from the former ReturnContext.
+    public partial class AppDbContext
     {
-        public ReturnContext(DbContextOptions<ReturnContext> options) : base(options) { }
-
         public DbSet<ReturnItem> ReturnItems { get; set; }
 
         public DbSet<ReturnMode> ReturnModes { get; set; }
         public DbSet<PurchaseType> PurchaseTypes { get; set; }
 
-        public DbSet<Supplier> Suppliers { get; set; }
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureReturn(ModelBuilder modelBuilder)
         {
             // Map the ReturnItem entity to the z_tb_ReturnItem table
             modelBuilder.Entity<ReturnItem>().ToTable("z_tb_ReturnItem");
 
             modelBuilder.Entity<ReturnMode>().ToTable("tb_ReturnMode");
             modelBuilder.Entity<PurchaseType>().ToTable("tb_PurchaseType");
-
-            modelBuilder.Entity<Supplier>().ToTable("TB_SUPPLIER");
         }
 
         public async Task<int> GetPRNOByLocaCodeAsync(string locaCode)
@@ -41,7 +36,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
 
         }
@@ -98,7 +93,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex.Message}");
-                throw ;
+                throw;
             }
         }
 
@@ -168,7 +163,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex.Message}");
-                throw ;
+                throw;
             }
         }
 
@@ -178,26 +173,26 @@ namespace ItemApi.Data
             {
 
                 var sql = @"
-        EXEC [dbo].[sp_UPDATE_PURCHASE_RTN] 
-            @SerialNo = {0}, 
-            @RefNo = {1}, 
-            @PNDate = {2}, 
-            @SuppCode = {3}, 
-            @SuppName = {4}, 
-            @PODNo = {5}, 
-            @PType = {6}, 
-            @PMode = {7}, 
-            @GrossAmount = {8}, 
-            @TotDiscount = {9}, 
-            @SubTotDiscount = {10}, 
-            @Tax = {11}, 
-            @Advance = {12}, 
-            @NetAmount = {13}, 
-            @UserName = {14}, 
-            @LocaCode = {15}, 
-            @Status = {16}, 
-            @IsExp = {17}, 
-            @Nbt = {18}, 
+        EXEC [dbo].[sp_UPDATE_PURCHASE_RTN]
+            @SerialNo = {0},
+            @RefNo = {1},
+            @PNDate = {2},
+            @SuppCode = {3},
+            @SuppName = {4},
+            @PODNo = {5},
+            @PType = {6},
+            @PMode = {7},
+            @GrossAmount = {8},
+            @TotDiscount = {9},
+            @SubTotDiscount = {10},
+            @Tax = {11},
+            @Advance = {12},
+            @NetAmount = {13},
+            @UserName = {14},
+            @LocaCode = {15},
+            @Status = {16},
+            @IsExp = {17},
+            @Nbt = {18},
             @Disc = {19}";
 
                 await this.Database.ExecuteSqlRawAsync(sql,
@@ -225,7 +220,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex.Message}");
-                throw ;
+                throw;
             }
         }
 
@@ -236,13 +231,13 @@ namespace ItemApi.Data
 
                 var sql = @"
 EXEC [dbo].[Sp_DELETE_TEMP_PURCHASE]
-    @SerialNo = {0}, 
-    @ID = {1}, 
-    @LocaCode = {2}, 
-    @UserName = {3}, 
-    @ItemCode = {4}, 
-    @Cost = {5}, 
-    @IdNo = {6}, 
+    @SerialNo = {0},
+    @ID = {1},
+    @LocaCode = {2},
+    @UserName = {3},
+    @ItemCode = {4},
+    @Cost = {5},
+    @IdNo = {6},
     @CancelAll = {7}";
 
                 await this.Database.ExecuteSqlRawAsync(sql,
@@ -258,14 +253,8 @@ EXEC [dbo].[Sp_DELETE_TEMP_PURCHASE]
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex.Message}");
-                throw ;
+                throw;
             }
         }
-
-
-
-
-
-
     }
 }

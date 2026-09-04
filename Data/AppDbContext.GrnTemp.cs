@@ -1,25 +1,18 @@
-﻿using ItemApi.Models;
+using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
-using System;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace ItemApi.Data
 {
-    public class GrnTempContext : DbContext
+    // GRN temp staging (z_tb_GrnTemp) — consolidated from the former GrnTempContext.
+    // Joins against the shared ItemDetails DbSet declared in AppDbContext.Item.cs.
+    public partial class AppDbContext
     {
-        public GrnTempContext(DbContextOptions<GrnTempContext> options) : base(options) { }
         public DbSet<GrnTemp> _grnTemp { get; set; }
 
-        public DbSet<ItemDetail> _itemDetails { get; set; }
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureGrnTemp(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<GrnTemp>().ToTable("z_tb_GrnTemp");
-            modelBuilder.Entity<ItemDetail>().ToTable("tb_ItemDet");
-
-            base.OnModelCreating(modelBuilder);
         }
 
         public async Task<GrnTemp> InsertGrnTempAsync(GrnTemp grnRef)
@@ -33,7 +26,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
         }
 
@@ -48,7 +41,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
         }
 
@@ -68,31 +61,17 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
         }
 
-        //get ist of grnitems by  GrnReference and status
-        /* public async Task<IQueryable<GrnTemp>> GetGrnTempByGrnReferenceAndStatusAsync(string grnReference, int status)
-         {
-             try
-             {
-                 var grnItems = _grnTemp.Where(x => x.GrnReference == grnReference && x.Status == status);
-                 return await Task.FromResult(grnItems);
-             }
-             catch (Exception ex)
-             {
-                 Log.Error($"Error: {ex}");
-                 throw ;
-             }
-         }*/
-
+        // get list of grn items by GrnReference and status
         public async Task<List<GrnTemp>> GetGrnTempByGrnReferenceAndStatusAsync(string grnReference, int status)
         {
             try
             {
                 var query = from grn in _grnTemp
-                            join det in _itemDetails
+                            join det in ItemDetails
                                 on grn.ItemCode equals det.Item_Code
                             where grn.GrnReference == grnReference
                                   && grn.Status == status
@@ -125,9 +104,7 @@ namespace ItemApi.Data
             }
         }
 
-
-
-        //update status of grnitems by Id
+        // update status of grn items by Id
         public async Task<GrnTemp> UpdateGrnTempStatusAsync(int id, int status)
         {
             try
@@ -145,7 +122,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
         }
 
@@ -161,7 +138,6 @@ namespace ItemApi.Data
                 Log.Error($"Error: {ex}");
                 throw;
             }
-        } 
-
+        }
     }
 }

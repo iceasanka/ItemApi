@@ -12,17 +12,12 @@ namespace ItemApi.Controllers
     public class ReturnController : ControllerBase
     {
         private readonly IReturnRepository _repository;
-        private readonly ReturnContext _contextReturn;
-        private readonly ItemContext _contextItem;
         private readonly IItemRepository _itemRepository;
         private PrinterService printerService;
 
-        public ReturnController(ReturnContext contextReturn, IReturnRepository repository, ItemContext contextItem, IItemRepository itemRepository)
+        public ReturnController(IReturnRepository repository, IItemRepository itemRepository)
         {
-            _contextReturn = contextReturn;
             _repository = repository;
-
-            _contextItem = contextItem;
             _itemRepository = itemRepository;
             printerService = new PrinterService();
         }

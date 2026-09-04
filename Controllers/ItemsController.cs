@@ -10,10 +10,10 @@ namespace ItemApi.Controllers
     [ApiController]
     public class ItemsController : ControllerBase
     {
-        private readonly ItemContext _context;
+        private readonly AppDbContext _context;
         private readonly IItemRepository _itemRepository;
 
-        public ItemsController(ItemContext context, IItemRepository itemRepository)
+        public ItemsController(AppDbContext context, IItemRepository itemRepository)
         {
             _context = context;
             _itemRepository = itemRepository;

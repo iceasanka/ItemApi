@@ -10,9 +10,9 @@ namespace ItemApi.Repositories
 {
     public class ChequeCreateRepository : IChequeCreateRepository
     {
-        private readonly ChequeCreateContext _context;
+        private readonly AppDbContext _context;
         private readonly IGoogleSheetService _googleSheetService;
-        public ChequeCreateRepository(ChequeCreateContext context, IGoogleSheetService googleSheetService)
+        public ChequeCreateRepository(AppDbContext context, IGoogleSheetService googleSheetService)
         {
             _context = context;
             _googleSheetService = googleSheetService;

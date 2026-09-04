@@ -1,19 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using ItemApi.Models;
 using Serilog;
+using System.Data;
 
 namespace ItemApi.Data
 {
-    public class StockContext : DbContext
+    // Stock queries/adjustments (tb_stock, tb_System.OPB) — consolidated from the former StockContext.
+    public partial class AppDbContext
     {
-        public StockContext(DbContextOptions<StockContext> options) : base(options) { }
-
         public DbSet<StockCountResult> dbStocks { get; set; }
 
         public DbSet<SpHasExistsSrlNewResult> SpHasExistsSrlNewResults { get; set; }
 
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureStock(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<StockCountResult>().HasNoKey();
             modelBuilder.Entity<SpHasExistsSrlNewResult>().HasNoKey();
@@ -70,7 +69,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
 
         }
@@ -87,7 +86,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
         }
 
@@ -104,7 +103,7 @@ namespace ItemApi.Data
             catch (Exception ex)
             {
                 Log.Error($"Error: {ex}");
-                throw ;
+                throw;
             }
         }
 

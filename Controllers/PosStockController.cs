@@ -9,14 +9,12 @@ namespace ItemApi.Controllers
     [ApiController]
     public class PosStockController : ControllerBase
     {
-        private readonly PosStockContext _context;
         private readonly IPosStockRepository _repository;
 
         private readonly IPosCountedStockRepository _posCountedRepository;
 
-        public PosStockController(PosStockContext context, IPosStockRepository repository, IPosCountedStockRepository posCountedRepository)
+        public PosStockController(IPosStockRepository repository, IPosCountedStockRepository posCountedRepository)
         {
-            _context = context;
             _repository = repository;
             _posCountedRepository = posCountedRepository;
         }

@@ -3,13 +3,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ItemApi.Data
 {
-    public class SalaryContext : DbContext
+    // Salary system tables (z_tb_Salary*) — consolidated from the former SalaryContext.
+    public partial class AppDbContext
     {
-        public SalaryContext(DbContextOptions<SalaryContext> options)
-            : base(options)
-        {
-        }
-
         public DbSet<SalaryConfig> SalaryConfigs { get; set; }
         public DbSet<SalaryEmployee> SalaryEmployees { get; set; }
         public DbSet<SalaryHoliday> SalaryHolidays { get; set; }
@@ -17,7 +13,7 @@ namespace ItemApi.Data
         public DbSet<SalaryAdvance> SalaryAdvances { get; set; }
         public DbSet<SalaryPayslip> SalaryPayslips { get; set; }
 
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        partial void ConfigureSalary(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<SalaryConfig>().ToTable("z_tb_SalaryConfig");
             modelBuilder.Entity<SalaryEmployee>().ToTable("z_tb_SalaryEmployee");
@@ -49,8 +45,6 @@ namespace ItemApi.Data
             modelBuilder.Entity<SalaryPayslip>().Property(p => p.TotalDaysInMonth).HasConversion<byte>();
             modelBuilder.Entity<SalaryPayslip>().Property(p => p.DaysPresent).HasConversion<byte>();
             modelBuilder.Entity<SalaryPayslip>().Property(p => p.MhCount).HasConversion<byte>();
-
-            base.OnModelCreating(modelBuilder);
         }
     }
 }

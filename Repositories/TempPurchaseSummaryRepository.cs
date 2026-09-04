@@ -8,9 +8,9 @@ namespace ItemApi.Repositories
 {
     public class TempPurchaseSummaryRepository : ITempPurchaseSummaryRepository
     {
-        private readonly TempPurchaseSummaryContext _context;
+        private readonly AppDbContext _context;
 
-        public TempPurchaseSummaryRepository(TempPurchaseSummaryContext context)
+        public TempPurchaseSummaryRepository(AppDbContext context)
         {
             _context = context;
         }
@@ -119,7 +119,7 @@ namespace ItemApi.Repositories
             try
             {
                 var query = from t in _context.TempPurchaseSummaries
-                            join s in _context.dbSetSuppliers
+                            join s in _context.SupplierEntities
                                 on t.SuppId equals s.SuppId into sup
                             from s in sup.DefaultIfEmpty()
                             select new TempPurchaseSummary

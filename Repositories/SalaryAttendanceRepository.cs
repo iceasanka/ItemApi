@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 {
     public class SalaryAttendanceRepository : ISalaryAttendanceRepository
     {
-        private readonly SalaryContext _context;
+        private readonly AppDbContext _context;
 
-        public SalaryAttendanceRepository(SalaryContext context)
+        public SalaryAttendanceRepository(AppDbContext context)
         {
             _context = context;
         }

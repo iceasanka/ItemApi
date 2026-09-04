@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 {
     public class SubCategoryRepository : ISubCategoryRepository
     {
-        private readonly SubCategoryContext _context;
+        private readonly AppDbContext _context;
 
-        public SubCategoryRepository(SubCategoryContext context)
+        public SubCategoryRepository(AppDbContext context)
         {
             _context = context;
         }

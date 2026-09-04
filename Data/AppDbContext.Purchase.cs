@@ -1,13 +1,13 @@
-﻿using ItemApi.Models;
+using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
 namespace ItemApi.Data
 {
-    public class PurchaseContext : DbContext
+    // Purchase commit/staging stored-procedure calls — consolidated from the former PurchaseContext.
+    // No dedicated entities/DbSets of its own; everything here goes through raw SQL / stored procs.
+    public partial class AppDbContext
     {
-        public PurchaseContext(DbContextOptions<PurchaseContext> options) : base(options) { }
-
         public async Task<int> GetPNOByLocaCodeAsync(string locaCode)
         {
             try
@@ -61,7 +61,7 @@ namespace ItemApi.Data
         @Nbt = {23},
         @Tax = {24},
         @ManufactureDate = {25}";
-               
+
 
                 await this.Database.ExecuteSqlRawAsync(
                     sql,
@@ -106,38 +106,38 @@ namespace ItemApi.Data
             try
             {
                 var sql = @"
-                            EXEC [dbo].[sp_UPDATE_PURCHASE] 
-                                @SerialNo = {0}, 
-                                @RefNo = {1}, 
+                            EXEC [dbo].[sp_UPDATE_PURCHASE]
+                                @SerialNo = {0},
+                                @RefNo = {1},
                                 @RefNo2 = {2},
-                                @PNDate = {3}, 
-                                @SuppCode = {4}, 
-                                @SuppName = {5}, 
-                                @PODNo = {6}, 
-                                @PType = {7}, 
-                                @PMode = {8}, 
-                                @GrossAmount = {9}, 
-                                @TotDiscount = {10}, 
-                                @Tax = {11}, 
-                                @Advance = {12}, 
+                                @PNDate = {3},
+                                @SuppCode = {4},
+                                @SuppName = {5},
+                                @PODNo = {6},
+                                @PType = {7},
+                                @PMode = {8},
+                                @GrossAmount = {9},
+                                @TotDiscount = {10},
+                                @Tax = {11},
+                                @Advance = {12},
                                 @AdvPMode = {13},
-                                @SubTotDiscount = {14}, 
-                                @NetAmount = {15}, 
-                                @UserName = {16}, 
-                                @LocaCode = {17}, 
-                                @Status = {18}, 
+                                @SubTotDiscount = {14},
+                                @NetAmount = {15},
+                                @UserName = {16},
+                                @LocaCode = {17},
+                                @Status = {18},
                                 @Returns = {19},
                                 @UpdPrice = {20},
                                 @RefAmount = {21},
-                                @IsExp = {22}, 
-                                @Disc = {23}, 
-                                @Nbt = {24}, 
+                                @IsExp = {22},
+                                @Disc = {23},
+                                @Nbt = {24},
                                 @RoundingDiff = {25}";
 
                 await this.Database.ExecuteSqlRawAsync(sql,
                     request.SerialNo,
                     request.RefNo,
-                    request.RefNo2,            
+                    request.RefNo2,
                     request.PNDate,
                     request.SuppCode,
                     request.SuppName,
@@ -148,19 +148,19 @@ namespace ItemApi.Data
                     request.TotDiscount,
                     request.Tax,
                     request.Advance,
-                    request.AdvPMode,         
+                    request.AdvPMode,
                     request.SubTotDiscount,
                     request.NetAmount,
                     request.UserName,
                     request.LocaCode,
                     request.Status,
-                    request.Returns,          
-                    request.UpdPrice,          
-                    request.RefAmount,        
+                    request.Returns,
+                    request.UpdPrice,
+                    request.RefAmount,
                     request.IsExp,
                     request.Disc,
                     request.Nbt,
-                    request.RoundingDiff      
+                    request.RoundingDiff
                 );
             }
             catch (Exception ex)
@@ -169,6 +169,5 @@ namespace ItemApi.Data
                 throw;
             }
         }
-
     }
 }

@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 
     public class ReturnRepository : IReturnRepository
     {
-        private readonly ReturnContext _context;
+        private readonly AppDbContext _context;
 
-        public ReturnRepository(ReturnContext context)
+        public ReturnRepository(AppDbContext context)
         {
             _context = context;
         }

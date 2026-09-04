@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 {
     public class PayeeRepository : IPayeeRepository
     {
-        private readonly PayeeContext _context;
+        private readonly AppDbContext _context;
 
-        public PayeeRepository(PayeeContext context)
+        public PayeeRepository(AppDbContext context)
         {
             _context = context;
         }

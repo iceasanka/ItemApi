@@ -6,9 +6,9 @@ namespace ItemApi.Repositories
 {
     public class PosCountedStockRepository : IPosCountedStockRepository
     {
-        private readonly PosCountedStockContext _context;
+        private readonly AppDbContext _context;
 
-        public PosCountedStockRepository(PosCountedStockContext context)
+        public PosCountedStockRepository(AppDbContext context)
         {
             _context = context;
         }

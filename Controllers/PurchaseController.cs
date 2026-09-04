@@ -13,16 +13,13 @@ namespace ItemApi.Controllers
     public class PurchaseController : ControllerBase
     {
         private readonly IPurchaseRepository _repository;
-        private readonly PurchaseContext _contextPurchase;
         private readonly IItemRepository _itemRepository;
         private PrinterService printerService;
         private readonly IGrnTempRepository _grnTempRepository;
 
-        public PurchaseController(PurchaseContext contextPurchase, IPurchaseRepository repository,  IItemRepository itemRepository, IGrnTempRepository grnTempRepository)
+        public PurchaseController(IPurchaseRepository repository, IItemRepository itemRepository, IGrnTempRepository grnTempRepository)
         {
-            _contextPurchase = contextPurchase;
             _repository = repository;
-
             _itemRepository = itemRepository;
             _grnTempRepository = grnTempRepository;
             printerService = new PrinterService();

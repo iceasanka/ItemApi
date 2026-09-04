@@ -5,9 +5,9 @@ namespace ItemApi.Repositories
 {
     public class GrnTempRepository: IGrnTempRepository
     {
-        private readonly GrnTempContext _context;
+        private readonly AppDbContext _context;
 
-        public GrnTempRepository(GrnTempContext context)
+        public GrnTempRepository(AppDbContext context)
         {
             _context = context;
         }

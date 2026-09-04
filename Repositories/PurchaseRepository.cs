@@ -7,9 +7,9 @@ namespace ItemApi.Repositories
 {
     public class PurchaseRepository : IPurchaseRepository
     {
-        private readonly PurchaseContext _context;
+        private readonly AppDbContext _context;
 
-        public PurchaseRepository(PurchaseContext context)
+        public PurchaseRepository(AppDbContext context)
         {
             _context = context;
         }

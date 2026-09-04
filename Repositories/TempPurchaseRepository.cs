@@ -8,9 +8,9 @@ namespace ItemApi.Repositories
 {
     public class TempPurchaseRepository : ITempPurchaseRepository
     {
-        private readonly TempPurchaseContext _context;
+        private readonly AppDbContext _context;
 
-        public TempPurchaseRepository(TempPurchaseContext context)
+        public TempPurchaseRepository(AppDbContext context)
         {
             _context = context;
         }

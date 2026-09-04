@@ -8,9 +8,9 @@ namespace ItemApi.Repositories
 {
     public class FileLocationRepository : IFileLocationRepository
     {
-        private readonly FileLocationContext _context;
+        private readonly AppDbContext _context;
 
-        public FileLocationRepository(FileLocationContext context)
+        public FileLocationRepository(AppDbContext context)
         {
             _context = context;
         }

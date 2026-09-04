@@ -6,9 +6,9 @@ namespace ItemApi.Repositories
 {
     public class ItemzRepository : IItemzRepository
     {
-        private readonly ItemzContext _context;
+        private readonly AppDbContext _context;
 
-        public ItemzRepository(ItemzContext context)
+        public ItemzRepository(AppDbContext context)
         {
             _context = context;
         }

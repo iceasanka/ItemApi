@@ -32,6 +32,7 @@ namespace ItemApi.Data
             ConfigureChequeCreate(modelBuilder);
             ConfigurePayee(modelBuilder);
             ConfigureCategory(modelBuilder);
+            ConfigureLocation(modelBuilder);
             ConfigureSubCategory(modelBuilder);
             ConfigureUnit(modelBuilder);
             ConfigureTempPurchaseSummary(modelBuilder);
@@ -54,6 +55,7 @@ namespace ItemApi.Data
         partial void ConfigureChequeCreate(ModelBuilder modelBuilder);
         partial void ConfigurePayee(ModelBuilder modelBuilder);
         partial void ConfigureCategory(ModelBuilder modelBuilder);
+        partial void ConfigureLocation(ModelBuilder modelBuilder);
         partial void ConfigureSubCategory(ModelBuilder modelBuilder);
         partial void ConfigureUnit(ModelBuilder modelBuilder);
         partial void ConfigureTempPurchaseSummary(ModelBuilder modelBuilder);

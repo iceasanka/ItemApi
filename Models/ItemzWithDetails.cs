@@ -12,10 +12,13 @@ namespace ItemApi.Models
         public int? SubCatId { get; set; }
         public int? SupId { get; set; }
         public bool UseExp { get; set; }
+        public string? Inv_Descrip { get; set; }
+        public decimal? MaxPrice { get; set; }
+        public bool OpenPrice { get; set; }
 
         // From z_tb_ItemDet
         public int ItemDetId { get; set; }
-        public int LocaId { get; set; }
+        public int LocationId { get; set; }
         public decimal? RetailPrice { get; set; }
         public decimal? WholesalePrice { get; set; }
         public decimal? SpecialPrice { get; set; }

@@ -22,13 +22,13 @@ namespace ItemApi.Data
 
         // ─── Queries ─────────────────────────────────────────────────────────────
 
-        public async Task<ItemzWithDetails?> GetItemzWithDetailsByItemIdAsync(int itemId)
+        public async Task<ItemzWithDetails?> GetItemzWithDetailsByItemIdAsync(int itemId, int locationId)
         {
             string sql = @"
                 SELECT
                     i.*,
     d.ItemDetId,
-    d.LocaId ,
+    d.LocationId ,
     d.RetailPrice,
     d.WholesalePrice,
     d.SpecialPrice,
@@ -51,11 +51,11 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.ItemId = {0} and d.LocaId = 1";
+                WHERE i.ItemId = {0} and d.LocationId = {1}";
 
             try
             {
-                return await ItemzWithDetails.FromSqlRaw(sql, itemId).FirstOrDefaultAsync();
+                return await ItemzWithDetails.FromSqlRaw(sql, itemId, locationId).FirstOrDefaultAsync();
             }
             catch (Exception ex)
             {
@@ -64,13 +64,13 @@ namespace ItemApi.Data
             }
         }
 
-        public async Task<ItemzWithDetails?> GetItemzWithDetailsByBarcodeAsync(string barcode)
+        public async Task<ItemzWithDetails?> GetItemzWithDetailsByBarcodeAsync(string barcode, int locationId)
         {
             string sql = @"
                 SELECT
                     i.*,
     d.ItemDetId,
-    d.LocaId ,
+    d.LocationId ,
     d.RetailPrice,
     d.WholesalePrice,
     d.SpecialPrice,
@@ -93,11 +93,11 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.Barcode = {0} and d.LocaId = 1";
+                WHERE i.Barcode = {0} and d.LocationId = {1}";
 
             try
             {
-                return await ItemzWithDetails.FromSqlRaw(sql, barcode).FirstOrDefaultAsync();
+                return await ItemzWithDetails.FromSqlRaw(sql, barcode, locationId).FirstOrDefaultAsync();
             }
             catch (Exception ex)
             {
@@ -106,13 +106,13 @@ namespace ItemApi.Data
             }
         }
 
-        public async Task<ItemzWithDetails?> GetItemzWithDetailsByRefCodeAsync(string refCode)
+        public async Task<ItemzWithDetails?> GetItemzWithDetailsByRefCodeAsync(string refCode, int locationId)
         {
             string sql = @"
                 SELECT
                     i.*,
     d.ItemDetId,
-    d.LocaId ,
+    d.LocationId ,
     d.RetailPrice,
     d.WholesalePrice,
     d.SpecialPrice,
@@ -135,11 +135,11 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.RefCode = {0} and d.LocaId = 1";
+                WHERE i.RefCode = {0} and d.LocationId = {1}";
 
             try
             {
-                return await ItemzWithDetails.FromSqlRaw(sql, refCode).FirstOrDefaultAsync();
+                return await ItemzWithDetails.FromSqlRaw(sql, refCode, locationId).FirstOrDefaultAsync();
             }
             catch (Exception ex)
             {
@@ -148,14 +148,14 @@ namespace ItemApi.Data
             }
         }
 
-        public async Task<List<ItemzWithDetails>> SearchItemzAsync(string query)
+        public async Task<List<ItemzWithDetails>> SearchItemzAsync(string query, int locationId)
         {
             string sql = @"
                 SELECT
                    i.*,
     d.ItemDetId,
 
-    d.LocaId,
+    d.LocationId,
     d.RetailPrice,
     d.WholesalePrice,
     d.SpecialPrice,
@@ -178,13 +178,13 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.Descrip LIKE {0}
+                WHERE (i.Descrip LIKE {0}
                    OR i.RefCode LIKE {0}
-                   OR i.Barcode LIKE {0} and d.LocaId = 1";
+                   OR i.Barcode LIKE {0}) and d.LocationId = {1}";
 
             try
             {
-                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%").ToListAsync();
+                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%", locationId).ToListAsync();
             }
             catch (Exception ex)
             {
@@ -193,13 +193,13 @@ namespace ItemApi.Data
             }
         }
 
-        public async Task<List<ItemzWithDetails>> SearchByCodeItemzAsync(string query)
+        public async Task<List<ItemzWithDetails>> SearchByCodeItemzAsync(string query, int locationId)
         {
             string sql = @"
                 SELECT
                     i.*,
     d.ItemDetId,
-    d.LocaId ,
+    d.LocationId ,
     d.RetailPrice,
     d.WholesalePrice,
     d.SpecialPrice,
@@ -222,13 +222,13 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.ItemId LIKE {0}
+                WHERE (i.ItemId LIKE {0}
                    OR i.RefCode LIKE {0}
-                   OR i.Barcode LIKE {0} and d.LocaId = 1";
+                   OR i.Barcode LIKE {0}) and d.LocationId = {1}";
 
             try
             {
-                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%").ToListAsync();
+                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%", locationId).ToListAsync();
             }
             catch (Exception ex)
             {
@@ -237,13 +237,13 @@ namespace ItemApi.Data
             }
         }
 
-        public async Task<List<ItemzWithDetails>> SearchByDesItemzAsync(string query)
+        public async Task<List<ItemzWithDetails>> SearchByDesItemzAsync(string query, int locationId)
         {
             string sql = @"
                 SELECT
                     i.*,
     d.ItemDetId,
-    d.LocaId,
+    d.LocationId,
     d.RetailPrice,
     d.WholesalePrice,
     d.SpecialPrice,
@@ -266,11 +266,11 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE i.Descrip LIKE {0} and d.LocaId = 1";
+                WHERE i.Descrip LIKE {0} and d.LocationId = {1}";
 
             try
             {
-                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%").ToListAsync();
+                return await ItemzWithDetails.FromSqlRaw(sql, $"%{query}%", locationId).ToListAsync();
             }
             catch (Exception ex)
             {

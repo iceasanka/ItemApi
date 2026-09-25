@@ -58,6 +58,7 @@ builder.Services.AddScoped<IChequeCreateRepository, ChequeCreateRepository>();
 builder.Services.AddScoped<IPayeeRepository, PayeeRepository>();
 builder.Services.AddScoped<ISupplierzRepository, SupplierzRepository>();
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+builder.Services.AddScoped<ILocationRepository, LocationRepository>();
 builder.Services.AddScoped<ISubCategoryRepository, SubCategoryRepository>();
 builder.Services.AddScoped<IUnitRepository, UnitRepository>();
 builder.Services.AddScoped<IItemzRepository, ItemzRepository>();

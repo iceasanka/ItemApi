@@ -24,5 +24,8 @@
         public string PrinterZebra { get; set; }
 
         public string Apicre { get; set; }
+
+        // Hard-coded location (appsettings.json) until the user table is implemented
+        public int LocationId { get; set; } = 1;
     }
 }

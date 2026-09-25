@@ -19,6 +19,15 @@ namespace ItemApi.Models
         public int? SupId { get; set; }
         public bool UseExp { get; set; } = false;
 
+        // Short name printed on receipts, invoices and shelf labels
+        [MaxLength(50)]
+        public string? Inv_Descrip { get; set; }
+        // MRP — maximum retail price printed on the pack
+        [Column(TypeName = "decimal(18,2)")]
+        public decimal? MaxPrice { get; set; }
+        // true = cashier types the price at the till
+        public bool OpenPrice { get; set; } = false;
+
         public int Status { get; set; }
         public string? UserId { get; set; }
 

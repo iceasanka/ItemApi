@@ -14,7 +14,7 @@ namespace ItemApi.Models
         [MaxLength(20)]
         public string GrnNo { get; set; }
 
-        public int? LocaId { get; set; }
+        public int? LocationId { get; set; }
 
         [MaxLength(30)]
         public string? RefNo { get; set; }
@@ -23,6 +23,8 @@ namespace ItemApi.Models
 
         public int? SuppId { get; set; }
 
+        // Not a column in z_tb_TempPurchaseSummary — filled from z_tb_Supplier by SearchAsync
+        [NotMapped]
         public string? SuppName { get; set; }
 
         public int? PMode { get; set; }

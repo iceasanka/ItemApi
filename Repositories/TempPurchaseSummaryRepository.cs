@@ -2,6 +2,7 @@ using ItemApi.Data;
 using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 namespace ItemApi.Repositories
@@ -9,17 +10,22 @@ namespace ItemApi.Repositories
     public class TempPurchaseSummaryRepository : ITempPurchaseSummaryRepository
     {
         private readonly AppDbContext _context;
+        // Hard-coded in appsettings.json (AppSettings:LocationId) until the user table is implemented
+        private readonly int _locationId;
 
-        public TempPurchaseSummaryRepository(AppDbContext context)
+        public TempPurchaseSummaryRepository(AppDbContext context, IOptions<AppSettings> appSettings)
         {
             _context = context;
+            _locationId = appSettings.Value.LocationId;
         }
 
         public async Task<List<TempPurchaseSummary>> GetAllAsync()
         {
             try
             {
-                return await _context.TempPurchaseSummaries.ToListAsync();
+                return await _context.TempPurchaseSummaries
+                    .Where(x => x.LocationId == _locationId)
+                    .ToListAsync();
             }
             catch (Exception ex)
             {
@@ -32,7 +38,8 @@ namespace ItemApi.Repositories
         {
             try
             {
-                return await _context.TempPurchaseSummaries.FindAsync(idx);
+                return await _context.TempPurchaseSummaries
+                    .FirstOrDefaultAsync(x => x.Idx == idx && x.LocationId == _locationId);
             }
             catch (Exception ex)
             {
@@ -45,6 +52,7 @@ namespace ItemApi.Repositories
         {
             try
             {
+                summary.LocationId = _locationId;
                 summary.UDate = DateTime.Now;
                 await _context.TempPurchaseSummaries.AddAsync(summary);
                 await _context.SaveChangesAsync();
@@ -66,7 +74,7 @@ namespace ItemApi.Repositories
                     throw new Exception($"Record with Idx {summary.Idx} not found.");
 
                 existing.GrnNo        = summary.GrnNo;
-                existing.LocaId     = summary.LocaId;
+                existing.LocationId = _locationId;
                 existing.RefNo        = summary.RefNo;
                 existing.PDate        = summary.PDate;
                 existing.SuppId     = summary.SuppId;
@@ -122,10 +130,12 @@ namespace ItemApi.Repositories
                             join s in _context.SupplierEntities
                                 on t.SuppId equals s.SuppId into sup
                             from s in sup.DefaultIfEmpty()
+                            where t.LocationId == _locationId
                             select new TempPurchaseSummary
                             {
                                 Idx = t.Idx,
                                 GrnNo = t.GrnNo,
+                                LocationId = t.LocationId,
                                 RefNo = t.RefNo,
                                 PDate = t.PDate,
                                 SuppId = t.SuppId,

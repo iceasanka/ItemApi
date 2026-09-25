@@ -2,6 +2,7 @@ using ItemApi.Data;
 using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 namespace ItemApi.Repositories
@@ -9,16 +10,20 @@ namespace ItemApi.Repositories
     public class TempPurchaseRepository : ITempPurchaseRepository
     {
         private readonly AppDbContext _context;
+        // Hard-coded in appsettings.json (AppSettings:LocationId) until the user table is implemented
+        private readonly int _locationId;
 
-        public TempPurchaseRepository(AppDbContext context)
+        public TempPurchaseRepository(AppDbContext context, IOptions<AppSettings> appSettings)
         {
             _context = context;
+            _locationId = appSettings.Value.LocationId;
         }
 
         public async Task<TempPurchase> InsertAsync(TempPurchase tempPurchase)
         {
             try
             {
+                tempPurchase.LocationId = _locationId;
                 tempPurchase.UDate = DateTime.Now;
                 await _context.TempPurchases.AddAsync(tempPurchase);
                 await _context.SaveChangesAsync();
@@ -40,7 +45,7 @@ namespace ItemApi.Repositories
                     throw new Exception($"Record with Idx {tempPurchase.Idx} not found.");
 
                 existing.GrnNo      = tempPurchase.GrnNo;
-                existing.LocaId = tempPurchase.LocaId;
+                existing.LocationId = _locationId;
                 existing.ItemId     = tempPurchase.ItemId;
                 existing.PDate      = tempPurchase.PDate;
                 existing.Cost       = tempPurchase.Cost;
@@ -87,6 +92,7 @@ namespace ItemApi.Repositories
             try
             {
                 return await _context.TempPurchases
+                    .Where(x => x.LocationId == _locationId)
                     .Where(x => EF.Functions.Like(x.GrnNo, $"%{grnNo}%"))
                     .OrderByDescending(x => x.PDate)
                     .ToListAsync();

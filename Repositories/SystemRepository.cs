@@ -38,5 +38,31 @@ namespace ItemApi.Repositories
                 throw;
             }
         }
+
+        public async Task<string> GenerateNextPrnNoAsync(string locaCode)
+        {
+            try
+            {
+                return await _context.GenerateNextPrnNoAsync(locaCode);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<string> UpdateNextPrnNoAsync(string locaCode)
+        {
+            try
+            {
+                return await _context.UpdateNextPrnNoAsync(locaCode);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
     }
 }

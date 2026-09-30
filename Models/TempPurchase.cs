@@ -20,9 +20,9 @@ namespace ItemApi.Models
 
         public DateTime? PDate { get; set; }
 
-        public decimal? Cost { get; set; }
+        public decimal? CostPrice { get; set; }
 
-        public decimal? Rate { get; set; }
+        public decimal? SellPrice { get; set; }
 
         public decimal? Qty { get; set; }
 

@@ -49,5 +49,41 @@ namespace ItemApi.Controllers
                 return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
             }
         }
+
+        // GET: api/System/GeneratePrnNo?locaCode=01
+        [HttpGet("GeneratePrnNo")]
+        public async Task<IActionResult> GeneratePrnNo([FromQuery] string locaCode)
+        {
+            if (string.IsNullOrWhiteSpace(locaCode))
+                return BadRequest(new { message = "LocaCode is required." });
+
+            try
+            {
+                var prnNo = await _repository.GenerateNextPrnNoAsync(locaCode);
+                return Ok(new { prnNo });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // PUT: api/System/UpdatePrnNo?locaCode=01
+        [HttpPut("UpdatePrnNo")]
+        public async Task<IActionResult> UpdatePrnNo([FromQuery] string locaCode)
+        {
+            if (string.IsNullOrWhiteSpace(locaCode))
+                return BadRequest(new { message = "LocaCode is required." });
+
+            try
+            {
+                var updatedPrnNo = await _repository.UpdateNextPrnNoAsync(locaCode);
+                return Ok(new { updatedPrnNo });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
     }
 }

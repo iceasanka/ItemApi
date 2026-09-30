@@ -24,7 +24,7 @@ ItemDetails
 -------------------ok
 
 Grn
------------------------
+----------------------- ok
 z_tb_TempPurchase
 z_tb_TempPurchaseSummary
 

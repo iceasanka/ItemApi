@@ -1,0 +1,178 @@
+using ItemApi.Data;
+using ItemApi.Interface;
+using ItemApi.Models;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Serilog;
+
+namespace ItemApi.Repositories
+{
+    // Purchase return header — same z_tb_TempPurchaseSummary table as GRN, scoped to Type = 2.
+    public class TempPurchaseReturnSummaryRepository : ITempPurchaseReturnSummaryRepository
+    {
+        public const int ReturnType = 2;
+
+        private readonly AppDbContext _context;
+        // Hard-coded in appsettings.json (AppSettings:LocationId) until the user table is implemented
+        private readonly int _locationId;
+
+        public TempPurchaseReturnSummaryRepository(AppDbContext context, IOptions<AppSettings> appSettings)
+        {
+            _context = context;
+            _locationId = appSettings.Value.LocationId;
+        }
+
+        public async Task<List<TempPurchaseSummary>> GetAllAsync()
+        {
+            try
+            {
+                return await _context.TempPurchaseSummaries
+                    .Where(x => x.LocationId == _locationId && x.Type == ReturnType)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<TempPurchaseSummary?> GetByIdAsync(int idx)
+        {
+            try
+            {
+                return await _context.TempPurchaseSummaries
+                    .FirstOrDefaultAsync(x => x.Idx == idx && x.LocationId == _locationId && x.Type == ReturnType);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<TempPurchaseSummary> InsertAsync(TempPurchaseSummary summary)
+        {
+            try
+            {
+                summary.LocationId = _locationId;
+                summary.UDate = DateTime.Now;
+                await _context.TempPurchaseSummaries.AddAsync(summary);
+                await _context.SaveChangesAsync();
+                return summary;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<TempPurchaseSummary> UpdateAsync(TempPurchaseSummary summary)
+        {
+            try
+            {
+                var existing = await _context.TempPurchaseSummaries
+                    .FirstOrDefaultAsync(x => x.Idx == summary.Idx && x.Type == ReturnType);
+                if (existing == null)
+                    throw new Exception($"Return record with Idx {summary.Idx} not found.");
+
+                existing.GrnNo        = summary.GrnNo;
+                existing.LocationId   = _locationId;
+                existing.RefNo        = summary.RefNo;
+                existing.PDate        = summary.PDate;
+                existing.SuppId       = summary.SuppId;
+                existing.PMode        = summary.PMode;
+                existing.GAmount      = summary.GAmount;
+                existing.POderNo      = summary.POderNo;
+                existing.SubTotDisc   = summary.SubTotDisc;
+                existing.NetAmount    = summary.NetAmount;
+                existing.Advance      = summary.Advance;
+                existing.Returns      = summary.Returns;
+                existing.Qty          = summary.Qty;
+                existing.Type         = summary.Type;
+                existing.Status       = summary.Status;
+                existing.Remark       = summary.Remark;
+                existing.UserId       = summary.UserId;
+                existing.UDate        = DateTime.Now;
+
+                _context.TempPurchaseSummaries.Update(existing);
+                await _context.SaveChangesAsync();
+                return existing;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<bool> DeleteAsync(int idx)
+        {
+            try
+            {
+                var existing = await _context.TempPurchaseSummaries
+                    .FirstOrDefaultAsync(x => x.Idx == idx && x.Type == ReturnType);
+                if (existing == null) return false;
+
+                _context.TempPurchaseSummaries.Remove(existing);
+                await _context.SaveChangesAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<List<TempPurchaseSummary>> SearchAsync(TempPurchaseSummarySearchRequest request)
+        {
+            try
+            {
+                var query = from t in _context.TempPurchaseSummaries
+                            join s in _context.SupplierEntities
+                                on t.SuppId equals s.SuppId into sup
+                            from s in sup.DefaultIfEmpty()
+                            where t.LocationId == _locationId && t.Type == ReturnType
+                            select new TempPurchaseSummary
+                            {
+                                Idx = t.Idx,
+                                GrnNo = t.GrnNo,
+                                LocationId = t.LocationId,
+                                RefNo = t.RefNo,
+                                PDate = t.PDate,
+                                SuppId = t.SuppId,
+                                SuppName = s != null ? s.SuppName : "",
+                                NetAmount = t.NetAmount,
+                                Qty = t.Qty,
+                                Type = t.Type,
+                                Status = t.Status,
+                                Remark = t.Remark
+                            };
+
+                // Filters (GrnNo holds the PRN no for returns)
+                if (!string.IsNullOrWhiteSpace(request.GrnNo))
+                    query = query.Where(x => EF.Functions.Like(x.GrnNo, $"%{request.GrnNo}%"));
+
+                if (!string.IsNullOrWhiteSpace(request.RefNo))
+                    query = query.Where(x => EF.Functions.Like(x.RefNo, $"%{request.RefNo}%"));
+
+                if (!string.IsNullOrWhiteSpace(request.Remark))
+                    query = query.Where(x => EF.Functions.Like(x.Remark, $"%{request.Remark}%"));
+
+                if (request.SuppId != null && request.SuppId != 0)
+                    query = query.Where(x => x.SuppId == request.SuppId);
+
+                return await query
+                    .OrderByDescending(x => x.PDate)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+    }
+}

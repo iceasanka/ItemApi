@@ -7,13 +7,16 @@ using Serilog;
 
 namespace ItemApi.Repositories
 {
-    public class TempPurchaseRepository : ITempPurchaseRepository
+    // Purchase return lines — same z_tb_TempPurchase table as GRN, scoped to GrnNo starting with "PRN".
+    public class TempPurchaseReturnRepository : ITempPurchaseReturnRepository
     {
+        public const string PrnPrefix = "PRN";
+
         private readonly AppDbContext _context;
         // Hard-coded in appsettings.json (AppSettings:LocationId) until the user table is implemented
         private readonly int _locationId;
 
-        public TempPurchaseRepository(AppDbContext context, IOptions<AppSettings> appSettings)
+        public TempPurchaseReturnRepository(AppDbContext context, IOptions<AppSettings> appSettings)
         {
             _context = context;
             _locationId = appSettings.Value.LocationId;
@@ -40,9 +43,10 @@ namespace ItemApi.Repositories
         {
             try
             {
-                var existing = await _context.TempPurchases.FindAsync(tempPurchase.Idx);
+                var existing = await _context.TempPurchases
+                    .FirstOrDefaultAsync(x => x.Idx == tempPurchase.Idx && x.GrnNo.StartsWith(PrnPrefix));
                 if (existing == null)
-                    throw new Exception($"Record with Idx {tempPurchase.Idx} not found.");
+                    throw new Exception($"Return record with Idx {tempPurchase.Idx} not found.");
 
                 existing.GrnNo      = tempPurchase.GrnNo;
                 existing.LocationId = _locationId;
@@ -73,7 +77,8 @@ namespace ItemApi.Repositories
         {
             try
             {
-                var existing = await _context.TempPurchases.FindAsync(idx);
+                var existing = await _context.TempPurchases
+                    .FirstOrDefaultAsync(x => x.Idx == idx && x.GrnNo.StartsWith(PrnPrefix));
                 if (existing == null) return false;
 
                 _context.TempPurchases.Remove(existing);
@@ -87,13 +92,14 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<List<TempPurchase>> GetByGrnNoAsync(string grnNo)
+        public async Task<List<TempPurchase>> GetByPrnNoAsync(string prnNo)
         {
             try
             {
                 return await _context.TempPurchases
                     .Where(x => x.LocationId == _locationId)
-                    .Where(x => EF.Functions.Like(x.GrnNo, $"%{grnNo}%"))
+                    .Where(x => x.GrnNo.StartsWith(PrnPrefix))
+                    .Where(x => EF.Functions.Like(x.GrnNo, $"%{prnNo}%"))
                     .OrderByDescending(x => x.PDate)
                     .ToListAsync();
             }

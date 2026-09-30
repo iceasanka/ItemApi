@@ -62,5 +62,48 @@ namespace ItemApi.Data
                 throw;
             }
         }
+
+        public async Task<string> GenerateNextPrnNoAsync(string locaCode)
+        {
+            try
+            {
+                var result = await Database.SqlQueryRaw<int>(
+                    "SELECT PRNO FROM z_tb_System WHERE LocaId = {0}",
+                    locaCode).ToListAsync();
+
+                int nextNo = result.FirstOrDefault();
+
+                return $"PRN{nextNo:D8}"; // → PRN00000001
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error generating PRN No: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<string> UpdateNextPrnNoAsync(string locaCode)
+        {
+            try
+            {
+                // Increment PRNO atomically - row lock ensures thread safety
+                await Database.ExecuteSqlRawAsync(
+                    "UPDATE z_tb_System SET PRNO = PRNO + 1 WHERE LocaId = {0}",
+                    locaCode);
+
+                var result = await Database.SqlQueryRaw<int>(
+                    "SELECT PRNO FROM z_tb_System WHERE LocaId = {0}",
+                    locaCode).ToListAsync();
+
+                int nextNo = result.FirstOrDefault();
+
+                return $"PRN{nextNo:D8}"; // → PRN00000001
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error generating PRN No: {ex.Message}");
+                throw;
+            }
+        }
     }
 }

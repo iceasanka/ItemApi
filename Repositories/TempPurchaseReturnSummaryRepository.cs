@@ -22,13 +22,15 @@ namespace ItemApi.Repositories
             _locationId = appSettings.Value.LocationId;
         }
 
-        public async Task<List<TempPurchaseSummary>> GetAllAsync()
+        public async Task<List<TempPurchaseReturnSummary>> GetAllAsync()
         {
             try
             {
-                return await _context.TempPurchaseSummaries
+                var list = await _context.TempPurchaseSummaries
                     .Where(x => x.LocationId == _locationId && x.Type == ReturnType)
                     .ToListAsync();
+
+                return list.Select(ToDto).ToList();
             }
             catch (Exception ex)
             {
@@ -37,12 +39,14 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<TempPurchaseSummary?> GetByIdAsync(int idx)
+        public async Task<TempPurchaseReturnSummary?> GetByIdAsync(int idx)
         {
             try
             {
-                return await _context.TempPurchaseSummaries
+                var entity = await _context.TempPurchaseSummaries
                     .FirstOrDefaultAsync(x => x.Idx == idx && x.LocationId == _locationId && x.Type == ReturnType);
+
+                return entity == null ? null : ToDto(entity);
             }
             catch (Exception ex)
             {
@@ -51,15 +55,17 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<TempPurchaseSummary> InsertAsync(TempPurchaseSummary summary)
+        public async Task<TempPurchaseReturnSummary> InsertAsync(TempPurchaseReturnSummary summary)
         {
             try
             {
-                summary.LocationId = _locationId;
-                summary.UDate = DateTime.Now;
-                await _context.TempPurchaseSummaries.AddAsync(summary);
+                var entity = new TempPurchaseSummary();
+                CopyToEntity(summary, entity);
+                entity.UDate = DateTime.Now;
+
+                await _context.TempPurchaseSummaries.AddAsync(entity);
                 await _context.SaveChangesAsync();
-                return summary;
+                return ToDto(entity);
             }
             catch (Exception ex)
             {
@@ -68,7 +74,7 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<TempPurchaseSummary> UpdateAsync(TempPurchaseSummary summary)
+        public async Task<TempPurchaseReturnSummary> UpdateAsync(TempPurchaseReturnSummary summary)
         {
             try
             {
@@ -77,28 +83,12 @@ namespace ItemApi.Repositories
                 if (existing == null)
                     throw new Exception($"Return record with Idx {summary.Idx} not found.");
 
-                existing.GrnNo        = summary.GrnNo;
-                existing.LocationId   = _locationId;
-                existing.RefNo        = summary.RefNo;
-                existing.PDate        = summary.PDate;
-                existing.SuppId       = summary.SuppId;
-                existing.PMode        = summary.PMode;
-                existing.GAmount      = summary.GAmount;
-                existing.POderNo      = summary.POderNo;
-                existing.SubTotDisc   = summary.SubTotDisc;
-                existing.NetAmount    = summary.NetAmount;
-                existing.Advance      = summary.Advance;
-                existing.Returns      = summary.Returns;
-                existing.Qty          = summary.Qty;
-                existing.Type         = summary.Type;
-                existing.Status       = summary.Status;
-                existing.Remark       = summary.Remark;
-                existing.UserId       = summary.UserId;
-                existing.UDate        = DateTime.Now;
+                CopyToEntity(summary, existing);
+                existing.UDate = DateTime.Now;
 
                 _context.TempPurchaseSummaries.Update(existing);
                 await _context.SaveChangesAsync();
-                return existing;
+                return ToDto(existing);
             }
             catch (Exception ex)
             {
@@ -126,24 +116,41 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<List<TempPurchaseSummary>> SearchAsync(TempPurchaseSummarySearchRequest request)
+        public async Task<List<TempPurchaseReturnSummary>> SearchAsync(TempPurchaseReturnSummarySearchRequest request)
         {
             try
             {
-                var query = from t in _context.TempPurchaseSummaries
+                var headers = _context.TempPurchaseSummaries
+                    .Where(t => t.LocationId == _locationId && t.Type == ReturnType);
+
+                // Filters
+                if (!string.IsNullOrWhiteSpace(request.PrnNo))
+                    headers = headers.Where(t => EF.Functions.Like(t.GrnNo, $"%{request.PrnNo}%"));
+
+                if (!string.IsNullOrWhiteSpace(request.RefNo))
+                    headers = headers.Where(t => EF.Functions.Like(t.RefNo, $"%{request.RefNo}%"));
+
+                if (!string.IsNullOrWhiteSpace(request.Remark))
+                    headers = headers.Where(t => EF.Functions.Like(t.Remark, $"%{request.Remark}%"));
+
+                if (request.SuppId != null && request.SuppId != 0)
+                    headers = headers.Where(t => t.SuppId == request.SuppId);
+
+                var query = from t in headers
                             join s in _context.SupplierEntities
                                 on t.SuppId equals s.SuppId into sup
                             from s in sup.DefaultIfEmpty()
-                            where t.LocationId == _locationId && t.Type == ReturnType
-                            select new TempPurchaseSummary
+                            orderby t.PDate descending
+                            select new TempPurchaseReturnSummary
                             {
                                 Idx = t.Idx,
-                                GrnNo = t.GrnNo,
+                                PrnNo = t.GrnNo,
                                 LocationId = t.LocationId,
                                 RefNo = t.RefNo,
                                 PDate = t.PDate,
                                 SuppId = t.SuppId,
                                 SuppName = s != null ? s.SuppName : "",
+                                RetType = t.PMode,
                                 NetAmount = t.NetAmount,
                                 Qty = t.Qty,
                                 Type = t.Type,
@@ -151,22 +158,7 @@ namespace ItemApi.Repositories
                                 Remark = t.Remark
                             };
 
-                // Filters (GrnNo holds the PRN no for returns)
-                if (!string.IsNullOrWhiteSpace(request.GrnNo))
-                    query = query.Where(x => EF.Functions.Like(x.GrnNo, $"%{request.GrnNo}%"));
-
-                if (!string.IsNullOrWhiteSpace(request.RefNo))
-                    query = query.Where(x => EF.Functions.Like(x.RefNo, $"%{request.RefNo}%"));
-
-                if (!string.IsNullOrWhiteSpace(request.Remark))
-                    query = query.Where(x => EF.Functions.Like(x.Remark, $"%{request.Remark}%"));
-
-                if (request.SuppId != null && request.SuppId != 0)
-                    query = query.Where(x => x.SuppId == request.SuppId);
-
-                return await query
-                    .OrderByDescending(x => x.PDate)
-                    .ToListAsync();
+                return await query.ToListAsync();
             }
             catch (Exception ex)
             {
@@ -174,5 +166,45 @@ namespace ItemApi.Repositories
                 throw;
             }
         }
+
+        private void CopyToEntity(TempPurchaseReturnSummary dto, TempPurchaseSummary entity)
+        {
+            entity.GrnNo      = dto.PrnNo;
+            entity.LocationId = _locationId;
+            entity.RefNo      = dto.RefNo;
+            entity.PDate      = dto.PDate;
+            entity.SuppId     = dto.SuppId;
+            entity.PMode      = dto.RetType;
+            entity.GAmount    = dto.GAmount;
+            entity.POderNo    = dto.POderNo;
+            entity.SubTotDisc = dto.SubTotDisc;
+            entity.NetAmount  = dto.NetAmount;
+            entity.Qty        = dto.Qty;
+            entity.Type       = ReturnType;
+            entity.Status     = dto.Status;
+            entity.Remark     = dto.Remark;
+            entity.UserId     = dto.UserId;
+        }
+
+        private static TempPurchaseReturnSummary ToDto(TempPurchaseSummary entity) => new()
+        {
+            Idx        = entity.Idx,
+            PrnNo      = entity.GrnNo,
+            LocationId = entity.LocationId,
+            RefNo      = entity.RefNo,
+            PDate      = entity.PDate,
+            SuppId     = entity.SuppId,
+            RetType    = entity.PMode,
+            GAmount    = entity.GAmount,
+            POderNo    = entity.POderNo,
+            SubTotDisc = entity.SubTotDisc,
+            NetAmount  = entity.NetAmount,
+            Qty        = entity.Qty,
+            Type       = entity.Type,
+            Status     = entity.Status,
+            Remark     = entity.Remark,
+            UDate      = entity.UDate,
+            UserId     = entity.UserId
+        };
     }
 }

@@ -22,15 +22,17 @@ namespace ItemApi.Repositories
             _locationId = appSettings.Value.LocationId;
         }
 
-        public async Task<TempPurchase> InsertAsync(TempPurchase tempPurchase)
+        public async Task<TempPurchaseReturn> InsertAsync(TempPurchaseReturn item)
         {
             try
             {
-                tempPurchase.LocationId = _locationId;
-                tempPurchase.UDate = DateTime.Now;
-                await _context.TempPurchases.AddAsync(tempPurchase);
+                var entity = new TempPurchase();
+                CopyToEntity(item, entity);
+                entity.UDate = DateTime.Now;
+
+                await _context.TempPurchases.AddAsync(entity);
                 await _context.SaveChangesAsync();
-                return tempPurchase;
+                return ToDto(entity);
             }
             catch (Exception ex)
             {
@@ -39,32 +41,21 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<TempPurchase> UpdateAsync(TempPurchase tempPurchase)
+        public async Task<TempPurchaseReturn> UpdateAsync(TempPurchaseReturn item)
         {
             try
             {
                 var existing = await _context.TempPurchases
-                    .FirstOrDefaultAsync(x => x.Idx == tempPurchase.Idx && x.GrnNo.StartsWith(PrnPrefix));
+                    .FirstOrDefaultAsync(x => x.Idx == item.Idx && x.GrnNo.StartsWith(PrnPrefix));
                 if (existing == null)
-                    throw new Exception($"Return record with Idx {tempPurchase.Idx} not found.");
+                    throw new Exception($"Return record with Idx {item.Idx} not found.");
 
-                existing.GrnNo      = tempPurchase.GrnNo;
-                existing.LocationId = _locationId;
-                existing.ItemId     = tempPurchase.ItemId;
-                existing.PDate      = tempPurchase.PDate;
-                existing.CostPrice  = tempPurchase.CostPrice;
-                existing.SellPrice  = tempPurchase.SellPrice;
-                existing.Qty        = tempPurchase.Qty;
-                existing.Discount   = tempPurchase.Discount;
-                existing.GAmount    = tempPurchase.GAmount;
-                existing.ExpDate    = tempPurchase.ExpDate;
-                existing.Status     = tempPurchase.Status;
-                existing.UserId     = tempPurchase.UserId;
-                existing.UDate      = DateTime.Now;
+                CopyToEntity(item, existing);
+                existing.UDate = DateTime.Now;
 
                 _context.TempPurchases.Update(existing);
                 await _context.SaveChangesAsync();
-                return existing;
+                return ToDto(existing);
             }
             catch (Exception ex)
             {
@@ -92,16 +83,18 @@ namespace ItemApi.Repositories
             }
         }
 
-        public async Task<List<TempPurchase>> GetByPrnNoAsync(string prnNo)
+        public async Task<List<TempPurchaseReturn>> GetByPrnNoAsync(string prnNo)
         {
             try
             {
-                return await _context.TempPurchases
+                var list = await _context.TempPurchases
                     .Where(x => x.LocationId == _locationId)
                     .Where(x => x.GrnNo.StartsWith(PrnPrefix))
                     .Where(x => EF.Functions.Like(x.GrnNo, $"%{prnNo}%"))
                     .OrderByDescending(x => x.PDate)
                     .ToListAsync();
+
+                return list.Select(ToDto).ToList();
             }
             catch (Exception ex)
             {
@@ -109,5 +102,39 @@ namespace ItemApi.Repositories
                 throw;
             }
         }
+
+        private void CopyToEntity(TempPurchaseReturn dto, TempPurchase entity)
+        {
+            entity.GrnNo      = dto.PrnNo;
+            entity.LocationId = _locationId;
+            entity.ItemId     = dto.ItemId;
+            entity.PDate      = dto.PDate;
+            entity.CostPrice  = dto.CostPrice;
+            entity.SellPrice  = dto.SellPrice;
+            entity.Qty        = dto.Qty;
+            entity.Discount   = dto.Discount;
+            entity.GAmount    = dto.GAmount;
+            entity.ExpDate    = dto.ExpDate;
+            entity.Status     = dto.Status;
+            entity.UserId     = dto.UserId;
+        }
+
+        private static TempPurchaseReturn ToDto(TempPurchase entity) => new()
+        {
+            Idx        = entity.Idx,
+            PrnNo      = entity.GrnNo,
+            LocationId = entity.LocationId,
+            ItemId     = entity.ItemId,
+            PDate      = entity.PDate,
+            CostPrice  = entity.CostPrice,
+            SellPrice  = entity.SellPrice,
+            Qty        = entity.Qty,
+            Discount   = entity.Discount,
+            GAmount    = entity.GAmount,
+            ExpDate    = entity.ExpDate,
+            Status     = entity.Status,
+            UDate      = entity.UDate,
+            UserId     = entity.UserId
+        };
     }
 }

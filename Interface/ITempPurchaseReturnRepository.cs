@@ -4,9 +4,9 @@ namespace ItemApi.Interface
 {
     public interface ITempPurchaseReturnRepository
     {
-        Task<TempPurchase> InsertAsync(TempPurchase tempPurchase);
-        Task<TempPurchase> UpdateAsync(TempPurchase tempPurchase);
+        Task<TempPurchaseReturn> InsertAsync(TempPurchaseReturn item);
+        Task<TempPurchaseReturn> UpdateAsync(TempPurchaseReturn item);
         Task<bool> DeleteAsync(int idx);
-        Task<List<TempPurchase>> GetByPrnNoAsync(string prnNo);
+        Task<List<TempPurchaseReturn>> GetByPrnNoAsync(string prnNo);
     }
 }

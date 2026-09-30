@@ -1,6 +1,7 @@
 using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 
 namespace ItemApi.Controllers
 {
@@ -12,12 +13,14 @@ namespace ItemApi.Controllers
 
         private readonly ISystemRepository _systemrepository;
 
-    
+        private readonly IStockLedgerRepository _stockLedgerRepository;
 
-        public TempPurchaseSummaryController(ITempPurchaseSummaryRepository repository, ISystemRepository systemRepository)
+        public TempPurchaseSummaryController(ITempPurchaseSummaryRepository repository, ISystemRepository systemRepository,
+            IStockLedgerRepository stockLedgerRepository)
         {
             _repository = repository;
             _systemrepository = systemRepository;
+            _stockLedgerRepository = stockLedgerRepository;
         }
 
         // GET: api/TempPurchaseSummary/GetAll
@@ -126,21 +129,25 @@ namespace ItemApi.Controllers
             }
         }
 
+        // POST: api/TempPurchaseSummary/Commit/GRN00000001?userId=...
+        // Posts the GRN lines into stock (z_sp_PostGrn, +Qty) and sets Status = 2. A GRN can only be committed once.
         [HttpPost("Commit/{grnNo}")]
-        public async Task<IActionResult> Commit([FromRoute]  string grnNo)
+        public async Task<IActionResult> Commit([FromRoute] string grnNo, [FromQuery] string? userId)
         {
             try
             {
-                //var result = await _repository.CommitAsync(request);
-
-                //var updateGrnNo = await _systemrepository.UpdateNextGrnNoAsync("01");
-                return Ok(new { message = "Commit successful.", data = grnNo });
+                var lines = await _stockLedgerRepository.PostGrnAsync(grnNo, userId);
+                return Ok(new { message = "Commit successful.", data = grnNo, lines });
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                // not found / already posted / no lines — raised by z_sp_PostPurchaseDoc
+                return BadRequest(new { message = ex.Message });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
             }
-
         }
     }
 }

@@ -18,12 +18,12 @@ namespace ItemApi.Controllers
 
         // POST: api/TempPurchaseReturn/Insert
         [HttpPost("Insert")]
-        public async Task<IActionResult> Insert([FromBody] TempPurchase tempPurchase)
+        public async Task<IActionResult> Insert([FromBody] TempPurchaseReturn tempPurchase)
         {
-            if (tempPurchase == null || string.IsNullOrEmpty(tempPurchase.GrnNo))
-                return BadRequest(new { message = "Invalid request data. PRN No (GrnNo) is required." });
+            if (tempPurchase == null || string.IsNullOrEmpty(tempPurchase.PrnNo))
+                return BadRequest(new { message = "Invalid request data. PrnNo is required." });
 
-            if (!tempPurchase.GrnNo.StartsWith(TempPurchaseReturnRepository.PrnPrefix))
+            if (!tempPurchase.PrnNo.StartsWith(TempPurchaseReturnRepository.PrnPrefix))
                 return BadRequest(new { message = "Invalid PRN No. It must start with 'PRN'." });
 
             try
@@ -39,12 +39,12 @@ namespace ItemApi.Controllers
 
         // PUT: api/TempPurchaseReturn/Update
         [HttpPut("Update")]
-        public async Task<IActionResult> Update([FromBody] TempPurchase tempPurchase)
+        public async Task<IActionResult> Update([FromBody] TempPurchaseReturn tempPurchase)
         {
             if (tempPurchase == null || tempPurchase.Idx <= 0)
                 return BadRequest(new { message = "Invalid request data. Idx is required." });
 
-            if (string.IsNullOrEmpty(tempPurchase.GrnNo) || !tempPurchase.GrnNo.StartsWith(TempPurchaseReturnRepository.PrnPrefix))
+            if (string.IsNullOrEmpty(tempPurchase.PrnNo) || !tempPurchase.PrnNo.StartsWith(TempPurchaseReturnRepository.PrnPrefix))
                 return BadRequest(new { message = "Invalid PRN No. It must start with 'PRN'." });
 
             try

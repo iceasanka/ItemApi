@@ -48,13 +48,19 @@ namespace ItemApi.Repositories
 
       
 
+        // UDate is set here (not by the UI): cashier tills download items "changed since" UDate
+        // (z_sp_GetItemsForSync), so every insert/update must move it.
         public async Task<Itemz> InsertItemzAsync(Itemz item)
         {
+            item.UDate = DateTime.Now;
+            if (item.CDate == default) item.CDate = item.UDate;
             return await _context.InsertItemzAsync(item);
         }
 
         public async Task<Itemz> UpdateItemzAsync(Itemz item)
         {
+            item.UDate = DateTime.Now;
+            if (item.CDate == default) item.CDate = item.UDate;
             return await _context.UpdateItemzAsync(item);
         }
 
@@ -66,12 +72,16 @@ namespace ItemApi.Repositories
         public async Task<ItemzDet> InsertItemzDetAsync(ItemzDet det)
         {
             det.LocationId = _locationId;
+            det.UDate = DateTime.Now;   // price change → tills pick it up on the next item sync
+            if (det.CDate == default) det.CDate = det.UDate;
             return await _context.InsertItemzDetAsync(det);
         }
 
         public async Task<ItemzDet> UpdateItemzDetAsync(ItemzDet det)
         {
             det.LocationId = _locationId;
+            det.UDate = DateTime.Now;   // price change → tills pick it up on the next item sync
+            if (det.CDate == default) det.CDate = det.UDate;
             return await _context.UpdateItemzDetAsync(det);
         }
     }

@@ -4,11 +4,11 @@ namespace ItemApi.Interface
 {
     public interface ITempPurchaseReturnSummaryRepository
     {
-        Task<List<TempPurchaseSummary>> GetAllAsync();
-        Task<TempPurchaseSummary?> GetByIdAsync(int idx);
-        Task<TempPurchaseSummary> InsertAsync(TempPurchaseSummary summary);
-        Task<TempPurchaseSummary> UpdateAsync(TempPurchaseSummary summary);
+        Task<List<TempPurchaseReturnSummary>> GetAllAsync();
+        Task<TempPurchaseReturnSummary?> GetByIdAsync(int idx);
+        Task<TempPurchaseReturnSummary> InsertAsync(TempPurchaseReturnSummary summary);
+        Task<TempPurchaseReturnSummary> UpdateAsync(TempPurchaseReturnSummary summary);
         Task<bool> DeleteAsync(int idx);
-        Task<List<TempPurchaseSummary>> SearchAsync(TempPurchaseSummarySearchRequest request);
+        Task<List<TempPurchaseReturnSummary>> SearchAsync(TempPurchaseReturnSummarySearchRequest request);
     }
 }

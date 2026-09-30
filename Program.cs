@@ -66,6 +66,9 @@ builder.Services.AddScoped<ITempPurchaseSummaryRepository, TempPurchaseSummaryRe
 builder.Services.AddScoped<ITempPurchaseRepository, TempPurchaseRepository>();
 builder.Services.AddScoped<ITempPurchaseReturnSummaryRepository, TempPurchaseReturnSummaryRepository>();
 builder.Services.AddScoped<ITempPurchaseReturnRepository, TempPurchaseReturnRepository>();
+builder.Services.AddScoped<IStockLedgerRepository, StockLedgerRepository>();
+builder.Services.AddScoped<IStockAdjustmentRepository, StockAdjustmentRepository>();
+builder.Services.AddScoped<ISyncRepository, SyncRepository>();
 builder.Services.AddScoped<ISystemRepository, SystemRepository>();
 builder.Services.AddScoped<ISupplierLedgerRepository, SupplierLedgerRepository>();
 

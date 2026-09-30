@@ -2,6 +2,7 @@ using ItemApi.Interface;
 using ItemApi.Models;
 using ItemApi.Repositories;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 
 namespace ItemApi.Controllers
 {
@@ -13,10 +14,35 @@ namespace ItemApi.Controllers
 
         private readonly ISystemRepository _systemrepository;
 
-        public TempPurchaseReturnSummaryController(ITempPurchaseReturnSummaryRepository repository, ISystemRepository systemRepository)
+        private readonly IStockLedgerRepository _stockLedgerRepository;
+
+        public TempPurchaseReturnSummaryController(ITempPurchaseReturnSummaryRepository repository, ISystemRepository systemRepository,
+            IStockLedgerRepository stockLedgerRepository)
         {
             _repository = repository;
             _systemrepository = systemRepository;
+            _stockLedgerRepository = stockLedgerRepository;
+        }
+
+        // POST: api/TempPurchaseReturnSummary/Commit/PRN00000001?userId=...
+        // Takes the PRN lines out of stock (z_sp_PostPrn, -Qty) and sets Status = 2. A PRN can only be committed once.
+        [HttpPost("Commit/{prnNo}")]
+        public async Task<IActionResult> Commit([FromRoute] string prnNo, [FromQuery] string? userId)
+        {
+            try
+            {
+                var lines = await _stockLedgerRepository.PostPrnAsync(prnNo, userId);
+                return Ok(new { message = "Commit successful.", data = prnNo, lines });
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                // not found / already posted / no lines — raised by z_sp_PostPurchaseDoc
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
         }
 
         // GET: api/TempPurchaseReturnSummary/GetAll
@@ -54,7 +80,7 @@ namespace ItemApi.Controllers
 
         // POST: api/TempPurchaseReturnSummary/Insert
         [HttpPost("Insert")]
-        public async Task<IActionResult> Insert([FromBody] TempPurchaseSummary summary)
+        public async Task<IActionResult> Insert([FromBody] TempPurchaseReturnSummary summary)
         {
             var error = Validate(summary);
             if (error != null)
@@ -74,7 +100,7 @@ namespace ItemApi.Controllers
 
         // PUT: api/TempPurchaseReturnSummary/Update
         [HttpPut("Update")]
-        public async Task<IActionResult> Update([FromBody] TempPurchaseSummary summary)
+        public async Task<IActionResult> Update([FromBody] TempPurchaseReturnSummary summary)
         {
             if (summary == null || summary.Idx <= 0)
                 return BadRequest(new { message = "Invalid request data. Idx is required." });
@@ -117,7 +143,7 @@ namespace ItemApi.Controllers
 
         // POST: api/TempPurchaseReturnSummary/Search
         [HttpPost("Search")]
-        public async Task<IActionResult> Search([FromBody] TempPurchaseSummarySearchRequest request)
+        public async Task<IActionResult> Search([FromBody] TempPurchaseReturnSummarySearchRequest request)
         {
             try
             {
@@ -130,17 +156,14 @@ namespace ItemApi.Controllers
             }
         }
 
-        // GrnNo carries the PRN no (PRN00000001) and Type must be 2 (sent from UI)
-        private static string? Validate(TempPurchaseSummary summary)
+        // PrnNo must be a PRN no (PRN00000001). Type is always saved as 2 by the repository.
+        private static string? Validate(TempPurchaseReturnSummary summary)
         {
-            if (summary == null || string.IsNullOrEmpty(summary.GrnNo))
-                return "Invalid request data. PRN No (GrnNo) is required.";
+            if (summary == null || string.IsNullOrEmpty(summary.PrnNo))
+                return "Invalid request data. PrnNo is required.";
 
-            if (!summary.GrnNo.StartsWith(TempPurchaseReturnRepository.PrnPrefix))
+            if (!summary.PrnNo.StartsWith(TempPurchaseReturnRepository.PrnPrefix))
                 return "Invalid PRN No. It must start with 'PRN'.";
-
-            if (summary.Type != TempPurchaseReturnSummaryRepository.ReturnType)
-                return $"Invalid Type. Purchase return Type must be {TempPurchaseReturnSummaryRepository.ReturnType}.";
 
             return null;
         }

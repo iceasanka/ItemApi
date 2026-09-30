@@ -28,3 +28,11 @@ Grn
 z_tb_TempPurchase
 z_tb_TempPurchaseSummary
 
+Type is 1 
+
+Prn
+----------------------- ok
+z_tb_TempPurchase
+z_tb_TempPurchaseSummary
+
+Type is 2

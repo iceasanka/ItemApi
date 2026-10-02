@@ -44,7 +44,8 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | File | Run on | Notes |
 |---|---|---|
 | `01_BackOffice_Stock.sql` | back office db (`easyway`) | prefix `z_`. **Already applied to easyway on 2026-09-30.** Re-runnable. |
-| `02_FrontCashier_zf.sql` | each till's local db (e.g. `easyway_front` on SQL Express) | prefix `zf_`. Re-runnable. Not applied anywhere yet. |
+| `02_FrontCashier_zf.sql` | each till's local db (e.g. `easyway_front` on SQL Express) | prefix `zf_`. Re-runnable. Applied to the test till db `z_pos_fnt_db` (PRASADA1). |
+| `03_BackOffice_PriceLink.sql` | back office db (`easyway`) | price links (§6.5). Re-runnable. **Applied to easyway on 2026-10-02.** |
 
 Run with `sqlcmd -I` (QUOTED_IDENTIFIER must be ON for the filtered index), e.g.
 `sqlcmd -S SERVER -d easyway -U user -P *** -I -b -i DBScript\01_BackOffice_Stock.sql`
@@ -79,6 +80,7 @@ Run with `sqlcmd -I` (QUOTED_IDENTIFIER must be ON for the filtered index), e.g.
 | `z_tb_SalesInvoice` / `…Item` / `z_tb_SalesPayment` | bills uploaded from tills |
 | `z_tb_ZReport` / `…Item` | cashier day end: till figures next to server figures (`Srv*`) |
 | `z_tb_System.ADJNO` | new counter column for adjustment numbers (next to `PNO`, `PRNO`) |
+| `z_tb_ItemPriceLink` | extra retail prices per item + location (§6.5). Delete = `Status 0`; one active link per price |
 
 `TxnType` (also `Meta.StockTxnType`): **1** GRN (+), **2** PRN (−), **3** Sale (−), **4** Sale refund (+), **5** Adjustment (±), **7** Opening (±).
 
@@ -91,7 +93,8 @@ Run with `sqlcmd -I` (QUOTED_IDENTIFIER must be ON for the filtered index), e.g.
 | `z_sp_SyncSalesInvoices` | stores a batch of bills from one till + posts sale/refund movements. Duplicates skipped. Re-checks any mismatched Z the late bills belong to |
 | `z_sp_SubmitZReport` → `z_sp_ReconcileZReport` | stores the till's Z and compares it with what the server received |
 | `z_sp_GetZMissingInvoices` | invoice numbers inside the Z's `FromSeq..ToSeq` that never arrived |
-| `z_sp_GetItemsForSync` / `z_sp_GetStockBalanceForSync` | "changed since" downloads for a till |
+| `z_sp_GetItemsForSync` / `z_sp_GetStockBalanceForSync` / `z_sp_GetPriceLinksForSync` | "changed since" downloads for a till |
+| `z_sp_AddPriceLink` / `z_sp_DeletePriceLink` | price links from Item Entry (errors 50041–50045) |
 
 Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{ message }`**.
 
@@ -102,17 +105,17 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | Table / proc | Purpose |
 |---|---|
 | `zf_tb_Config` | one row: TerminalId, TerminalCode, LocationId, API URL, `LastInvoiceSeq`, last sync times (**server** time) |
-| `zf_tb_Item`, `zf_tb_StockBalance` | downloaded copies (never edited on the till) |
+| `zf_tb_Item`, `zf_tb_StockBalance`, `zf_tb_ItemPriceLink` | downloaded copies (never edited on the till) |
 | `zf_tb_Invoice` / `…Item` / `…Payment` | bills, `Synced` flag |
 | `zf_tb_ZReport` / `…Item` | Z per shift: 0 open, 1 closed, 2 submitted, 3 reconciled, 4 mismatch |
 | `zf_sp_SetupTerminal` | one-time setup |
 | `zf_sp_OpenZ` | open Z (called at sign-on; SaveInvoice also opens one if needed) |
-| `zf_sp_SaveInvoice` | allocates `T01-00000123`, checks `Amount = Qty*Price − Disc` and payments = net, saves |
+| `zf_sp_SaveInvoice` | allocates `T01-00000123`, checks `Amount = Qty*Price − Disc`, payments = net and (sales only) each price (§6.5), saves |
 | `zf_sp_VoidInvoice` | only an **unsent** bill in the **open** Z. After upload → do a refund bill |
-| `zf_sp_FindItem` | barcode, then RefCode |
+| `zf_sp_FindItem` | barcode, then RefCode; 2nd result set = the item's active price links |
 | `zf_sp_GetUnsyncedInvoices` / `zf_sp_GetInvoicesByNo` / `zf_sp_MarkInvoicesSynced` | upload queue |
 | `zf_sp_CloseZ` / `zf_sp_GetZForSubmit` / `zf_sp_SetZStatus` | day end |
-| `zf_sp_UpsertItems` / `zf_sp_UpsertStockBalance` | apply downloads |
+| `zf_sp_UpsertItems` / `zf_sp_UpsertStockBalance` / `zf_sp_UpsertPriceLinks` | apply downloads |
 
 Invoice numbers are made **on the till** (`TerminalCode-8 digits`) so two tills can never clash
 while offline — the central `z_tb_System` counters can't be used offline.
@@ -141,6 +144,16 @@ while offline — the central `z_tb_System` counters can't be used offline.
 | GET | `api/Sync/Terminals` | back office | last upload, open Z count, `isStale` |
 | GET | `api/Sync/Items?terminalId=&since=` | till | `{ serverTime, rows }` — store `serverTime`, send it as `since` next time |
 | GET | `api/Sync/StockBalances?terminalId=&since=` | till | same pattern |
+| GET | `api/Sync/PriceLinks?terminalId=&since=` | till | same pattern; deleted links come with `status 0` |
+
+### Price links (Item Entry)
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/Itemz/PriceLinks/{itemId}` | active links, lowest price first |
+| POST | `api/Itemz/AddPriceLink` | `{ itemId, retailPrice, wholesalePrice?, costPrice?, remark?, userId? }` → `{ message, data }`. 400 on duplicate / normal price / ≤ 0 |
+| DELETE | `api/Itemz/PriceLink/{priceLinkId}?userId=` | `Status = 0` |
+
+`api/Itemz/AddItemDet` and `UpdateItemDet` now refuse bad quantity prices with 400 `{ message }` (§6.5).
 | POST | `api/Sync/Invoices` | till | `{ terminalId, invoices:[…] }` → `[{ invoiceNo, result: Inserted/Duplicate }]`. **Empty list = heartbeat** |
 | POST | `api/Sync/ZReport` | till | `{ result: { status 3/4, … , mismatchNote }, missingInvoiceNos: [] }` |
 | GET | `api/Sync/ZReport/{terminalId}/{zNo}` | back office | Z with per-item till vs server |
@@ -201,6 +214,24 @@ while offline — the central `z_tb_System` counters can't be used offline.
 Reconcile compares: invoice count (incl. voided), line count, net qty, net sales, per-item qty and
 amount, and gaps in the invoice sequence. The till (`zf_sp_CloseZ`) and the server
 (`z_sp_ReconcileZReport`) must use the **same rules** — change both together.
+
+### 6.5 Prices at the till — quantity prices and price links
+A sale line's price is one of:
+1. **Open price item** — whatever the cashier types.
+2. **Quantity price** (`QtyLevel2..4` / `PriceLevel2..4` on `z_tb_ItemDet`): "buy at least MinQty → pay Price
+   each". The level with the **highest MinQty the line's Qty reaches** wins (MinQty and Price both > 0);
+   none reached → `RetailPrice`. Applied automatically by the billing page as the quantity changes.
+   Item Entry and the API keep levels sane: both values or neither, MinQty > 1 and going up, Price going
+   down and below RetailPrice (`ItemzRepository.ValidatePriceLevels`).
+3. **Price link** (`z_tb_ItemPriceLink`): an extra retail price for the same item, e.g. old stock at the old
+   MRP. When an item has links the cashier must pick the price (normal price or a link) on **every** scan.
+   A link price is used for any quantity — no quantity price on top.
+
+`zf_sp_SaveInvoice` refuses a **sale** line whose price is none of these (51008 "Price of X has changed…",
+e.g. a price changed by a sync in the middle of a bill) and lines for items the till doesn't have (51007).
+Refunds are not price-checked — they give back what was charged.
+The page (Lovable Prompt 8, `quantityPrice()`) and `zf_sp_SaveInvoice` must use the same rule — change both together.
+The old system's unit price levels (`tb_PriceLevel`, e.g. cloth by the yard) are **not** carried over.
 
 ---
 

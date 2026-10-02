@@ -91,6 +91,24 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/Sync/PriceLinks?terminalId=1&since=...   (deleted links come back with status 0)
+        [HttpGet("PriceLinks")]
+        public async Task<IActionResult> PriceLinks([FromQuery] int terminalId, [FromQuery] DateTime? since)
+        {
+            try
+            {
+                return Ok(await _repository.GetPriceLinksAsync(terminalId, since));
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // ─── Upload (till) ───────────────────────────────────────────────────────
 
         // POST: api/Sync/Invoices — send up to ~50 at a time; an empty list is a heartbeat

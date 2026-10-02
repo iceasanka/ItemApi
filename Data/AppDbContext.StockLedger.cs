@@ -93,6 +93,15 @@ namespace ItemApi.Data
                 new SqlParameter("@Since", SqlDbType.DateTime) { Value = Db(since) }).ToListAsync();
         }
 
+        // proc lives in DBScript/03_BackOffice_PriceLink.sql
+        public async Task<List<SyncPriceLink>> GetPriceLinksForSyncAsync(int terminalId, DateTime? since)
+        {
+            return await Database.SqlQueryRaw<SyncPriceLink>(
+                "EXEC dbo.z_sp_GetPriceLinksForSync @TerminalId = @TerminalId, @Since = @Since",
+                new SqlParameter("@TerminalId", terminalId),
+                new SqlParameter("@Since", SqlDbType.DateTime) { Value = Db(since) }).ToListAsync();
+        }
+
         public async Task<List<SyncStockBalance>> GetStockBalanceForSyncAsync(int terminalId, DateTime? since)
         {
             return await Database.SqlQueryRaw<SyncStockBalance>(

@@ -23,5 +23,10 @@ namespace ItemApi.Interface
         // ItemzDet CRUD
         Task<ItemzDet> InsertItemzDetAsync(ItemzDet det);
         Task<ItemzDet> UpdateItemzDetAsync(ItemzDet det);
+
+        // Price links (extra retail prices the cashier picks from)
+        Task<List<ItemzPriceLink>> GetPriceLinksAsync(int itemId);
+        Task<ItemzPriceLink> AddPriceLinkAsync(AddPriceLinkRequest request);
+        Task DeletePriceLinkAsync(int priceLinkId, int? userId);
     }
 }

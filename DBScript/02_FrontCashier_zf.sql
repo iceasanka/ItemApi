@@ -32,8 +32,14 @@ CREATE TABLE dbo.zf_tb_Config (
     LastInvoiceSeq   INT          NOT NULL CONSTRAINT DF_zf_tb_Config_LastInvoiceSeq DEFAULT (0),
     LastItemSyncAt   DATETIME     NULL,       -- SERVER time of the last item download (next "since")
     LastStockSyncAt  DATETIME     NULL,       -- SERVER time of the last stock download
-    CDate            DATETIME     NOT NULL CONSTRAINT DF_zf_tb_Config_CDate DEFAULT (GETDATE())
+    CDate            DATETIME     NOT NULL CONSTRAINT DF_zf_tb_Config_CDate DEFAULT (GETDATE()),
+    LastPriceLinkSyncAt DATETIME  NULL        -- SERVER time of the last price link download
 );
+GO
+
+-- added after the first release — tills set up before it get the column here
+IF COL_LENGTH('dbo.zf_tb_Config', 'LastPriceLinkSyncAt') IS NULL
+    ALTER TABLE dbo.zf_tb_Config ADD LastPriceLinkSyncAt DATETIME NULL;
 GO
 
 -- Local copy of items + prices (download only — never edited on the till)
@@ -76,6 +82,21 @@ CREATE TABLE dbo.zf_tb_StockBalance (
     Qty     DECIMAL(18,3) NOT NULL,
     UDate   DATETIME      NULL
 );
+GO
+
+-- Local copy of the item's extra prices (z_tb_ItemPriceLink, download only). Status 0 = deleted on the back office.
+IF OBJECT_ID('dbo.zf_tb_ItemPriceLink', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_ItemPriceLink (
+        PriceLinkId  INT            NOT NULL CONSTRAINT PK_zf_tb_ItemPriceLink PRIMARY KEY,
+        ItemId       INT            NOT NULL,
+        RetailPrice  DECIMAL(18,2)  NOT NULL,
+        Remark       NVARCHAR(50)   NULL,
+        Status       INT            NOT NULL,
+        UDate        DATETIME       NULL
+    );
+    CREATE INDEX IX_zf_tb_ItemPriceLink_Item ON dbo.zf_tb_ItemPriceLink (ItemId, Status);
+END
 GO
 
 IF OBJECT_ID('dbo.zf_tb_Invoice', 'U') IS NULL
@@ -175,12 +196,14 @@ IF OBJECT_ID('dbo.zf_sp_GetZForSubmit', 'P')        IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_SetZStatus', 'P')           IS NOT NULL DROP PROCEDURE dbo.zf_sp_SetZStatus;
 IF OBJECT_ID('dbo.zf_sp_UpsertItems', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_UpsertItems;
 IF OBJECT_ID('dbo.zf_sp_UpsertStockBalance', 'P')   IS NOT NULL DROP PROCEDURE dbo.zf_sp_UpsertStockBalance;
+IF OBJECT_ID('dbo.zf_sp_UpsertPriceLinks', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_UpsertPriceLinks;
 GO
 IF TYPE_ID('dbo.zf_tt_InvoiceItem')    IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceItem;
 IF TYPE_ID('dbo.zf_tt_InvoicePayment') IS NOT NULL DROP TYPE dbo.zf_tt_InvoicePayment;
 IF TYPE_ID('dbo.zf_tt_InvoiceNo')      IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceNo;
 IF TYPE_ID('dbo.zf_tt_Item')           IS NOT NULL DROP TYPE dbo.zf_tt_Item;
 IF TYPE_ID('dbo.zf_tt_StockBalance')   IS NOT NULL DROP TYPE dbo.zf_tt_StockBalance;
+IF TYPE_ID('dbo.zf_tt_PriceLink')      IS NOT NULL DROP TYPE dbo.zf_tt_PriceLink;
 GO
 
 /* ---------------------------------------------------------------------------
@@ -239,6 +262,16 @@ CREATE TYPE dbo.zf_tt_StockBalance AS TABLE (
     UDate   DATETIME      NULL
 );
 GO
+-- same columns/order as the back-office z_sp_GetPriceLinksForSync result (API: GET api/Sync/PriceLinks)
+CREATE TYPE dbo.zf_tt_PriceLink AS TABLE (
+    PriceLinkId  INT            NOT NULL PRIMARY KEY,
+    ItemId       INT            NOT NULL,
+    RetailPrice  DECIMAL(18,2)  NOT NULL,
+    Remark       NVARCHAR(50)   NULL,
+    Status       INT            NOT NULL,
+    UDate        DATETIME       NULL
+);
+GO
 
 /* ---------------------------------------------------------------------------
    4. Procs
@@ -292,6 +325,10 @@ GO
 
 -- Saves a completed bill. Allocates the next invoice number and puts it in the open Z.
 -- Line Amount = Qty * UnitPrice - Discount; NetAmount = SUM(Amount) - bill Discount (checked).
+-- Sales (InvType 1): each line's UnitPrice must be one the till offers for that item —
+--   open price item: any price;
+--   otherwise: the quantity price for that Qty (bulk levels, see below), or an active price link.
+-- Refunds are not price-checked: they give back what was charged, which may be an older price.
 CREATE PROCEDURE dbo.zf_sp_SaveInvoice
     @InvType      INT = 1,            -- 1 sale, 2 refund
     @CashierId    VARCHAR(20) = NULL,
@@ -321,6 +358,40 @@ BEGIN
 
     IF ISNULL((SELECT SUM(Amount) FROM @Payments), 0) <> @Net
         THROW 51006, 'Payments must add up to the bill net amount.', 1;
+
+    IF @InvType = 1
+    BEGIN
+        DECLARE @BadItem NVARCHAR(200), @Msg NVARCHAR(400);
+
+        SELECT TOP 1 @BadItem = CAST(l.ItemId AS NVARCHAR(20))
+        FROM @Items l WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Item i WHERE i.ItemId = l.ItemId);
+        IF @BadItem IS NOT NULL
+        BEGIN
+            SET @Msg = N'Item ' + @BadItem + N' is not on this till. Scan it again.';
+            THROW 51007, @Msg, 1;
+        END
+
+        -- Quantity price: the level with the highest MinQty that Qty reaches (MinQty and Price both > 0);
+        -- none reached → RetailPrice. The billing page uses the SAME rule — change both together.
+        SELECT TOP 1 @BadItem = ISNULL(i.Inv_Descrip, i.Descrip)
+        FROM @Items l
+        JOIN dbo.zf_tb_Item i ON i.ItemId = l.ItemId
+        OUTER APPLY (
+            SELECT TOP 1 v.Price
+            FROM (VALUES (i.QtyLevel2, i.PriceLevel2), (i.QtyLevel3, i.PriceLevel3), (i.QtyLevel4, i.PriceLevel4)) v (MinQty, Price)
+            WHERE v.MinQty > 0 AND v.Price > 0 AND l.Qty >= v.MinQty
+            ORDER BY v.MinQty DESC
+        ) q
+        WHERE i.OpenPrice = 0
+          AND l.UnitPrice <> ISNULL(q.Price, i.RetailPrice)
+          AND NOT EXISTS (SELECT 1 FROM dbo.zf_tb_ItemPriceLink p
+                          WHERE p.ItemId = l.ItemId AND p.Status = 1 AND p.RetailPrice = l.UnitPrice);
+        IF @BadItem IS NOT NULL
+        BEGIN
+            SET @Msg = N'Price of ' + @BadItem + N' has changed. Remove the line and scan it again.';
+            THROW 51008, @Msg, 1;
+        END
+    END
 
     BEGIN TRAN;
         EXEC dbo.zf_sp_OpenZ @CashierId = @CashierId, @ZNo = @ZNo OUTPUT, @Silent = 1;
@@ -361,17 +432,29 @@ BEGIN
 END
 GO
 
--- Barcode, then RefCode. Includes the last known stock for display.
+-- Barcode, then RefCode. 2 result sets: the item (with the last known stock, for display),
+-- then its active price links (empty = sell at the normal / quantity price, no price choice).
 CREATE PROCEDURE dbo.zf_sp_FindItem
     @Code NVARCHAR(50)
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT TOP 1 i.*, s.Qty AS StockQty
+    DECLARE @ItemId INT;
+
+    SELECT TOP 1 @ItemId = i.ItemId
     FROM dbo.zf_tb_Item i
-    LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
     WHERE (i.Barcode = @Code OR i.RefCode = @Code) AND i.Status = 1
     ORDER BY CASE WHEN i.Barcode = @Code THEN 0 ELSE 1 END;
+
+    SELECT i.*, s.Qty AS StockQty
+    FROM dbo.zf_tb_Item i
+    LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
+    WHERE i.ItemId = @ItemId;
+
+    SELECT PriceLinkId, RetailPrice, Remark
+    FROM dbo.zf_tb_ItemPriceLink
+    WHERE ItemId = @ItemId AND Status = 1
+    ORDER BY RetailPrice;
 END
 GO
 
@@ -547,6 +630,28 @@ BEGIN
         WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_StockBalance t WHERE t.ItemId = s.ItemId);
 
         UPDATE dbo.zf_tb_Config SET LastStockSyncAt = @ServerTime WHERE Id = 1;
+    COMMIT;
+END
+GO
+
+-- Applies a price link download. @ServerTime = serverTime from GET api/Sync/PriceLinks.
+-- Deleted links arrive with Status 0 and stay as Status 0 (zf_sp_FindItem ignores them).
+CREATE PROCEDURE dbo.zf_sp_UpsertPriceLinks
+    @Rows        dbo.zf_tt_PriceLink READONLY,
+    @ServerTime  DATETIME
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    BEGIN TRAN;
+        UPDATE t SET ItemId = s.ItemId, RetailPrice = s.RetailPrice, Remark = s.Remark, Status = s.Status, UDate = s.UDate
+        FROM dbo.zf_tb_ItemPriceLink t JOIN @Rows s ON s.PriceLinkId = t.PriceLinkId;
+
+        INSERT dbo.zf_tb_ItemPriceLink (PriceLinkId, ItemId, RetailPrice, Remark, Status, UDate)
+        SELECT s.PriceLinkId, s.ItemId, s.RetailPrice, s.Remark, s.Status, s.UDate FROM @Rows s
+        WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_ItemPriceLink t WHERE t.PriceLinkId = s.PriceLinkId);
+
+        UPDATE dbo.zf_tb_Config SET LastPriceLinkSyncAt = @ServerTime WHERE Id = 1;
     COMMIT;
 END
 GO

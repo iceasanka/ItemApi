@@ -237,3 +237,99 @@ Status bar: Online/Offline dot, "N bills waiting to upload", cashier name, Z num
 Never block a sale because stockQty <= 0 — show a small warning only. isSaleLocked items cannot be sold.
 Day end button → confirm → show Z summary (bills, net sales, cash, card) and print.
 ```
+
+---
+
+## Prompt 7 — Item Entry: quantity prices + price links (change existing screen)
+
+Backend: `ItemzController` (price links, price-level check), `DBScript/03_BackOffice_PriceLink.sql`.
+
+```
+Change the existing Item Entry page (src/pages/ItemEntry.tsx). Use the existing Itemz API helper
+(src/services/itemzApi.ts) for the new calls. Don't change anything else on the page.
+
+1) "Price Levels" card → rename the title to "Quantity Prices".
+   - Column headers: "Buy at least" (was Min Qty) and "Price each" (was Price).
+   - Under the title, a small muted hint: "A customer buying at least this quantity pays this price
+     for every unit. The till applies it automatically."
+   - Rows stay Level 2, 3, 4 (qtyLevel2/priceLevel2 …). Keep the same fields and save flow.
+   - Validate before saving (same rules the API enforces; show the first problem under the card in red
+     and stop the save):
+       • a row must have both values or neither;
+       • "Buy at least" must be more than 1 and larger than the row above it;
+       • "Price each" must be more than 0, less than the Retail Price, and less than the row above it.
+   - If the API still answers 400, show its { message } in a red toast (existing error handling).
+
+2) New card "Price Links" placed directly under the Quantity Prices card.
+   Price links are extra retail prices for the SAME item (e.g. old stock still marked at the old MRP).
+   When an item has price links, the cashier must choose the right price every time it is scanned.
+   - Only enabled when the item is saved (has an itemId). Before that, show the muted text
+     "Save the item first to add price links."
+   - Load: GET /api/Itemz/PriceLinks/{itemId} → [{ priceLinkId, retailPrice, wholesalePrice, costPrice,
+     remark, cDate }]. Reload whenever a different item is loaded into the form.
+   - Table columns: Retail Price, Wholesale, Cost, Remark, Added (dd/MM/yyyy), and a delete icon button.
+     Money with 2 decimals, right-aligned. Empty state: "No price links — the till uses the normal price."
+   - Add row at the bottom of the card: inputs Retail Price (required), Wholesale, Cost, Remark
+     (max 50 chars, placeholder "e.g. Old stock MRP") and an "Add" button.
+     POST /api/Itemz/AddPriceLink { itemId, retailPrice, wholesalePrice, costPrice, remark }
+     → { message, data }. On success: green toast, clear the inputs, reload the list.
+     On 400: red toast with { message } (e.g. "This item already has a price link with this price.",
+     "This is already the item's normal retail price.").
+     Client checks before posting: retail price > 0 and not equal to the form's Retail Price.
+   - Delete: confirm dialog "Delete price link {retailPrice}? Tills stop offering it within 5 minutes."
+     → DELETE /api/Itemz/PriceLink/{priceLinkId} → { message }. Green toast, reload the list.
+   - Card footer, muted: "Changes reach the tills within 5 minutes."
+```
+
+---
+
+## Prompt 8 — Cashier billing: quantity prices + price link picker (change existing screen)
+
+Backend: TillService (`/items/find` now returns `priceLinks` and the quantity levels) and
+`zf_sp_SaveInvoice`, which refuses a sale line whose price isn't the quantity price or a price link.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and its local API file
+(src/services/tillLocalApi.ts). Keep everything else as it is.
+
+1) tillLocalApi.ts — extend TillItem with:
+     qtyLevel2?: number | null; priceLevel2?: number | null;
+     qtyLevel3?: number | null; priceLevel3?: number | null;
+     qtyLevel4?: number | null; priceLevel4?: number | null;
+     stockQty: number | null;
+     priceLinks: { priceLinkId: number; retailPrice: number; remark?: string | null }[];
+
+2) Quantity price (automatic). Add this helper and use it everywhere a line's price is worked out.
+   The till checks the SAME rule when the bill is saved, so copy it exactly:
+     function quantityPrice(item: TillItem, qty: number): number {
+       const levels = [
+         [item.qtyLevel2, item.priceLevel2], [item.qtyLevel3, item.priceLevel3], [item.qtyLevel4, item.priceLevel4],
+       ].filter(([q, p]) => (q ?? 0) > 0 && (p ?? 0) > 0 && qty >= (q as number)) as [number, number][];
+       if (levels.length === 0) return item.retailPrice;
+       return levels.reduce((best, l) => (l[0] > best[0] ? l : best))[1];
+     }
+   - Line gets a price source: priceLinkId: number | null (null = normal price).
+   - For a line with priceLinkId === null and item.openPrice === false, unitPrice is ALWAYS
+     quantityPrice(item, qty). Recalculate it whenever qty changes (scan again, Qty key).
+   - When the quantity price is lower than retailPrice, show the retail price struck through next to
+     the unit price and a small green badge "Qty price".
+   - Lines with a price link keep the link price for any quantity (no quantity price).
+   - Open price items: unchanged (cashier types the price).
+
+3) Price link picker. After findItem(code), if the item is not openPrice and
+   item.priceLinks (ignoring any whose retailPrice equals item.retailPrice) is not empty:
+   - Open a dialog "Select price — {descrip}" BEFORE adding the item. Options as big touch buttons:
+       1. Normal price  {retailPrice}
+       2. {retailPrice}  {remark}        (one per price link, lowest price first)
+     Keyboard: number keys 1..n pick an option, arrow keys + Enter, Esc cancels (item NOT added).
+   - Ask every time the item is scanned — the cashier must check the price on the pack each time.
+   - Merge into an existing line only when it is the same itemId AND the same priceLinkId
+     (null = normal price); otherwise add a new line. Same rule for items without price links.
+   - Show the remark under the item name on the line (small, muted) when a link was chosen.
+   - The scanner input must get focus back when the dialog closes.
+
+4) Refund mode: same picker and same quantity price.
+
+5) Saving: no change to the request. If POST /invoices answers 400 (e.g. "Price of X has changed.
+   Remove the line and scan it again."), show the message in a red toast and keep the bill on screen.
+```

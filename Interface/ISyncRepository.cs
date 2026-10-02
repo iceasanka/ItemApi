@@ -8,6 +8,7 @@ namespace ItemApi.Interface
         Task<List<TerminalStatus>> GetTerminalsAsync();
         Task<SyncDownload<SyncItem>> GetItemsAsync(int terminalId, DateTime? since);
         Task<SyncDownload<SyncStockBalance>> GetStockBalancesAsync(int terminalId, DateTime? since);
+        Task<SyncDownload<SyncPriceLink>> GetPriceLinksAsync(int terminalId, DateTime? since);
         Task<List<SyncInvoiceResult>> UploadInvoicesAsync(SyncInvoiceBatch batch);
         Task<ZReportSubmitResponse> SubmitZReportAsync(ZReportSubmit z);
         Task<ZReportSubmitResponse> ReconcileZReportAsync(int terminalId, int zNo);

@@ -1,3 +1,5 @@
+using System.Data;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using ItemApi.Models;
 using Serilog;
@@ -357,6 +359,43 @@ namespace ItemApi.Data
                 Log.Error($"Error updating itemzDet: {ex.Message}");
                 throw;
             }
+        }
+
+        // ─── Price links (z_tb_ItemPriceLink, DBScript/03_BackOffice_PriceLink.sql) ───
+
+        public async Task<List<ItemzPriceLink>> GetPriceLinksAsync(int itemId, int locationId)
+        {
+            return await Database.SqlQueryRaw<ItemzPriceLink>(@"
+                SELECT PriceLinkId, ItemId, LocationId, RetailPrice, WholesalePrice, CostPrice, Remark, Status, UserId, CDate, UDate
+                FROM dbo.z_tb_ItemPriceLink
+                WHERE ItemId = @ItemId AND LocationId = @LocationId AND Status = 1
+                ORDER BY RetailPrice",
+                new SqlParameter("@ItemId", itemId),
+                new SqlParameter("@LocationId", locationId)).ToListAsync();
+        }
+
+        // Business errors come back as SqlException 50041–50045
+        public async Task<ItemzPriceLink> AddPriceLinkAsync(AddPriceLinkRequest request, int locationId)
+        {
+            var rows = await Database.SqlQueryRaw<ItemzPriceLink>(
+                "EXEC dbo.z_sp_AddPriceLink @ItemId = @ItemId, @LocationId = @LocationId, @RetailPrice = @RetailPrice, " +
+                "@WholesalePrice = @WholesalePrice, @CostPrice = @CostPrice, @Remark = @Remark, @UserId = @UserId",
+                new SqlParameter("@ItemId", request.ItemId),
+                new SqlParameter("@LocationId", locationId),
+                new SqlParameter("@RetailPrice", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = request.RetailPrice },
+                new SqlParameter("@WholesalePrice", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = (object?)request.WholesalePrice ?? DBNull.Value },
+                new SqlParameter("@CostPrice", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = (object?)request.CostPrice ?? DBNull.Value },
+                new SqlParameter("@Remark", SqlDbType.NVarChar, 50) { Value = (object?)request.Remark ?? DBNull.Value },
+                new SqlParameter("@UserId", SqlDbType.Int) { Value = (object?)request.UserId ?? DBNull.Value }).ToListAsync();
+            return rows.First();
+        }
+
+        public async Task DeletePriceLinkAsync(int priceLinkId, int? userId)
+        {
+            await Database.ExecuteSqlRawAsync(
+                "EXEC dbo.z_sp_DeletePriceLink @PriceLinkId = @PriceLinkId, @UserId = @UserId",
+                new SqlParameter("@PriceLinkId", priceLinkId),
+                new SqlParameter("@UserId", SqlDbType.Int) { Value = (object?)userId ?? DBNull.Value });
         }
     }
 }

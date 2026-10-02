@@ -156,6 +156,17 @@ namespace ItemApi.Models
         public DateTime? UDate { get; set; }
     }
 
+    // GET api/Sync/PriceLinks — row = z_sp_GetPriceLinksForSync = zf_tt_PriceLink on the till. Status 0 = deleted.
+    public class SyncPriceLink
+    {
+        public int PriceLinkId { get; set; }
+        public int ItemId { get; set; }
+        public decimal RetailPrice { get; set; }
+        public string? Remark { get; set; }
+        public int Status { get; set; }
+        public DateTime? UDate { get; set; }
+    }
+
     public class SyncStockBalance
     {
         public int ItemId { get; set; }

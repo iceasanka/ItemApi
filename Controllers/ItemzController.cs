@@ -1,6 +1,8 @@
 using ItemApi.Interface;
 using ItemApi.Models;
+using ItemApi.Repositories;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Serilog;
 
 namespace ItemApi.Controllers
@@ -146,6 +148,10 @@ namespace ItemApi.Controllers
         [HttpPost("AddItemDet")]
         public async Task<ActionResult<ItemzDet>> AddItemDet([FromBody] ItemzDet det)
         {
+            var levelError = ItemzRepository.ValidatePriceLevels(det);
+            if (levelError != null)
+                return BadRequest(new { message = levelError });
+
             try
             {
                 var result = await _repository.InsertItemzDetAsync(det);
@@ -178,6 +184,10 @@ namespace ItemApi.Controllers
         [HttpPut("UpdateItemDet")]
         public async Task<ActionResult<ItemzDet>> UpdateItemDet([FromBody] ItemzDet det)
         {
+            var levelError = ItemzRepository.ValidatePriceLevels(det);
+            if (levelError != null)
+                return BadRequest(new { message = levelError });
+
             try
             {
                 var result = await _repository.UpdateItemzDetAsync(det);
@@ -204,6 +214,68 @@ namespace ItemApi.Controllers
             {
                 Log.Error($"Error: {ex}");
                 return StatusCode(500, ex.Message);
+            }
+        }
+
+        // ─── Price links ──────────────────────────────────────────────────────────
+        // Extra retail prices for the same item (e.g. old stock at the old MRP). Tills download them
+        // (api/Sync/PriceLinks) and the cashier picks the right price when the item is scanned.
+
+        // GET: api/Itemz/PriceLinks/5 — active links, lowest price first
+        [HttpGet("PriceLinks/{itemId}")]
+        public async Task<ActionResult<List<ItemzPriceLink>>> GetPriceLinks(int itemId)
+        {
+            try
+            {
+                return Ok(await _repository.GetPriceLinksAsync(itemId));
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/Itemz/AddPriceLink { itemId, retailPrice, wholesalePrice?, costPrice?, remark?, userId? }
+        [HttpPost("AddPriceLink")]
+        public async Task<IActionResult> AddPriceLink([FromBody] AddPriceLinkRequest request)
+        {
+            if (request == null || request.ItemId <= 0)
+                return BadRequest(new { message = "ItemId is required." });
+
+            try
+            {
+                var result = await _repository.AddPriceLinkAsync(request);
+                return Ok(new { message = "Price link added.", data = result });
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // DELETE: api/Itemz/PriceLink/12?userId=3 — marks it deleted (Status 0); tills drop it on their next download
+        [HttpDelete("PriceLink/{priceLinkId}")]
+        public async Task<IActionResult> DeletePriceLink(int priceLinkId, [FromQuery] int? userId)
+        {
+            try
+            {
+                await _repository.DeletePriceLinkAsync(priceLinkId, userId);
+                return Ok(new { message = "Price link deleted." });
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
             }
         }
     }

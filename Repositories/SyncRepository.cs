@@ -121,6 +121,21 @@ namespace ItemApi.Repositories
             }
         }
 
+        public async Task<SyncDownload<SyncPriceLink>> GetPriceLinksAsync(int terminalId, DateTime? since)
+        {
+            try
+            {
+                var serverTime = await _context.GetServerTimeAsync();
+                var rows = await _context.GetPriceLinksForSyncAsync(terminalId, since);
+                return new SyncDownload<SyncPriceLink> { ServerTime = serverTime, Rows = rows };
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<List<SyncInvoiceResult>> UploadInvoicesAsync(SyncInvoiceBatch batch)
         {
             try

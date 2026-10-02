@@ -162,6 +162,7 @@ namespace ItemApi.Models
         public int PriceLinkId { get; set; }
         public int ItemId { get; set; }
         public decimal RetailPrice { get; set; }
+        public decimal? WholesalePrice { get; set; }
         public string? Remark { get; set; }
         public int Status { get; set; }
         public DateTime? UDate { get; set; }
@@ -207,6 +208,8 @@ namespace ItemApi.Models
         public decimal NetAmount { get; set; }
         // 1 completed, 9 voided
         public int Status { get; set; }
+        // 1 retail, 2 wholesale bill. Tills older than wholesale bills don't send it → retail.
+        public int PriceType { get; set; } = 1;
         public List<SyncInvoiceItem> Items { get; set; } = new();
         public List<SyncPayment> Payments { get; set; } = new();
     }
@@ -214,7 +217,12 @@ namespace ItemApi.Models
     public class SyncInvoiceItem
     {
         public int LineNum { get; set; }
+        // 0 = "other item" (not in the item list) — then LineDescrip holds what the cashier typed; no stock
         public int ItemId { get; set; }
+        [MaxLength(50)]
+        public string? LineDescrip { get; set; }
+        // 1 retail, 2 wholesale price on this line. Null (older tills) → the bill's PriceType
+        public int? PriceType { get; set; }
         public decimal Qty { get; set; }
         public decimal UnitPrice { get; set; }
         public decimal Discount { get; set; }

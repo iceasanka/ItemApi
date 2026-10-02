@@ -112,7 +112,8 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_sp_OpenZ` | open Z (called at sign-on; SaveInvoice also opens one if needed) |
 | `zf_sp_SaveInvoice` | allocates `T01-00000123`, checks `Amount = Qty*Price − Disc`, payments = net and (sales only) each price (§6.5), saves |
 | `zf_sp_VoidInvoice` | only an **unsent** bill in the **open** Z. After upload → do a refund bill |
-| `zf_sp_FindItem` | barcode, then RefCode; 2nd result set = the item's active price links |
+| `zf_sp_FindItem` | barcode, then RefCode — or `@ItemId`; 2nd result set = the item's active price links |
+| `zf_sp_SearchItems` | cashier search by name: every word in `Descrip` or `Inv_Descrip`, max 50 (needs SQL Server 2016+) |
 | `zf_sp_GetUnsyncedInvoices` / `zf_sp_GetInvoicesByNo` / `zf_sp_MarkInvoicesSynced` | upload queue |
 | `zf_sp_CloseZ` / `zf_sp_GetZForSubmit` / `zf_sp_SetZStatus` | day end |
 | `zf_sp_UpsertItems` / `zf_sp_UpsertStockBalance` / `zf_sp_UpsertPriceLinks` | apply downloads |
@@ -197,7 +198,8 @@ while offline — the central `z_tb_System` counters can't be used offline.
    `zf_sp_MarkInvoicesSynced` with **every** returned invoiceNo (Inserted *and* Duplicate).
    If nothing is waiting, still POST an empty list (heartbeat → `LastSyncAt`).
 3. Every ~5 min: `GET api/Sync/Items?since=LastItemSyncAt` → `zf_sp_UpsertItems(rows, serverTime)`;
-   same for stock balances.
+   same for price links and stock balances. The cashier's **Reload** button (TillService `POST /sync/now`)
+   does all of this immediately and answers how many items / price links changed.
 4. **Never block a sale because stock shows 0** — the till's copy may be old. Negative stock shows
    up on the back office balance screen (`onlyNegative`).
 
@@ -227,6 +229,20 @@ A sale line's price is one of:
    MRP. When an item has links the cashier must pick the price (normal price or a link) on **every** scan.
    A link price is used for any quantity — no quantity price on top.
 
+4. **Wholesale line** (line `PriceType 2`): price type is **per line**, so a retail bill can have wholesale lines
+   and a wholesale bill retail lines (supervisor PIN once per bill). A wholesale line uses the item's
+   `WholesalePrice` (> 0), or a price link's `WholesalePrice`, for any quantity; an item without a wholesale
+   price falls back to 1–3. Only a line marked `PriceType 2` may carry a wholesale price — a retail line charged
+   a wholesale price is refused. The bill's `@PriceType` is only the default for lines that send none; the bill is
+   stored as `PriceType 2` when any line is wholesale. Stored on `zf_tb_InvoiceItem.PriceType` /
+   `z_tb_SalesInvoiceItem.PriceType` (lines from older tills take the bill's type). The page goes back to retail
+   after every bill.
+
+5. **Other item** (`ItemId 0` + `LineDescrip`): an item that is not in the item list. The cashier types the
+   name and price (> 0, 51010 otherwise); no price check. Stored on `zf_tb_InvoiceItem` / `z_tb_SalesInvoiceItem`
+   with its `LineDescrip`; **no stock movement**. In Z reports all other-item lines of a Z are one group,
+   `ItemId 0`, shown as "Other items (not in item list)". `LineDescrip` is the list to add to Item Entry later.
+
 `zf_sp_SaveInvoice` refuses a **sale** line whose price is none of these (51008 "Price of X has changed…",
 e.g. a price changed by a sync in the middle of a bill) and lines for items the till doesn't have (51007).
 Refunds are not price-checked — they give back what was charged.
@@ -242,6 +258,8 @@ The old system's unit price levels (`tb_PriceLevel`, e.g. cloth by the yard) are
 | `z_tb_ZReport.Status` | 2 received, 3 reconciled, 4 mismatch |
 | `zf_tb_ZReport.Status` | 0 open, 1 closed, 2 submitted, 3 reconciled, 4 mismatch |
 | Invoice `InvType` / `Status` | 1 sale, 2 refund / 1 completed, 9 voided |
+| Invoice `PriceType` | 1 retail, 2 = has wholesale line(s) |
+| Invoice line `PriceType` | 1 retail, 2 wholesale price on this line |
 | Payment `PayType` | 1 cash, 2 card, 3 credit, 4 voucher |
 
 ---

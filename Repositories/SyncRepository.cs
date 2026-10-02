@@ -205,7 +205,8 @@ namespace ItemApi.Repositories
                                      SrvQty = zi.SrvQty,
                                      SrvAmount = zi.SrvAmount,
                                      RefCode = i != null ? i.RefCode : null,
-                                     Descrip = i != null ? i.Descrip : null
+                                     // ItemId 0 = all "other item" lines (not in the item list) of this Z together
+                                     Descrip = i != null ? i.Descrip : zi.ItemId == 0 ? "Other items (not in item list)" : null
                                  }).ToListAsync();
 
                 return z;

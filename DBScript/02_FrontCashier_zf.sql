@@ -88,14 +88,23 @@ GO
 IF OBJECT_ID('dbo.zf_tb_ItemPriceLink', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.zf_tb_ItemPriceLink (
-        PriceLinkId  INT            NOT NULL CONSTRAINT PK_zf_tb_ItemPriceLink PRIMARY KEY,
-        ItemId       INT            NOT NULL,
-        RetailPrice  DECIMAL(18,2)  NOT NULL,
-        Remark       NVARCHAR(50)   NULL,
-        Status       INT            NOT NULL,
-        UDate        DATETIME       NULL
+        PriceLinkId     INT            NOT NULL CONSTRAINT PK_zf_tb_ItemPriceLink PRIMARY KEY,
+        ItemId          INT            NOT NULL,
+        RetailPrice     DECIMAL(18,2)  NOT NULL,
+        Remark          NVARCHAR(50)   NULL,
+        Status          INT            NOT NULL,
+        UDate           DATETIME       NULL,
+        WholesalePrice  DECIMAL(18,2)  NULL      -- used on wholesale bills; NULL → RetailPrice
     );
     CREATE INDEX IX_zf_tb_ItemPriceLink_Item ON dbo.zf_tb_ItemPriceLink (ItemId, Status);
+END
+GO
+
+-- added with wholesale bills. Links already on the till have no wholesale price yet → download them all again.
+IF COL_LENGTH('dbo.zf_tb_ItemPriceLink', 'WholesalePrice') IS NULL
+BEGIN
+    ALTER TABLE dbo.zf_tb_ItemPriceLink ADD WholesalePrice DECIMAL(18,2) NULL;
+    UPDATE dbo.zf_tb_Config SET LastPriceLinkSyncAt = NULL;
 END
 GO
 
@@ -114,11 +123,16 @@ BEGIN
         Status       INT           NOT NULL,   -- 1 completed, 9 voided (only before upload)
         Synced       BIT           NOT NULL CONSTRAINT DF_zf_tb_Invoice_Synced DEFAULT (0),
         SyncedAt     DATETIME      NULL,
+        PriceType    INT           NOT NULL CONSTRAINT DF_zf_tb_Invoice_PriceType DEFAULT (1),   -- 1 retail, 2 = has wholesale line(s); each line has its own
         CONSTRAINT UQ_zf_tb_Invoice_Seq UNIQUE (InvoiceSeq)
     );
     CREATE INDEX IX_zf_tb_Invoice_Unsynced ON dbo.zf_tb_Invoice (Synced, InvoiceSeq);
     CREATE INDEX IX_zf_tb_Invoice_Z        ON dbo.zf_tb_Invoice (ZNo);
 END
+GO
+
+IF COL_LENGTH('dbo.zf_tb_Invoice', 'PriceType') IS NULL
+    ALTER TABLE dbo.zf_tb_Invoice ADD PriceType INT NOT NULL CONSTRAINT DF_zf_tb_Invoice_PriceType DEFAULT (1);
 GO
 
 IF OBJECT_ID('dbo.zf_tb_InvoiceItem', 'U') IS NULL
@@ -130,8 +144,20 @@ CREATE TABLE dbo.zf_tb_InvoiceItem (
     UnitPrice  DECIMAL(18,2) NOT NULL,   -- price actually charged
     Discount   DECIMAL(18,2) NOT NULL,   -- line discount
     Amount     DECIMAL(18,2) NOT NULL,   -- Qty * UnitPrice - Discount
+    LineDescrip NVARCHAR(50) NULL,       -- "other item" (ItemId 0, not in the item list): what the cashier typed
+    PriceType  INT           NOT NULL CONSTRAINT DF_zf_tb_InvoiceItem_PriceType DEFAULT (1),   -- 1 retail, 2 wholesale price on this line
     CONSTRAINT PK_zf_tb_InvoiceItem PRIMARY KEY (InvoiceNo, LineNum)
 );
+GO
+
+-- added with "other item" lines — tills set up before get the column here
+IF COL_LENGTH('dbo.zf_tb_InvoiceItem', 'LineDescrip') IS NULL
+    ALTER TABLE dbo.zf_tb_InvoiceItem ADD LineDescrip NVARCHAR(50) NULL;
+GO
+
+-- added with per-line wholesale (a retail bill can have wholesale lines and the other way round)
+IF COL_LENGTH('dbo.zf_tb_InvoiceItem', 'PriceType') IS NULL
+    ALTER TABLE dbo.zf_tb_InvoiceItem ADD PriceType INT NOT NULL CONSTRAINT DF_zf_tb_InvoiceItem_PriceType DEFAULT (1);
 GO
 
 IF OBJECT_ID('dbo.zf_tb_InvoicePayment', 'U') IS NULL
@@ -188,6 +214,7 @@ IF OBJECT_ID('dbo.zf_sp_OpenZ', 'P')                IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_SaveInvoice', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveInvoice;
 IF OBJECT_ID('dbo.zf_sp_VoidInvoice', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_VoidInvoice;
 IF OBJECT_ID('dbo.zf_sp_FindItem', 'P')             IS NOT NULL DROP PROCEDURE dbo.zf_sp_FindItem;
+IF OBJECT_ID('dbo.zf_sp_SearchItems', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_SearchItems;
 IF OBJECT_ID('dbo.zf_sp_GetUnsyncedInvoices', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedInvoices;
 IF OBJECT_ID('dbo.zf_sp_GetInvoicesByNo', 'P')      IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetInvoicesByNo;
 IF OBJECT_ID('dbo.zf_sp_MarkInvoicesSynced', 'P')   IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkInvoicesSynced;
@@ -215,7 +242,9 @@ CREATE TYPE dbo.zf_tt_InvoiceItem AS TABLE (
     Qty        DECIMAL(18,3) NOT NULL,
     UnitPrice  DECIMAL(18,2) NOT NULL,
     Discount   DECIMAL(18,2) NOT NULL,
-    Amount     DECIMAL(18,2) NOT NULL
+    Amount     DECIMAL(18,2) NOT NULL,
+    LineDescrip NVARCHAR(50) NULL,      -- only for ItemId 0 ("other item")
+    PriceType  INT           NULL        -- 1 retail, 2 wholesale; NULL → the bill's @PriceType
 );
 GO
 CREATE TYPE dbo.zf_tt_InvoicePayment AS TABLE (
@@ -264,12 +293,13 @@ CREATE TYPE dbo.zf_tt_StockBalance AS TABLE (
 GO
 -- same columns/order as the back-office z_sp_GetPriceLinksForSync result (API: GET api/Sync/PriceLinks)
 CREATE TYPE dbo.zf_tt_PriceLink AS TABLE (
-    PriceLinkId  INT            NOT NULL PRIMARY KEY,
-    ItemId       INT            NOT NULL,
-    RetailPrice  DECIMAL(18,2)  NOT NULL,
-    Remark       NVARCHAR(50)   NULL,
-    Status       INT            NOT NULL,
-    UDate        DATETIME       NULL
+    PriceLinkId     INT            NOT NULL PRIMARY KEY,
+    ItemId          INT            NOT NULL,
+    RetailPrice     DECIMAL(18,2)  NOT NULL,
+    WholesalePrice  DECIMAL(18,2)  NULL,
+    Remark          NVARCHAR(50)   NULL,
+    Status          INT            NOT NULL,
+    UDate           DATETIME       NULL
 );
 GO
 
@@ -327,10 +357,17 @@ GO
 -- Line Amount = Qty * UnitPrice - Discount; NetAmount = SUM(Amount) - bill Discount (checked).
 -- Sales (InvType 1): each line's UnitPrice must be one the till offers for that item —
 --   open price item: any price;
---   otherwise: the quantity price for that Qty (bulk levels, see below), or an active price link.
+--   otherwise: the quantity price for that Qty (bulk levels, see below), or an active price link's retail price;
+--   wholesale LINE (line PriceType 2) also: the item's WholesalePrice (> 0) or a price link's WholesalePrice.
+--   A retail line can never be charged a wholesale price. Each line has its own PriceType, so a retail bill
+--   can have wholesale lines and the other way round; a line without one takes @PriceType.
+--   The bill is stored as PriceType 2 when any line is wholesale (for reports).
 -- Refunds are not price-checked: they give back what was charged, which may be an older price.
+-- "Other item" lines (ItemId 0, item not in the list): any price above 0 with a typed LineDescrip.
+--   They are not price-checked and the back office does not move stock for them.
 CREATE PROCEDURE dbo.zf_sp_SaveInvoice
     @InvType      INT = 1,            -- 1 sale, 2 refund
+    @PriceType    INT = 1,            -- default for lines that don't send their own PriceType (1 retail, 2 wholesale)
     @CashierId    VARCHAR(20) = NULL,
     @Discount     DECIMAL(18,2) = 0,  -- bill-level discount
     @Items        dbo.zf_tt_InvoiceItem READONLY,
@@ -341,10 +378,14 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @Seq INT, @TerminalCode VARCHAR(10), @ZNo INT, @Gross DECIMAL(18,2), @Net DECIMAL(18,2);
+    DECLARE @Seq INT, @TerminalCode VARCHAR(10), @ZNo INT, @Gross DECIMAL(18,2), @Net DECIMAL(18,2), @BillPriceType INT;
 
     IF @InvType NOT IN (1, 2)
         THROW 51001, 'InvType must be 1 (sale) or 2 (refund).', 1;
+    IF @PriceType NOT IN (1, 2)
+        THROW 51009, 'PriceType must be 1 (retail) or 2 (wholesale).', 1;
+    IF EXISTS (SELECT 1 FROM @Items WHERE PriceType NOT IN (1, 2))
+        THROW 51009, 'Line PriceType must be 1 (retail) or 2 (wholesale).', 1;
     IF NOT EXISTS (SELECT 1 FROM @Items)
         THROW 51002, 'Bill has no items.', 1;
     IF EXISTS (SELECT 1 FROM @Items WHERE Qty <= 0)
@@ -353,8 +394,13 @@ BEGIN
         THROW 51004, 'Line Amount must equal Qty * UnitPrice - Discount.', 1;
     IF NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Config)
         THROW 51005, 'Till is not set up (run zf_sp_SetupTerminal).', 1;
+    -- "other item" = an item that is not in the item list: ItemId 0, the cashier types the name and price
+    IF EXISTS (SELECT 1 FROM @Items WHERE ItemId = 0 AND (LTRIM(RTRIM(ISNULL(LineDescrip, N''))) = N'' OR UnitPrice <= 0))
+        THROW 51010, 'Other item needs a description and a price above 0.', 1;
 
     SELECT @Gross = SUM(ROUND(Qty * UnitPrice, 2)), @Net = SUM(Amount) - @Discount FROM @Items;
+    -- bill type for reports: wholesale when any line is wholesale
+    SET @BillPriceType = CASE WHEN EXISTS (SELECT 1 FROM @Items WHERE ISNULL(PriceType, @PriceType) = 2) THEN 2 ELSE 1 END;
 
     IF ISNULL((SELECT SUM(Amount) FROM @Payments), 0) <> @Net
         THROW 51006, 'Payments must add up to the bill net amount.', 1;
@@ -364,7 +410,7 @@ BEGIN
         DECLARE @BadItem NVARCHAR(200), @Msg NVARCHAR(400);
 
         SELECT TOP 1 @BadItem = CAST(l.ItemId AS NVARCHAR(20))
-        FROM @Items l WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Item i WHERE i.ItemId = l.ItemId);
+        FROM @Items l WHERE l.ItemId <> 0 AND NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Item i WHERE i.ItemId = l.ItemId);
         IF @BadItem IS NOT NULL
         BEGIN
             SET @Msg = N'Item ' + @BadItem + N' is not on this till. Scan it again.';
@@ -382,10 +428,13 @@ BEGIN
             WHERE v.MinQty > 0 AND v.Price > 0 AND l.Qty >= v.MinQty
             ORDER BY v.MinQty DESC
         ) q
+        -- ISNULLs keep every test TRUE/FALSE: a NULL price must never let a line through.
         WHERE i.OpenPrice = 0
-          AND l.UnitPrice <> ISNULL(q.Price, i.RetailPrice)
+          AND l.UnitPrice <> ISNULL(q.Price, ISNULL(i.RetailPrice, -1))
+          AND NOT (ISNULL(l.PriceType, @PriceType) = 2 AND ISNULL(i.WholesalePrice, 0) > 0 AND l.UnitPrice = ISNULL(i.WholesalePrice, 0))
           AND NOT EXISTS (SELECT 1 FROM dbo.zf_tb_ItemPriceLink p
-                          WHERE p.ItemId = l.ItemId AND p.Status = 1 AND p.RetailPrice = l.UnitPrice);
+                          WHERE p.ItemId = l.ItemId AND p.Status = 1
+                            AND (p.RetailPrice = l.UnitPrice OR (ISNULL(l.PriceType, @PriceType) = 2 AND p.WholesalePrice = l.UnitPrice)));
         IF @BadItem IS NOT NULL
         BEGIN
             SET @Msg = N'Price of ' + @BadItem + N' has changed. Remove the line and scan it again.';
@@ -402,11 +451,14 @@ BEGIN
 
         SET @InvoiceNo = @TerminalCode + '-' + RIGHT('00000000' + CAST(@Seq AS VARCHAR(10)), 8);
 
-        INSERT dbo.zf_tb_Invoice (InvoiceNo, InvoiceSeq, ZNo, InvType, InvDate, CashierId, GrossAmount, Discount, NetAmount, Status)
-        VALUES (@InvoiceNo, @Seq, @ZNo, @InvType, GETDATE(), @CashierId, @Gross, @Discount, @Net, 1);
+        INSERT dbo.zf_tb_Invoice (InvoiceNo, InvoiceSeq, ZNo, InvType, InvDate, CashierId, GrossAmount, Discount, NetAmount, Status, PriceType)
+        VALUES (@InvoiceNo, @Seq, @ZNo, @InvType, GETDATE(), @CashierId, @Gross, @Discount, @Net, 1, @BillPriceType);
 
-        INSERT dbo.zf_tb_InvoiceItem (InvoiceNo, LineNum, ItemId, Qty, UnitPrice, Discount, Amount)
-        SELECT @InvoiceNo, LineNum, ItemId, Qty, UnitPrice, Discount, Amount FROM @Items;
+        INSERT dbo.zf_tb_InvoiceItem (InvoiceNo, LineNum, ItemId, Qty, UnitPrice, Discount, Amount, LineDescrip, PriceType)
+        SELECT @InvoiceNo, LineNum, ItemId, Qty, UnitPrice, Discount, Amount,
+               CASE WHEN ItemId = 0 THEN LTRIM(RTRIM(LineDescrip)) END,   -- real items keep their name in zf_tb_Item
+               ISNULL(PriceType, @PriceType)
+        FROM @Items;
 
         INSERT dbo.zf_tb_InvoicePayment (InvoiceNo, LineNum, PayType, Amount, RefNo)
         SELECT @InvoiceNo, LineNum, PayType, Amount, RefNo FROM @Payments;
@@ -432,29 +484,66 @@ BEGIN
 END
 GO
 
--- Barcode, then RefCode. 2 result sets: the item (with the last known stock, for display),
+-- Barcode, then RefCode — or one item by @ItemId (picked from zf_sp_SearchItems). Active items only.
+-- 2 result sets: the item (with the last known stock, for display),
 -- then its active price links (empty = sell at the normal / quantity price, no price choice).
 CREATE PROCEDURE dbo.zf_sp_FindItem
-    @Code NVARCHAR(50)
+    @Code   NVARCHAR(50) = NULL,
+    @ItemId INT = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
-    DECLARE @ItemId INT;
 
-    SELECT TOP 1 @ItemId = i.ItemId
-    FROM dbo.zf_tb_Item i
-    WHERE (i.Barcode = @Code OR i.RefCode = @Code) AND i.Status = 1
-    ORDER BY CASE WHEN i.Barcode = @Code THEN 0 ELSE 1 END;
+    IF @ItemId IS NOT NULL
+        SET @ItemId = (SELECT ItemId FROM dbo.zf_tb_Item WHERE ItemId = @ItemId AND Status = 1);   -- NULL if inactive / missing
+    ELSE
+        SELECT TOP 1 @ItemId = i.ItemId
+        FROM dbo.zf_tb_Item i
+        WHERE (i.Barcode = @Code OR i.RefCode = @Code) AND i.Status = 1
+        ORDER BY CASE WHEN i.Barcode = @Code THEN 0 ELSE 1 END;
 
     SELECT i.*, s.Qty AS StockQty
     FROM dbo.zf_tb_Item i
     LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
     WHERE i.ItemId = @ItemId;
 
-    SELECT PriceLinkId, RetailPrice, Remark
+    SELECT PriceLinkId, RetailPrice, WholesalePrice, Remark
     FROM dbo.zf_tb_ItemPriceLink
     WHERE ItemId = @ItemId AND Status = 1
     ORDER BY RetailPrice;
+END
+GO
+
+-- Cashier search by name: every word typed must appear in Descrip or Inv_Descrip (any order, any case),
+-- e.g. 'sugar 1kg' finds 'SUGAR WHITE 1KG'. Active items only, names starting with the text first.
+-- Pick a row, then zf_sp_FindItem @ItemId for the full item and its price links. Needs SQL Server 2016+ (STRING_SPLIT).
+CREATE PROCEDURE dbo.zf_sp_SearchItems
+    @Text NVARCHAR(100),
+    @Top  INT = 50
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- LIKE wildcards typed by the cashier are searched for literally
+    DECLARE @t NVARCHAR(100) = LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(@Text, N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]')));
+    DECLARE @words TABLE (Word NVARCHAR(100) NOT NULL);
+    INSERT @words SELECT value FROM STRING_SPLIT(@t, N' ') WHERE value <> N'';
+
+    IF NOT EXISTS (SELECT 1 FROM @words)
+        SET @Top = 0;   -- nothing typed → no rows (same columns, so callers always get one shape)
+
+    SELECT TOP (@Top)
+           i.ItemId, i.RefCode, i.Barcode, i.Descrip, i.Inv_Descrip,
+           ISNULL(i.RetailPrice, 0) AS RetailPrice, i.WholesalePrice, i.OpenPrice, i.IsSaleLocked, s.Qty AS StockQty,
+           CAST(CASE WHEN EXISTS (SELECT 1 FROM dbo.zf_tb_ItemPriceLink p WHERE p.ItemId = i.ItemId AND p.Status = 1)
+                     THEN 1 ELSE 0 END AS BIT) AS HasPriceLinks
+    FROM dbo.zf_tb_Item i
+    LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
+    WHERE i.Status = 1
+      AND NOT EXISTS (SELECT 1 FROM @words w
+                      WHERE ISNULL(i.Descrip, N'') NOT LIKE N'%' + w.Word + N'%'
+                        AND ISNULL(i.Inv_Descrip, N'') NOT LIKE N'%' + w.Word + N'%')
+    ORDER BY CASE WHEN i.Descrip LIKE @t + N'%' OR i.Inv_Descrip LIKE @t + N'%' THEN 0 ELSE 1 END, i.Descrip;
 END
 GO
 
@@ -464,10 +553,10 @@ CREATE PROCEDURE dbo.zf_sp_GetInvoicesByNo
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT i.InvoiceNo, i.InvoiceSeq, i.ZNo, i.InvType, i.InvDate, i.CashierId, i.GrossAmount, i.Discount, i.NetAmount, i.Status
+    SELECT i.InvoiceNo, i.InvoiceSeq, i.ZNo, i.InvType, i.InvDate, i.CashierId, i.GrossAmount, i.Discount, i.NetAmount, i.Status, i.PriceType
     FROM dbo.zf_tb_Invoice i JOIN @InvoiceNos n ON n.InvoiceNo = i.InvoiceNo ORDER BY i.InvoiceSeq;
 
-    SELECT it.InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount
+    SELECT it.InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount, it.LineDescrip, it.PriceType
     FROM dbo.zf_tb_InvoiceItem it JOIN @InvoiceNos n ON n.InvoiceNo = it.InvoiceNo;
 
     SELECT p.InvoiceNo, p.LineNum, p.PayType, p.Amount, p.RefNo
@@ -644,11 +733,12 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
     BEGIN TRAN;
-        UPDATE t SET ItemId = s.ItemId, RetailPrice = s.RetailPrice, Remark = s.Remark, Status = s.Status, UDate = s.UDate
+        UPDATE t SET ItemId = s.ItemId, RetailPrice = s.RetailPrice, WholesalePrice = s.WholesalePrice,
+                     Remark = s.Remark, Status = s.Status, UDate = s.UDate
         FROM dbo.zf_tb_ItemPriceLink t JOIN @Rows s ON s.PriceLinkId = t.PriceLinkId;
 
-        INSERT dbo.zf_tb_ItemPriceLink (PriceLinkId, ItemId, RetailPrice, Remark, Status, UDate)
-        SELECT s.PriceLinkId, s.ItemId, s.RetailPrice, s.Remark, s.Status, s.UDate FROM @Rows s
+        INSERT dbo.zf_tb_ItemPriceLink (PriceLinkId, ItemId, RetailPrice, WholesalePrice, Remark, Status, UDate)
+        SELECT s.PriceLinkId, s.ItemId, s.RetailPrice, s.WholesalePrice, s.Remark, s.Status, s.UDate FROM @Rows s
         WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_ItemPriceLink t WHERE t.PriceLinkId = s.PriceLinkId);
 
         UPDATE dbo.zf_tb_Config SET LastPriceLinkSyncAt = @ServerTime WHERE Id = 1;

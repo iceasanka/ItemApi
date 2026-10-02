@@ -115,7 +115,7 @@ BEGIN
     IF @LocationId IS NULL
         THROW 50021, 'Terminal is not registered or is disabled.', 1;
 
-    SELECT PriceLinkId, ItemId, RetailPrice, Remark, Status, UDate
+    SELECT PriceLinkId, ItemId, RetailPrice, WholesalePrice, Remark, Status, UDate   -- WholesalePrice: used on wholesale bills
     FROM dbo.z_tb_ItemPriceLink
     WHERE LocationId = @LocationId
       AND (@Since IS NULL AND Status = 1 OR UDate > @Since);

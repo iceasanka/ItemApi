@@ -153,12 +153,18 @@ IF OBJECT_ID('dbo.z_tb_SalesInvoice', 'U') IS NULL
         NetAmount    DECIMAL(18,2) NOT NULL,
         Status       INT           NOT NULL,   -- 1 completed, 9 cancelled (kept for numbering, no stock effect)
         CDate        DATETIME      NOT NULL CONSTRAINT DF_z_tb_SalesInvoice_CDate DEFAULT (GETDATE()),
+        PriceType    INT           NOT NULL CONSTRAINT DF_z_tb_SalesInvoice_PriceType DEFAULT (1),   -- 1 retail, 2 = has wholesale line(s)
         CONSTRAINT UQ_z_tb_SalesInvoice_No  UNIQUE (InvoiceNo),
         CONSTRAINT UQ_z_tb_SalesInvoice_Seq UNIQUE (TerminalId, InvoiceSeq)
     );
 GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_z_tb_SalesInvoice_Z')
     CREATE INDEX IX_z_tb_SalesInvoice_Z ON dbo.z_tb_SalesInvoice (TerminalId, ZNo);
+GO
+
+-- added with wholesale bills (2026-10-02) — databases created before get the column here
+IF COL_LENGTH('dbo.z_tb_SalesInvoice', 'PriceType') IS NULL
+    ALTER TABLE dbo.z_tb_SalesInvoice ADD PriceType INT NOT NULL CONSTRAINT DF_z_tb_SalesInvoice_PriceType DEFAULT (1);
 GO
 
 IF OBJECT_ID('dbo.z_tb_SalesInvoiceItem', 'U') IS NULL
@@ -171,8 +177,20 @@ CREATE TABLE dbo.z_tb_SalesInvoiceItem (
     CostPrice  DECIMAL(18,2) NULL,       -- AvgCost at upload time (tills don't know cost)
     Discount   DECIMAL(18,2) NOT NULL,
     Amount     DECIMAL(18,2) NOT NULL,
+    LineDescrip NVARCHAR(50) NULL,       -- "other item" (ItemId 0, not in the item list): what the cashier typed
+    PriceType  INT           NOT NULL CONSTRAINT DF_z_tb_SalesInvoiceItem_PriceType DEFAULT (1),   -- 1 retail, 2 wholesale price on this line
     CONSTRAINT PK_z_tb_SalesInvoiceItem PRIMARY KEY (InvoiceId, LineNum)
 );
+GO
+
+-- added with "other item" lines (2026-10-02) — databases created before get the column here
+IF COL_LENGTH('dbo.z_tb_SalesInvoiceItem', 'LineDescrip') IS NULL
+    ALTER TABLE dbo.z_tb_SalesInvoiceItem ADD LineDescrip NVARCHAR(50) NULL;
+GO
+
+-- added with per-line wholesale (2026-10-02)
+IF COL_LENGTH('dbo.z_tb_SalesInvoiceItem', 'PriceType') IS NULL
+    ALTER TABLE dbo.z_tb_SalesInvoiceItem ADD PriceType INT NOT NULL CONSTRAINT DF_z_tb_SalesInvoiceItem_PriceType DEFAULT (1);
 GO
 
 IF OBJECT_ID('dbo.z_tb_SalesPayment', 'U') IS NULL
@@ -294,7 +312,8 @@ CREATE TYPE dbo.z_tt_SalesInvoice AS TABLE (
     GrossAmount  DECIMAL(18,2) NOT NULL,
     Discount     DECIMAL(18,2) NOT NULL,
     NetAmount    DECIMAL(18,2) NOT NULL,
-    Status       INT           NOT NULL
+    Status       INT           NOT NULL,
+    PriceType    INT           NOT NULL    -- 1 retail, 2 wholesale
 );
 GO
 CREATE TYPE dbo.z_tt_SalesInvoiceItem AS TABLE (
@@ -305,6 +324,8 @@ CREATE TYPE dbo.z_tt_SalesInvoiceItem AS TABLE (
     UnitPrice  DECIMAL(18,2) NOT NULL,
     Discount   DECIMAL(18,2) NOT NULL,
     Amount     DECIMAL(18,2) NOT NULL,
+    LineDescrip NVARCHAR(50) NULL,       -- only for ItemId 0 ("other item")
+    PriceType  INT           NULL,       -- 1 retail, 2 wholesale; NULL (older tills) → the bill's PriceType
     PRIMARY KEY (InvoiceNo, LineNum)
 );
 GO
@@ -641,8 +662,10 @@ BEGIN
         THROW 50021, 'Terminal is not registered or is disabled.', 1;
     IF EXISTS (SELECT 1 FROM @Invoices WHERE InvoiceNo NOT LIKE @TerminalCode + '-%')
         THROW 50022, 'Invoice number does not belong to this terminal.', 1;
-    IF EXISTS (SELECT 1 FROM @Invoices WHERE InvType NOT IN (1, 2) OR Status NOT IN (1, 9))
-        THROW 50023, 'Invalid InvType or Status.', 1;
+    IF EXISTS (SELECT 1 FROM @Invoices WHERE InvType NOT IN (1, 2) OR Status NOT IN (1, 9) OR PriceType NOT IN (1, 2))
+        THROW 50023, 'Invalid InvType, Status or PriceType.', 1;
+    IF EXISTS (SELECT 1 FROM @Items WHERE PriceType NOT IN (1, 2))
+        THROW 50023, 'Invalid line PriceType.', 1;
 
     BEGIN TRAN;
         INSERT @new
@@ -650,23 +673,27 @@ BEGIN
         WHERE NOT EXISTS (SELECT 1 FROM dbo.z_tb_SalesInvoice s WITH (UPDLOCK, HOLDLOCK) WHERE s.InvoiceNo = i.InvoiceNo);
 
         INSERT dbo.z_tb_SalesInvoice
-            (InvoiceNo, TerminalId, LocationId, ZNo, InvoiceSeq, InvType, InvDate, CashierId, GrossAmount, Discount, NetAmount, Status)
+            (InvoiceNo, TerminalId, LocationId, ZNo, InvoiceSeq, InvType, InvDate, CashierId, GrossAmount, Discount, NetAmount, Status, PriceType)
         OUTPUT inserted.InvoiceId, inserted.InvoiceNo INTO @map
         SELECT i.InvoiceNo, @TerminalId, @LocationId, i.ZNo, i.InvoiceSeq, i.InvType, i.InvDate, i.CashierId,
-               i.GrossAmount, i.Discount, i.NetAmount, i.Status
+               i.GrossAmount, i.Discount, i.NetAmount, i.Status, i.PriceType
         FROM @Invoices i JOIN @new n ON n.InvoiceNo = i.InvoiceNo;
 
-        INSERT dbo.z_tb_SalesInvoiceItem (InvoiceId, LineNum, ItemId, Qty, UnitPrice, CostPrice, Discount, Amount)
-        SELECT m.InvoiceId, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, b.AvgCost, it.Discount, it.Amount
+        INSERT dbo.z_tb_SalesInvoiceItem (InvoiceId, LineNum, ItemId, Qty, UnitPrice, CostPrice, Discount, Amount, LineDescrip, PriceType)
+        SELECT m.InvoiceId, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, b.AvgCost, it.Discount, it.Amount,
+               CASE WHEN it.ItemId = 0 THEN it.LineDescrip END,
+               ISNULL(it.PriceType, inv.PriceType)
         FROM @Items it
         JOIN @map m ON m.InvoiceNo = it.InvoiceNo
+        JOIN @Invoices inv ON inv.InvoiceNo = it.InvoiceNo
         LEFT JOIN dbo.z_tb_StockBalance b ON b.LocationId = @LocationId AND b.ItemId = it.ItemId;
 
         INSERT dbo.z_tb_SalesPayment (InvoiceId, LineNum, PayType, Amount, RefNo)
         SELECT m.InvoiceId, p.LineNum, p.PayType, p.Amount, p.RefNo
         FROM @Payments p JOIN @map m ON m.InvoiceNo = p.InvoiceNo;
 
-        -- stock: sale -Qty (TxnType 3), refund +Qty (TxnType 4); cancelled invoices don't move stock
+        -- stock: sale -Qty (TxnType 3), refund +Qty (TxnType 4); cancelled invoices don't move stock;
+        -- "other item" lines (ItemId 0) are not in the item list, so they have no stock
         INSERT @Moves (TxnType, DocNo, DocLineNo, ItemId, Qty, CostPrice, SellPrice, TerminalId, ZNo, TxnDate)
         SELECT CASE WHEN i.InvType = 2 THEN 4 ELSE 3 END,
                i.InvoiceNo, it.LineNum, it.ItemId,
@@ -676,7 +703,7 @@ BEGIN
         JOIN @new n ON n.InvoiceNo = i.InvoiceNo
         JOIN @Items it ON it.InvoiceNo = i.InvoiceNo
         LEFT JOIN dbo.z_tb_StockBalance b ON b.LocationId = @LocationId AND b.ItemId = it.ItemId
-        WHERE i.Status <> 9;
+        WHERE i.Status <> 9 AND it.ItemId <> 0;
 
         EXEC dbo.z_sp_PostStockMovements @LocationId = @LocationId, @Moves = @Moves;
 

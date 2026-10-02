@@ -333,3 +333,192 @@ Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and it
 5) Saving: no change to the request. If POST /invoices answers 400 (e.g. "Price of X has changed.
    Remove the line and scan it again."), show the message in a red toast and keep the bill on screen.
 ```
+
+---
+
+## Prompt 9 — Cashier billing: search by name + Reload button (change existing screen)
+
+Backend: TillService `GET /items/search`, `GET /items/{itemId}`, `POST /sync/now`.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else (including the quantity price and price link picker from the last change).
+
+1) tillLocalApi.ts — add:
+     export interface TillItemSearchRow {
+       itemId: number; refCode?: string | null; barcode?: string | null;
+       descrip: string; inv_Descrip?: string | null; retailPrice: number;
+       openPrice: boolean; isSaleLocked: boolean; stockQty: number | null; hasPriceLinks: boolean;
+     }
+     export interface SyncNowResult {
+       ok: boolean; billsUploaded: number; itemsDownloaded: number; priceLinksDownloaded: number; error?: string | null;
+     }
+     searchItems(text) → GET /items/search?text=...   → TillItemSearchRow[]  (400 { message } if < 2 letters)
+     getItem(itemId)   → GET /items/{itemId}          → TillItem (same shape as findItem; 404 if inactive)
+     syncNow()         → POST /sync/now               → SyncNowResult   (use timeout 60000 for this call only)
+
+2) Search by name in the scan box:
+   - Enter in the scan box: first try findItem(code) exactly as today (barcode / item code).
+     Only if that answers 404 AND the text has a letter in it (not only digits), call searchItems(text).
+   - 0 results → red toast "No item found for '<text>'".
+   - 1 result → use it directly: getItem(itemId), then the same add-to-bill flow as a scan
+     (sale-locked check, price link picker, quantity price, merge rules).
+   - 2+ results → open a dialog "Select item — '<text>'" with a list (max 50, as returned):
+       columns: Description (descrip, and inv_Descrip under it in small muted text when different),
+       Code (refCode), Price (retailPrice, 2 decimals, right-aligned), Stock (stockQty, muted, blank if null).
+       Rows with isSaleLocked: greyed out with a "Locked" badge and not selectable.
+       Rows with hasPriceLinks: small badge "Several prices".
+     Keyboard first: the first selectable row is highlighted, ↑/↓ move, Enter picks, Esc closes.
+     Touch: tap a row. On pick → getItem(itemId) → same add-to-bill flow as a scan.
+   - Also add a "Search" button next to the scan box that opens the same dialog with its own text input
+     (type at least 2 letters; search 300 ms after typing stops).
+   - After the dialog closes the scan box gets focus again.
+
+3) Reload button in the status bar (icon RefreshCw + text "Reload"):
+   - Calls syncNow(). While running: spinner on the button, button disabled (no double clicks).
+   - ok → green toast: "Updated: N items, M price links" (+ ", K bills sent" when billsUploaded > 0);
+     when everything is 0 → "Already up to date".
+   - not ok → red toast with result.error (e.g. "Back office not reachable — working offline.").
+     Billing keeps working either way.
+   - Then reload the status bar (getSyncStatus).
+   - Lines already on the bill keep the item data they were scanned with. If items were updated
+     (itemsDownloaded or priceLinksDownloaded > 0) and the bill has lines, show a yellow note above the
+     lines: "Prices were updated — if Pay is refused, void the line and scan it again." Hide it when the
+     bill is cleared.
+   - Keyboard shortcut F5 = Reload (prevent the browser refresh).
+```
+
+---
+
+## Prompt 10 — Cashier billing: Wholesale mode (change existing screen)
+
+Backend: `POST /invoices` takes `priceType` (1 retail, 2 wholesale). The till accepts wholesale prices
+**only** on a bill sent with `priceType: 2`, and the back office stores it on the bill (`z_tb_SalesInvoice.PriceType`).
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else (quantity prices, price link picker, name search, Reload).
+
+1) tillLocalApi.ts:
+   - InvoiceRequest gets  priceType: 1 | 2;   (1 retail, 2 wholesale)
+   - TillItem already has wholesalePrice?: number | null — make sure it is in the interface.
+   - priceLinks entries get  wholesalePrice?: number | null.
+   - TillItemSearchRow gets  wholesalePrice?: number | null.
+   - export const PRICE_RETAIL = 1, PRICE_WHOLESALE = 2;
+
+2) Bill price mode: state priceMode: "retail" | "wholesale", default "retail".
+   - "Wholesale" toggle button next to the Refund button (shortcut F8).
+     Turning it ON asks for the supervisor PIN (same dialog and verifySupervisorPin as Refund).
+     Turning it OFF needs no PIN.
+   - While ON: a full-width orange banner above the bill lines "WHOLESALE BILL — wholesale prices"
+     and the Wholesale button stays highlighted. It must be impossible to miss.
+   - After a bill is saved (Pay finished) or the bill is cleared, priceMode goes back to "retail"
+     automatically, so the next customer is never charged wholesale by mistake.
+
+3) One price function for every line (replace the direct quantityPrice calls with this):
+     function linePrice(item, qty, link, mode): number {
+       if (item.openPrice) return <typed price>;               // unchanged
+       if (link) return mode === "wholesale" && (link.wholesalePrice ?? 0) > 0
+                        ? link.wholesalePrice! : link.retailPrice;
+       if (mode === "wholesale" && (item.wholesalePrice ?? 0) > 0) return item.wholesalePrice!;
+       return quantityPrice(item, qty);                       // retail rule, unchanged
+     }
+   - Wholesale price is per unit for any quantity (no quantity price on top of it).
+   - Item without a wholesale price on a wholesale bill: uses the retail rule and shows a small grey
+     badge "No wholesale price" on the line.
+   - Lines priced at wholesale show a small orange badge "W" next to the unit price.
+
+4) Switching the mode with lines already on the bill: re-price every line that is not open price with
+   linePrice(...) for the new mode and show a toast "Prices changed to wholesale" / "Prices changed to retail".
+
+5) Price link picker in wholesale mode: show each option's wholesale price (fall back to its retail price),
+   with the retail price small and struck through next to it. Search pick list in wholesale mode: show
+   wholesalePrice (fall back to retailPrice) in the Price column.
+
+6) POST /invoices: send priceType: priceMode === "wholesale" ? 2 : 1. Works with Refund mode too
+   (a wholesale refund sends invType 2 + priceType 2).
+   If the till answers 400 "Price of X has changed…", show it in a red toast and keep the bill.
+
+7) Receipt print: when priceType is 2, print "WHOLESALE" under the bill number.
+```
+
+---
+
+## Prompt 11 — Cashier billing: "Other item" (item not in the item list)
+
+Backend: a sale line with `itemId: 0` + `lineDescrip` is an item that is not in the item list. The till
+accepts any price above 0 for it (no price check), the back office stores the description and does **not**
+move stock for it. All other-item lines of a Z are totalled together as "Other items".
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else (quantity prices, price links, name search, Reload, Wholesale).
+
+1) tillLocalApi.ts: InvoiceLine gets  lineDescrip?: string | null;  (only sent for itemId 0)
+
+2) "Other item" button next to Search (shortcut F9). Opens a dialog "Other item (not in item list)":
+   - Description: text, required, max 50 characters, focused when the dialog opens.
+   - Price: number, required, more than 0, 2 decimals.
+   - Qty: number, default 1, more than 0.
+   - Enter on the last field or the "Add" button adds the line; Esc cancels.
+   - Big touch-friendly inputs; the numeric keypad on the right types into the focused field.
+
+3) The line on the bill:
+   - itemId 0, unitPrice = the typed price, the typed description as the line name with a small grey
+     badge "Other". Store the description on the line (do not look anything up).
+   - Never merge other-item lines with each other or with real items — each Add is a new line.
+   - Qty key and Price key work on it like an open price item. No price link picker, no quantity price,
+     no wholesale price — Wholesale mode does not change it.
+   - Works in Refund mode too (a refund line for an item that is not in the list).
+
+4) POST /invoices: for these lines send { lineNum, itemId: 0, lineDescrip: <description>, qty, unitPrice,
+   discount: 0, amount }. Real item lines don't send lineDescrip.
+   400 "Other item needs a description and a price above 0." → red toast, keep the bill.
+
+5) Receipt print: print the typed description for these lines.
+```
+
+---
+
+## Prompt 12 — Cashier billing: wholesale per line (replaces the "all lines" behaviour of Prompt 10)
+
+Backend: each line in `POST /invoices` can send its own `priceType` (1 retail, 2 wholesale). The till checks
+each line against its own type — a wholesale price only on a line marked wholesale. The bill's `priceType`
+is now only the default for lines that don't send one; the till stores the bill as wholesale when any line is.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+A retail bill must be able to have some wholesale lines, and a wholesale bill some retail lines.
+Keep everything else (quantity prices, price links, name search, Reload, Other item).
+
+1) tillLocalApi.ts: InvoiceLine gets  priceType?: 1 | 2;
+
+2) Each bill line gets its own  priceType: "retail" | "wholesale".
+   Its price is linePrice(item, qty, link, line.priceType) — the same function as before, but called with
+   the LINE's type instead of the bill mode. Open price and Other item lines ignore it (typed price).
+
+3) Bill default mode (the existing Wholesale button, F8) now only decides the type of NEW lines:
+   - Banner text: "WHOLESALE — new items at wholesale price" while the default is wholesale.
+   - When it is switched and the bill already has lines, ask in a small dialog:
+       "Change the lines already on the bill too?"  [All lines]  [New items only]   (Enter = New items only)
+     All lines → set every line's priceType to the new mode and re-price; New items only → leave lines as they are.
+
+4) Switch one line: select a line and press "W/R" (button in the line toolbar next to Qty / Price, shortcut F7),
+   or tap the line's price badge → toggles that line between retail and wholesale and re-prices it.
+   - Lines priced wholesale show an orange "W" badge next to the unit price; retail lines show nothing.
+   - Item without a wholesale price: switching it to wholesale shows "No wholesale price for <item>" and
+     keeps it retail.
+   - Merge rule when scanning: merge only into a line with the same itemId, same price link AND same priceType.
+
+5) Supervisor PIN: asked ONCE per bill, the first time anything is set to wholesale (bill default or a line).
+   After that, W/R and the Wholesale button work without PIN until the bill is finished or cleared.
+   Switching back to retail never needs a PIN.
+
+6) After the bill is saved or cleared: default mode back to retail and the PIN approval is cleared.
+
+7) POST /invoices: send priceType on EVERY line (1 retail, 2 wholesale), and the bill priceType = the default
+   mode. The till answers 400 "Price of X has changed…" if a line's price doesn't match its type.
+
+8) Receipt: print "W" after the price of wholesale lines; print "WHOLESALE" under the bill number only when
+   every item line is wholesale.
+```

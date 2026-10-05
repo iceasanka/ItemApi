@@ -522,3 +522,89 @@ Keep everything else (quantity prices, price links, name search, Reload, Other i
 8) Receipt: print "W" after the price of wholesale lines; print "WHOLESALE" under the bill number only when
    every item line is wholesale.
 ```
+
+---
+
+## Prompt 13 — Cashier billing: Suspend / Recall bill
+
+Backend: TillService `POST /suspended`, `GET /suspended`, `POST /suspended/{id}/recall`, `DELETE /suspended/{id}`,
+and `GET /sync/status` now has `suspendedBills`. A suspended bill is **not** an invoice: no number, no Z, never
+uploaded. It stays on the till until recalled or cancelled — across restarts and day end. Recall works **once**
+(the till marks it recalled), so the same bill can never be paid twice.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else (quantity prices, price links, name search, Reload, Other item, wholesale per line).
+
+1) tillLocalApi.ts — add:
+     export interface SuspendLine {
+       lineNum: number; itemId: number; priceLinkId?: number | null; priceType?: 1 | 2;
+       qty: number; unitPrice: number; discount: number; amount: number; lineDescrip?: string | null;
+     }
+     export interface SuspendedBillRow {
+       suspendId: number; label?: string | null; invType: 1 | 2; priceType: 1 | 2; cashierId?: string | null;
+       lineCount: number; netAmount: number; suspendedAt: string; firstItems?: string | null;
+     }
+     export interface RecalledLine extends SuspendLine {
+       name?: string | null; itemFound: boolean; item?: TillItem | null;   // item = the item as it is NOW
+     }
+     export interface RecalledBill {
+       suspendId: number; label?: string | null; invType: 1 | 2; priceType: 1 | 2; cashierId?: string | null;
+       discount: number; netAmount: number; suspendedAt: string; lines: RecalledLine[];
+     }
+     suspendBill({ invType, priceType, cashierId, discount, label, items: SuspendLine[] })
+                                        → POST /suspended                          → { suspendId }
+     getSuspendedBills()                → GET /suspended                           → SuspendedBillRow[]
+     recallBill(suspendId, cashierId)   → POST /suspended/{id}/recall?cashierId=   → RecalledBill
+     cancelSuspendedBill(suspendId, cashierId) → DELETE /suspended/{id}?cashierId= → { ok }
+     SyncStatus gets  suspendedBills: number.
+
+2) "Suspend" button in the bill toolbar (shortcut F10). Enabled only when the bill has lines and the tender
+   dialog is not open.
+   - Opens a small dialog "Suspend bill" with an optional "Note / customer name" (max 50, focused).
+     Enter = Suspend, Esc = cancel.
+   - Sends every line exactly as POST /invoices would (lineNum, itemId, qty, unitPrice, discount, amount,
+     priceType, lineDescrip for other items) PLUS priceLinkId = the price link the cashier picked (null = normal
+     price). invType = 2 in Refund mode, priceType = the bill default mode, discount = bill discount.
+   - OK → green toast "Bill suspended (#<suspendId>)", then clear the bill exactly like after Pay
+     (default mode back to retail, refund mode off, PIN approvals cleared, scan box focused).
+   - 400 → red toast with the message, keep the bill.
+
+3) "Recall" button next to Suspend (shortcut F11) with a count badge = status.suspendedBills (hidden when 0).
+   Opens a dialog "Suspended bills" listing getSuspendedBills():
+     columns: # (suspendId), Note (label), Items (firstItems, muted, then "+N more" when lineCount > 3),
+     Lines (lineCount), Amount (netAmount, 2 decimals, right), Time (suspendedAt as HH:mm, plus dd/MM when not
+     today), Cashier. A "REFUND" badge when invType 2, an orange "W" badge when priceType 2.
+   Keyboard first: first row highlighted, ↑/↓ move, Enter = Recall, Delete = Cancel bill, Esc closes.
+   Touch: tap a row, then the "Recall" button. Empty list → "No suspended bills".
+   - If the screen already has a bill with lines, recalling first asks:
+       "Suspend the current bill and recall #<id>?"  [Suspend current & recall]  [Cancel]
+     (Enter = Suspend current & recall). It suspends the current bill (no note), then recalls.
+     Never throw the current bill away silently.
+   - "Cancel bill" (Delete key / red button): supervisor PIN first (same dialog as Refund), then confirm
+     "Cancel suspended bill #<id> (<amount>)? This cannot be undone." → cancelSuspendedBill → refresh the list.
+
+4) Rebuilding the recalled bill (recallBill answer):
+   - Refund mode ON when invType 2; default mode = priceType; treat the supervisor PIN as already given for this
+     bill (it was given before it was suspended). Bill discount = discount. Show "Recalled #<id> — <label>" in a
+     small blue bar above the lines until the bill is paid or cleared.
+   - Each line, in lineNum order:
+       itemId 0 (other item): restore as an Other item line with lineDescrip, qty, unitPrice.
+       itemFound false: DROP the line and collect its name.
+       otherwise use line.item (do NOT call getItem again):
+         item.isSaleLocked → drop the line and collect its name;
+         priceLinkId set and still in item.priceLinks → use that link, else the normal price;
+         openPrice items keep the stored unitPrice; all others: price = linePrice(item, qty, link, line.priceType)
+         (prices are taken from the item as it is NOW — they may have changed while the bill was suspended).
+       Keep qty, line discount and priceType. Never merge recalled lines with each other.
+   - Dropped lines → yellow toast "Removed (no longer sold): <names>".
+   - New total differs from netAmount → yellow note above the lines
+     "Prices changed since the bill was suspended: was <netAmount>, now <new total>." (hide when the bill is cleared).
+   - 400 "already recalled or cancelled" → red toast and refresh the list.
+
+5) Status bar: after a suspend, recall or cancel, reload getSyncStatus so the Recall badge is right.
+   Day end: when status.suspendedBills > 0 the confirm dialog adds
+   "N suspended bill(s) stay on the till and can be recalled later." (not blocking).
+
+6) Suspended bills are on THIS till only (they live in the till's local database).
+```

@@ -171,6 +171,45 @@ CREATE TABLE dbo.zf_tb_InvoicePayment (
 );
 GO
 
+-- Suspended (parked) bills: a bill the cashier puts aside before payment and recalls later — any time,
+-- also after a restart or a day end. Not an invoice: no number, no Z, never uploaded, no stock.
+-- Status 1 suspended, 2 recalled (back on the billing screen), 9 cancelled. Rows are kept for audit.
+IF OBJECT_ID('dbo.zf_tb_SuspendedBill', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_SuspendedBill (
+        SuspendId    INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_zf_tb_SuspendedBill PRIMARY KEY,   -- shown as #12
+        Label        NVARCHAR(50)  NULL,       -- what the cashier typed, e.g. customer name
+        InvType      INT           NOT NULL,   -- 1 sale, 2 refund
+        PriceType    INT           NOT NULL,   -- the page's default mode for new lines (1 retail, 2 wholesale)
+        CashierId    VARCHAR(20)   NULL,
+        Discount     DECIMAL(18,2) NOT NULL,   -- bill-level discount
+        LineCount    INT           NOT NULL,
+        NetAmount    DECIMAL(18,2) NOT NULL,   -- SUM(line Amount) - Discount, at the prices when suspended
+        SuspendedAt  DATETIME      NOT NULL,
+        Status       INT           NOT NULL,
+        ClosedAt     DATETIME      NULL,       -- recalled / cancelled at
+        ClosedBy     VARCHAR(20)   NULL
+    );
+    CREATE INDEX IX_zf_tb_SuspendedBill_Status ON dbo.zf_tb_SuspendedBill (Status, SuspendId);
+END
+GO
+
+IF OBJECT_ID('dbo.zf_tb_SuspendedBillItem', 'U') IS NULL
+CREATE TABLE dbo.zf_tb_SuspendedBillItem (
+    SuspendId   INT           NOT NULL,
+    LineNum     INT           NOT NULL,
+    ItemId      INT           NOT NULL,   -- 0 = other item
+    PriceLinkId INT           NULL,       -- the price link the cashier picked, NULL = normal / quantity price
+    PriceType   INT           NOT NULL,   -- 1 retail, 2 wholesale
+    Qty         DECIMAL(18,3) NOT NULL,
+    UnitPrice   DECIMAL(18,2) NOT NULL,   -- price when suspended (the page re-prices real items on recall)
+    Discount    DECIMAL(18,2) NOT NULL,
+    Amount      DECIMAL(18,2) NOT NULL,
+    LineDescrip NVARCHAR(50)  NULL,       -- other item only
+    CONSTRAINT PK_zf_tb_SuspendedBillItem PRIMARY KEY (SuspendId, LineNum)
+);
+GO
+
 -- One Z per cashier shift/day. Status 0 open, 1 closed, 2 submitted, 3 reconciled, 4 mismatch
 IF OBJECT_ID('dbo.zf_tb_ZReport', 'U') IS NULL
 CREATE TABLE dbo.zf_tb_ZReport (
@@ -213,6 +252,10 @@ IF OBJECT_ID('dbo.zf_sp_SetupTerminal', 'P')        IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_OpenZ', 'P')                IS NOT NULL DROP PROCEDURE dbo.zf_sp_OpenZ;
 IF OBJECT_ID('dbo.zf_sp_SaveInvoice', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveInvoice;
 IF OBJECT_ID('dbo.zf_sp_VoidInvoice', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_VoidInvoice;
+IF OBJECT_ID('dbo.zf_sp_SuspendBill', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_SuspendBill;
+IF OBJECT_ID('dbo.zf_sp_GetSuspendedBills', 'P')    IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetSuspendedBills;
+IF OBJECT_ID('dbo.zf_sp_RecallSuspendedBill', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_RecallSuspendedBill;
+IF OBJECT_ID('dbo.zf_sp_CancelSuspendedBill', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_CancelSuspendedBill;
 IF OBJECT_ID('dbo.zf_sp_FindItem', 'P')             IS NOT NULL DROP PROCEDURE dbo.zf_sp_FindItem;
 IF OBJECT_ID('dbo.zf_sp_SearchItems', 'P')          IS NOT NULL DROP PROCEDURE dbo.zf_sp_SearchItems;
 IF OBJECT_ID('dbo.zf_sp_GetUnsyncedInvoices', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedInvoices;
@@ -228,6 +271,7 @@ GO
 IF TYPE_ID('dbo.zf_tt_InvoiceItem')    IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceItem;
 IF TYPE_ID('dbo.zf_tt_InvoicePayment') IS NOT NULL DROP TYPE dbo.zf_tt_InvoicePayment;
 IF TYPE_ID('dbo.zf_tt_InvoiceNo')      IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceNo;
+IF TYPE_ID('dbo.zf_tt_SuspendedItem')  IS NOT NULL DROP TYPE dbo.zf_tt_SuspendedItem;
 IF TYPE_ID('dbo.zf_tt_Item')           IS NOT NULL DROP TYPE dbo.zf_tt_Item;
 IF TYPE_ID('dbo.zf_tt_StockBalance')   IS NOT NULL DROP TYPE dbo.zf_tt_StockBalance;
 IF TYPE_ID('dbo.zf_tt_PriceLink')      IS NOT NULL DROP TYPE dbo.zf_tt_PriceLink;
@@ -256,6 +300,18 @@ CREATE TYPE dbo.zf_tt_InvoicePayment AS TABLE (
 GO
 CREATE TYPE dbo.zf_tt_InvoiceNo AS TABLE (
     InvoiceNo VARCHAR(30) NOT NULL PRIMARY KEY
+);
+GO
+CREATE TYPE dbo.zf_tt_SuspendedItem AS TABLE (
+    LineNum     INT           NOT NULL PRIMARY KEY,
+    ItemId      INT           NOT NULL,
+    PriceLinkId INT           NULL,
+    PriceType   INT           NULL,      -- NULL → the bill's @PriceType
+    Qty         DECIMAL(18,3) NOT NULL,
+    UnitPrice   DECIMAL(18,2) NOT NULL,
+    Discount    DECIMAL(18,2) NOT NULL,
+    Amount      DECIMAL(18,2) NOT NULL,
+    LineDescrip NVARCHAR(50)  NULL       -- only for ItemId 0 ("other item")
 );
 GO
 -- same columns/order as the back-office z_sp_GetItemsForSync result (API: GET api/Sync/Items)
@@ -481,6 +537,115 @@ BEGIN
 
     IF @@ROWCOUNT = 0
         THROW 51011, 'Only an unsent bill in the open Z can be voided. Use a refund.', 1;
+END
+GO
+
+-- Puts the bill on the screen aside (before payment) → @SuspendId. Not an invoice: no number, no Z, no upload.
+-- Prices are NOT checked here — zf_sp_SaveInvoice checks them when the recalled bill is paid.
+CREATE PROCEDURE dbo.zf_sp_SuspendBill
+    @InvType    INT = 1,
+    @PriceType  INT = 1,
+    @CashierId  VARCHAR(20) = NULL,
+    @Discount   DECIMAL(18,2) = 0,
+    @Label      NVARCHAR(50) = NULL,
+    @Items      dbo.zf_tt_SuspendedItem READONLY,
+    @SuspendId  INT = NULL OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF @InvType NOT IN (1, 2)
+        THROW 51001, 'InvType must be 1 (sale) or 2 (refund).', 1;
+    IF @PriceType NOT IN (1, 2) OR EXISTS (SELECT 1 FROM @Items WHERE PriceType NOT IN (1, 2))
+        THROW 51009, 'PriceType must be 1 (retail) or 2 (wholesale).', 1;
+    IF NOT EXISTS (SELECT 1 FROM @Items)
+        THROW 51031, 'There is nothing to suspend: the bill has no items.', 1;
+    IF EXISTS (SELECT 1 FROM @Items WHERE Qty <= 0)
+        THROW 51003, 'Item quantity must be positive (use InvType 2 for refunds).', 1;
+    IF EXISTS (SELECT 1 FROM @Items WHERE Amount <> ROUND(Qty * UnitPrice, 2) - Discount)
+        THROW 51004, 'Line Amount must equal Qty * UnitPrice - Discount.', 1;
+    IF EXISTS (SELECT 1 FROM @Items WHERE ItemId = 0 AND (LTRIM(RTRIM(ISNULL(LineDescrip, N''))) = N'' OR UnitPrice <= 0))
+        THROW 51010, 'Other item needs a description and a price above 0.', 1;
+
+    BEGIN TRAN;
+        INSERT dbo.zf_tb_SuspendedBill (Label, InvType, PriceType, CashierId, Discount, LineCount, NetAmount, SuspendedAt, Status)
+        SELECT NULLIF(LTRIM(RTRIM(@Label)), N''), @InvType, @PriceType, @CashierId, @Discount,
+               COUNT(*), SUM(Amount) - @Discount, GETDATE(), 1
+        FROM @Items;
+
+        SET @SuspendId = SCOPE_IDENTITY();
+
+        INSERT dbo.zf_tb_SuspendedBillItem (SuspendId, LineNum, ItemId, PriceLinkId, PriceType, Qty, UnitPrice, Discount, Amount, LineDescrip)
+        SELECT @SuspendId, LineNum, ItemId, PriceLinkId, ISNULL(PriceType, @PriceType), Qty, UnitPrice, Discount, Amount,
+               CASE WHEN ItemId = 0 THEN LTRIM(RTRIM(LineDescrip)) END
+        FROM @Items;
+    COMMIT;
+END
+GO
+
+-- Bills waiting to be recalled, oldest first (the recall list). FirstItems = a short preview of the lines.
+CREATE PROCEDURE dbo.zf_sp_GetSuspendedBills
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT b.SuspendId, b.Label, b.InvType, b.PriceType, b.CashierId, b.LineCount, b.NetAmount, b.SuspendedAt,
+           STUFF((SELECT TOP 3 N', ' + ISNULL(l.LineDescrip, ISNULL(i.Inv_Descrip, i.Descrip))
+                  FROM dbo.zf_tb_SuspendedBillItem l
+                  LEFT JOIN dbo.zf_tb_Item i ON i.ItemId = l.ItemId AND l.ItemId <> 0
+                  WHERE l.SuspendId = b.SuspendId
+                  ORDER BY l.LineNum
+                  FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, N'') AS FirstItems
+    FROM dbo.zf_tb_SuspendedBill b
+    WHERE b.Status = 1
+    ORDER BY b.SuspendId;
+END
+GO
+
+-- Takes a suspended bill back to the billing screen (Status 2) — once only, so it can't be billed twice.
+-- 2 result sets: the header, then the lines with the item's CURRENT name, status and prices
+-- (ItemFound 0 = the item is gone or inactive: the page drops that line and says so).
+CREATE PROCEDURE dbo.zf_sp_RecallSuspendedBill
+    @SuspendId INT,
+    @CashierId VARCHAR(20) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE dbo.zf_tb_SuspendedBill
+    SET Status = 2, ClosedAt = GETDATE(), ClosedBy = @CashierId
+    WHERE SuspendId = @SuspendId AND Status = 1;
+
+    IF @@ROWCOUNT = 0
+        THROW 51032, 'This suspended bill was already recalled or cancelled.', 1;
+
+    SELECT SuspendId, Label, InvType, PriceType, CashierId, Discount, LineCount, NetAmount, SuspendedAt
+    FROM dbo.zf_tb_SuspendedBill WHERE SuspendId = @SuspendId;
+
+    SELECT l.LineNum, l.ItemId, l.PriceLinkId, l.PriceType, l.Qty, l.UnitPrice, l.Discount, l.Amount, l.LineDescrip,
+           CAST(CASE WHEN l.ItemId = 0 OR i.Status = 1 THEN 1 ELSE 0 END AS BIT) AS ItemFound,
+           ISNULL(l.LineDescrip, ISNULL(i.Inv_Descrip, i.Descrip)) AS Name
+    FROM dbo.zf_tb_SuspendedBillItem l
+    LEFT JOIN dbo.zf_tb_Item i ON i.ItemId = l.ItemId AND l.ItemId <> 0
+    WHERE l.SuspendId = @SuspendId
+    ORDER BY l.LineNum;
+END
+GO
+
+-- Throws a suspended bill away (customer left). Kept as Status 9 for audit.
+CREATE PROCEDURE dbo.zf_sp_CancelSuspendedBill
+    @SuspendId INT,
+    @CashierId VARCHAR(20) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    UPDATE dbo.zf_tb_SuspendedBill
+    SET Status = 9, ClosedAt = GETDATE(), ClosedBy = @CashierId
+    WHERE SuspendId = @SuspendId AND Status = 1;
+
+    IF @@ROWCOUNT = 0
+        THROW 51032, 'This suspended bill was already recalled or cancelled.', 1;
 END
 GO
 

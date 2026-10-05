@@ -112,6 +112,8 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_sp_OpenZ` | open Z (called at sign-on; SaveInvoice also opens one if needed) |
 | `zf_sp_SaveInvoice` | allocates `T01-00000123`, checks `Amount = Qty*Price − Disc`, payments = net and (sales only) each price (§6.5), saves |
 | `zf_sp_VoidInvoice` | only an **unsent** bill in the **open** Z. After upload → do a refund bill |
+| `zf_tb_SuspendedBill` / `…Item` | suspended (parked) bills, §6.6. Status 1 suspended, 2 recalled, 9 cancelled |
+| `zf_sp_SuspendBill` / `zf_sp_GetSuspendedBills` / `zf_sp_RecallSuspendedBill` / `zf_sp_CancelSuspendedBill` | suspend / list / recall (once only) / cancel |
 | `zf_sp_FindItem` | barcode, then RefCode — or `@ItemId`; 2nd result set = the item's active price links |
 | `zf_sp_SearchItems` | cashier search by name: every word in `Descrip` or `Inv_Descrip`, max 50 (needs SQL Server 2016+) |
 | `zf_sp_GetUnsyncedInvoices` / `zf_sp_GetInvoicesByNo` / `zf_sp_MarkInvoicesSynced` | upload queue |
@@ -249,6 +251,22 @@ Refunds are not price-checked — they give back what was charged.
 The page (Lovable Prompt 8, `quantityPrice()`) and `zf_sp_SaveInvoice` must use the same rule — change both together.
 The old system's unit price levels (`tb_PriceLevel`, e.g. cloth by the yard) are **not** carried over.
 
+### 6.6 Suspend / recall a bill (till only)
+The cashier can put the bill on the screen aside before payment (customer forgot something, next customer
+waiting) and recall it any time later — after other bills, a restart or a day end. TillService routes:
+`POST /suspended` (→ `suspendId`), `GET /suspended`, `POST /suspended/{id}/recall`, `DELETE /suspended/{id}`;
+`GET /sync/status` returns `suspendedBills`. UI: Lovable Prompt 13.
+
+- A suspended bill is **not an invoice**: no invoice number, no Z, never uploaded, no stock. It lives only in
+  that till's `zf_tb_SuspendedBill` / `zf_tb_SuspendedBillItem`. Day end does not touch it.
+- Lines keep qty, line discount, `PriceType`, `LineDescrip` (other items) and the picked `PriceLinkId`.
+  Prices are not checked on suspend.
+- **Recall is once only** (Status 1 → 2, 51032 otherwise), so a bill can't be paid twice. The recall answer
+  carries each item as it is **now**; the page re-prices real items (prices may have changed while suspended)
+  and drops items that are gone, inactive or sale-locked. Paying it then goes through `zf_sp_SaveInvoice` and
+  its price check like any other bill.
+- Cancel = Status 9. Rows are never deleted (audit: `ClosedAt`, `ClosedBy`).
+
 ---
 
 ## 7. Status values
@@ -261,6 +279,7 @@ The old system's unit price levels (`tb_PriceLevel`, e.g. cloth by the yard) are
 | Invoice `PriceType` | 1 retail, 2 = has wholesale line(s) |
 | Invoice line `PriceType` | 1 retail, 2 wholesale price on this line |
 | Payment `PayType` | 1 cash, 2 card, 3 credit, 4 voucher |
+| `zf_tb_SuspendedBill.Status` | 1 suspended, 2 recalled, 9 cancelled |
 
 ---
 

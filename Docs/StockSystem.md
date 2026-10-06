@@ -47,6 +47,8 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `02_FrontCashier_zf.sql` | each till's local db (e.g. `easyway_front` on SQL Express) | prefix `zf_`. Re-runnable. Applied to the test till db `z_pos_fnt_db` (PRASADA1). |
 | `03_BackOffice_PriceLink.sql` | back office db (`easyway`) | price links (§6.5). Re-runnable. **Applied to easyway on 2026-10-02.** |
 
+| `04_BackOffice_SalesDashboard.sql` | back office db (`easyway`), after `01` | sales dashboard procs (§6.9). Re-runnable. **Applied to easyway on 2026-10-06.** |
+
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
 Deploy order: back office scripts + ItemApi first, then each till (`02` + TillService) — ItemApi's `SyncItem` reads `CostPrice`.
 
@@ -334,6 +336,32 @@ Cash put into / taken out of the drawer without a sale, per Z, in `zf_tb_CashMov
   "CASH IN DRAWER" and lines for the counted amount and a signature. The opening cash belongs to that Z only — the next
   Z starts at 0 until a new opening cash is entered.
 - Not uploaded to the back office yet (the Z upload is unchanged; `CashAmount` still means cash sales only).
+
+### 6.9 Sales dashboard — today live + date range analysis (back office, 2026-10-06)
+UI: Lovable Prompts 17 (home page) and 18 (sales analysis). SQL: `04_BackOffice_SalesDashboard.sql`.
+
+**Live flow**: till bill paid → TillService uploads it at once (`Sync:PushEachBill`, default true; false = every
+30 s) → `POST api/Sync/Invoices` stores it → if any bill was new and `Dashboard:LivePush` is true, ItemApi sends
+SignalR **`salesChanged`** `{ terminalId, newBills, at }` on **`/hubs/sales`** → open home pages reload
+`GET api/Dashboard/Today`. Measured: under 1 s from Pay to the push. A till that is offline sends its bills when it
+reconnects (the push comes then). With auto update off, or the hub not connected, the page has a Refresh button.
+
+**API**
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/Dashboard/Today?terminalId=` | server date: `totals`, `terminals` (each till: bills, sales, profit, `lastBillAt`, `isOnline` = heard from in 2 min), `hourly` (24 rows), `topItems` (10), `livePush` |
+| GET | `api/Dashboard/Sales?fromDate=&toDate=&terminalId=&top=20` | max 366 days: `totals`, `daily` (every day, gaps = 0), `terminals`, `hourly`, `topItems` (by sales), `topProfitItems`, `categories` |
+
+**Numbers** (one rule, `z_fn_SalesLines`): voided bills left out, refunds negative; a line's net = its amount less
+its share of the bill discount; unit cost = the **till's cost** (`z_tb_SalesInvoiceItem.TillUnitCost`, uploaded now
+by tills) → else AvgCost at upload (`CostPrice`) → else the item's cost now; profit = net − qty × cost, **only for
+lines with a known cost**. Sales without a cost (other items, items with no cost) are `uncostedSales`, not in profit
+or margin. `marginPct` = profit / `costedSales`. Bills from before this change have no till cost, so their profit
+uses AvgCost and can differ from what the till showed.
+
+**Deploy order**: `01` + `04` on easyway → ItemApi (its TVP has the new `UnitCost` column, so an old ItemApi fails
+uploads against the new `01` until restarted — tills just retry) → each till: `02` **then** the new TillService (it
+reads `UnitCost` from `zf_sp_GetInvoicesByNo`; an old `02` stops its uploads).
 
 ---
 

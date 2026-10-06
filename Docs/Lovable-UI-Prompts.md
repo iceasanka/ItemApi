@@ -787,3 +787,101 @@ Keep everything else.
    - After closing: the opening cash is cleared for the next shift → call getCashSummary() and show the Opening cash dialog
      again (step 2).
 ```
+
+---
+
+## Prompt 17 — Back office home page: today's sales and profit, live
+
+Backend: `GET api/Dashboard/Today` and the SignalR hub `/hubs/sales` (event `salesChanged`), StockSystem.md §6.9.
+Each till uploads a bill as soon as it is paid; the server then pushes `salesChanged` and the page reloads.
+
+```
+Change the back office HOME page (the first page after login) — add a "Today's sales" dashboard at the top.
+Keep what is on the home page now below it.
+
+1) API (use the existing fetch helper; base VITE_API_BASE_URL):
+   GET /Dashboard/Today  →
+     { serverTime, date, livePush: boolean,
+       totals: { bills, refunds, salesAmount, refundAmount, netSales, discount, itemQty, cost, profit, costedSales,
+                 uncostedSales, marginPct, avgBill, cash, card, other, firstBillAt, lastBillAt },
+       terminals: [{ terminalId, terminalCode, terminalName, status, lastSyncAt, isOnline, bills, netSales, lastBillAt, profit }],
+       hourly:   [{ saleHour /*0-23*/, bills, netSales, profit }],
+       topItems: [{ itemId, name, qty, netSales, cost, profit, marginPct, hasUncosted }] }
+   Money 2 decimals with thousands separators ("Rs 12,345.50"), qty 3 decimals, times HH:mm.
+
+2) Live updates — install @microsoft/signalr.
+   - Hub URL: VITE_API_BASE_URL without the trailing "/api" + "/hubs/sales"
+     (http://localhost:5000/api → http://localhost:5000/hubs/sales).
+   - new HubConnectionBuilder().withUrl(url, { withCredentials: false }).withAutomaticReconnect().build();
+     connection.on("salesChanged", () => refetch today)  — debounce 1 s so a burst of bills reloads once.
+   - "Auto update" switch in the dashboard header, remembered in localStorage (default ON).
+       ON  + connected   → green dot "Live"; the numbers update by themselves.
+       ON  + not connected / reconnecting → amber dot "Reconnecting… (refreshes every 60 s)" and refetch every 60 s.
+       OFF → grey dot "Auto update off"; disconnect the hub; numbers change only with Refresh.
+     Hide the switch and show "Live updates are off on the server" when livePush is false.
+   - "Refresh" button (always visible) + "Updated HH:mm:ss" next to it.
+   - Briefly highlight (pulse) the cards whose value changed after a live update.
+
+3) Cards (row of KPI tiles, 2 per row on mobile):
+   Net sales (big) with "Bills N · Avg bill Rs x" underneath; Profit (green, red when < 0) with "Margin x%";
+   Cost; Discount given; Refunds (count and amount, only when > 0); Cash / Card / Other (one tile, three lines).
+   When uncostedSales > 0: small muted note under Profit "Rs x of sales have no cost price — not in profit".
+
+4) Sales by hour today: bar chart (shadcn chart / Recharts) of netSales per hour, only hours from the first bill to now;
+   a line for profit on the same chart. Tooltip: hour range "10:00–11:00", bills, sales, profit.
+
+5) Tills table: Till (code + name), status chip (green "Online" when isOnline, grey "Offline — last seen HH:mm" /
+   "never" when lastSyncAt is null), Bills, Sales, Profit, Last bill (HH:mm). Offline tills show an info line:
+   "Bills from offline tills appear when they reconnect."
+
+6) Top 10 items today: Item, Qty, Sales, Profit, Margin %. Row with itemId 0 = "Other items (not in item list)";
+   hasUncosted → small "no cost" badge on the profit cell.
+
+7) Link "Sales analysis →" to the page from Prompt 18.
+```
+
+---
+
+## Prompt 18 — Sales analysis: date range, daily sales and profit with charts
+
+Backend: `GET api/Dashboard/Sales?fromDate=&toDate=&terminalId=&top=20` (max 366 days), StockSystem.md §6.9.
+
+```
+Add a page "Sales analysis" (sidebar group "Sales", route /sales-analysis). Don't change other pages.
+
+1) API: GET /Dashboard/Sales?fromDate=yyyy-MM-dd&toDate=yyyy-MM-dd&terminalId=&top=20 →
+     { fromDate, toDate, terminalId,
+       totals: (same shape as Today's totals),
+       daily: [{ saleDate, bills, refunds, netSales, discount, cost, profit, costedSales, marginPct, cash, card, other }]   // every day, 0 when none
+       terminals: [{ terminalId, terminalCode, terminalName, bills, netSales, profit, ... }],
+       hourly: [{ saleHour, bills, netSales, profit }],
+       topItems: [...], topProfitItems: [...]   // { itemId, name, qty, netSales, cost, profit, marginPct, hasUncosted }
+       categories: [{ catId, catName, qty, netSales, profit, marginPct }] }
+   400 { message } for a bad range → red toast.
+
+2) Filters bar (sticky): date range picker (From – To, dd/MM/yyyy) with presets: Today, Yesterday, Last 7 days,
+   This month, Last month, Last 30 days (default), This year. Till select ("All tills" + terminals). "Apply" reloads.
+   Keep the filters in the URL query (?from=&to=&till=) so a view can be shared / reloaded.
+
+3) Summary tiles: Net sales, Profit, Margin %, Bills, Avg bill, Discount, Refunds, Cash / Card / Other.
+   Also "Best day" (highest netSales in daily, with its date) and "Daily average" (netSales / days with bills).
+   uncostedSales > 0 → muted note "Rs x of sales have no cost price — not in profit".
+
+4) Charts (shadcn chart / Recharts, responsive, tooltips with all values):
+   a) "Daily sales and profit": bars = netSales per day, line = profit, second line (right axis, %) = marginPct.
+      X axis dd/MM (or MMM yyyy when the range > 90 days — then group daily rows by month on the page).
+      Toggle buttons: Sales · Profit · Margin to show/hide series.
+   b) "Payments": stacked bars per day of cash / card / other.
+   c) "Busy hours": bar chart of netSales by hour (hourly), bills in the tooltip.
+   d) "Sales by category": horizontal bar chart (top 10 categories by netSales) with profit next to it; the rest in a
+      table below.
+   e) "Sales by till": small bar chart or table from terminals (bills, sales, profit).
+
+5) Tables:
+   - Top items: tabs "By sales" (topItems) / "By profit" (topProfitItems): Item, Qty, Sales, Cost, Profit, Margin %.
+     itemId 0 = "Other items (not in item list)"; hasUncosted → "no cost" badge. Negative profit in red.
+   - Daily table under chart (a): Date, Bills, Refunds, Sales, Discount, Cost, Profit, Margin %, Cash, Card, Other,
+     with a totals row. "Export CSV" button for this table.
+
+6) Loading skeletons while fetching; empty state "No sales in this period" when totals.bills = 0 and refunds = 0.
+```

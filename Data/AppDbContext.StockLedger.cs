@@ -136,6 +136,7 @@ namespace ItemApi.Data
             items.Columns.Add("Amount", typeof(decimal));
             items.Columns.Add("LineDescrip", typeof(string));
             items.Columns.Add("PriceType", typeof(int));
+            items.Columns.Add("UnitCost", typeof(decimal));
 
             var pays = new DataTable();
             pays.Columns.Add("InvoiceNo", typeof(string));
@@ -149,7 +150,7 @@ namespace ItemApi.Data
                 inv.Rows.Add(i.InvoiceNo, i.InvoiceSeq, i.ZNo, i.InvType, i.InvDate, Db(i.CashierId),
                              i.GrossAmount, i.Discount, i.NetAmount, i.Status, i.PriceType);
                 foreach (var it in i.Items)
-                    items.Rows.Add(i.InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount, Db(it.LineDescrip), Db(it.PriceType));
+                    items.Rows.Add(i.InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount, Db(it.LineDescrip), Db(it.PriceType), Db(it.UnitCost));
                 foreach (var p in i.Payments)
                     pays.Rows.Add(i.InvoiceNo, p.LineNum, p.PayType, p.Amount, Db(p.RefNo));
             }

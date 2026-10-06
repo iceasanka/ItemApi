@@ -79,9 +79,12 @@ builder.Services.AddScoped<ISalaryAttendanceRepository, SalaryAttendanceReposito
 builder.Services.AddScoped<ISalaryAdvanceRepository, SalaryAdvanceRepository>();
 builder.Services.AddScoped<ISalaryPayslipRepository, SalaryPayslipRepository>();
 builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>();
+builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
 
 // Register the service
 builder.Services.AddControllers();
+// live sales on the home page: /hubs/sales → "salesChanged" when tills upload bills (Dashboard:LivePush)
+builder.Services.AddSignalR();
 
 
 builder.Services.AddCors(options =>
@@ -148,6 +151,7 @@ app.UseAuthorization();
 
 
 app.MapControllers();
+app.MapHub<ItemApi.Hubs.SalesHub>(ItemApi.Hubs.SalesHub.Path).RequireCors("AllowAllOrigins");
 
 app.Run();
 

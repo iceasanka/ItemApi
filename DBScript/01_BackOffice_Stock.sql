@@ -193,6 +193,18 @@ IF COL_LENGTH('dbo.z_tb_SalesInvoiceItem', 'PriceType') IS NULL
     ALTER TABLE dbo.z_tb_SalesInvoiceItem ADD PriceType INT NOT NULL CONSTRAINT DF_z_tb_SalesInvoiceItem_PriceType DEFAULT (1);
 GO
 
+-- added with the sales dashboard (2026-10-06): the cost the till used for its profit view / discount cap
+-- (zf_tb_InvoiceItem.UnitCost). Profit on the back office = this, else CostPrice (AvgCost), else the item cost now.
+IF COL_LENGTH('dbo.z_tb_SalesInvoiceItem', 'TillUnitCost') IS NULL
+    ALTER TABLE dbo.z_tb_SalesInvoiceItem ADD TillUnitCost DECIMAL(18,2) NULL;
+GO
+
+-- sales dashboard: bills by date
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_z_tb_SalesInvoice_Date')
+    CREATE INDEX IX_z_tb_SalesInvoice_Date ON dbo.z_tb_SalesInvoice (InvDate)
+        INCLUDE (TerminalId, LocationId, InvType, Status, Discount, NetAmount);
+GO
+
 IF OBJECT_ID('dbo.z_tb_SalesPayment', 'U') IS NULL
 CREATE TABLE dbo.z_tb_SalesPayment (
     InvoiceId  INT           NOT NULL,
@@ -326,6 +338,7 @@ CREATE TYPE dbo.z_tt_SalesInvoiceItem AS TABLE (
     Amount     DECIMAL(18,2) NOT NULL,
     LineDescrip NVARCHAR(50) NULL,       -- only for ItemId 0 ("other item")
     PriceType  INT           NULL,       -- 1 retail, 2 wholesale; NULL (older tills) → the bill's PriceType
+    UnitCost   DECIMAL(18,2) NULL,       -- the till's cost for this line; NULL (older tills / unknown)
     PRIMARY KEY (InvoiceNo, LineNum)
 );
 GO
@@ -679,10 +692,10 @@ BEGIN
                i.GrossAmount, i.Discount, i.NetAmount, i.Status, i.PriceType
         FROM @Invoices i JOIN @new n ON n.InvoiceNo = i.InvoiceNo;
 
-        INSERT dbo.z_tb_SalesInvoiceItem (InvoiceId, LineNum, ItemId, Qty, UnitPrice, CostPrice, Discount, Amount, LineDescrip, PriceType)
+        INSERT dbo.z_tb_SalesInvoiceItem (InvoiceId, LineNum, ItemId, Qty, UnitPrice, CostPrice, Discount, Amount, LineDescrip, PriceType, TillUnitCost)
         SELECT m.InvoiceId, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, b.AvgCost, it.Discount, it.Amount,
                CASE WHEN it.ItemId = 0 THEN it.LineDescrip END,
-               ISNULL(it.PriceType, inv.PriceType)
+               ISNULL(it.PriceType, inv.PriceType), it.UnitCost
         FROM @Items it
         JOIN @map m ON m.InvoiceNo = it.InvoiceNo
         JOIN @Invoices inv ON inv.InvoiceNo = it.InvoiceNo

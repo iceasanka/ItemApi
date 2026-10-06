@@ -866,7 +866,8 @@ BEGIN
     SELECT i.InvoiceNo, i.InvoiceSeq, i.ZNo, i.InvType, i.InvDate, i.CashierId, i.GrossAmount, i.Discount, i.NetAmount, i.Status, i.PriceType
     FROM dbo.zf_tb_Invoice i JOIN @InvoiceNos n ON n.InvoiceNo = i.InvoiceNo ORDER BY i.InvoiceSeq;
 
-    SELECT it.InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount, it.LineDescrip, it.PriceType
+    SELECT it.InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount, it.LineDescrip, it.PriceType,
+           it.UnitCost   -- back office sales dashboard profit
     FROM dbo.zf_tb_InvoiceItem it JOIN @InvoiceNos n ON n.InvoiceNo = it.InvoiceNo;
 
     SELECT p.InvoiceNo, p.LineNum, p.PayType, p.Amount, p.RefNo

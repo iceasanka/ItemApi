@@ -1,7 +1,10 @@
+using ItemApi.Hubs;
 using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.SqlClient;
+using Serilog;
 
 namespace ItemApi.Controllers
 {
@@ -13,10 +16,14 @@ namespace ItemApi.Controllers
     public class SyncController : ControllerBase
     {
         private readonly ISyncRepository _repository;
+        private readonly IHubContext<SalesHub> _salesHub;
+        private readonly bool _livePush;
 
-        public SyncController(ISyncRepository repository)
+        public SyncController(ISyncRepository repository, IHubContext<SalesHub> salesHub, IConfiguration config)
         {
             _repository = repository;
+            _salesHub = salesHub;
+            _livePush = config.GetValue("Dashboard:LivePush", true);
         }
 
         // ─── Terminals (back office) ─────────────────────────────────────────────
@@ -120,7 +127,23 @@ namespace ItemApi.Controllers
 
             try
             {
-                return Ok(await _repository.UploadInvoicesAsync(batch));
+                var results = await _repository.UploadInvoicesAsync(batch);
+
+                // home page live sales: tell open dashboards to reload. Never fails the upload.
+                var newBills = results.Count(r => r.Result == "Inserted");
+                if (_livePush && newBills > 0)
+                {
+                    try
+                    {
+                        await _salesHub.Clients.All.SendAsync(SalesHub.SalesChanged,
+                            new SalesChangedEvent { TerminalId = batch.TerminalId, NewBills = newBills, At = DateTime.Now });
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"salesChanged not sent: {ex.Message}");
+                    }
+                }
+                return Ok(results);
             }
             catch (SqlException ex) when (ex.Number >= 50000)
             {

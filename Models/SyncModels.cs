@@ -231,6 +231,8 @@ namespace ItemApi.Models
         public decimal UnitPrice { get; set; }
         public decimal Discount { get; set; }
         public decimal Amount { get; set; }
+        // the cost the till used (its profit view / discount cap). Null = older till or unknown cost.
+        public decimal? UnitCost { get; set; }
     }
 
     public class SyncPayment

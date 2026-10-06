@@ -47,6 +47,9 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `02_FrontCashier_zf.sql` | each till's local db (e.g. `easyway_front` on SQL Express) | prefix `zf_`. Re-runnable. Applied to the test till db `z_pos_fnt_db` (PRASADA1). |
 | `03_BackOffice_PriceLink.sql` | back office db (`easyway`) | price links (§6.5). Re-runnable. **Applied to easyway on 2026-10-02.** |
 
+`01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
+Deploy order: back office scripts + ItemApi first, then each till (`02` + TillService) — ItemApi's `SyncItem` reads `CostPrice`.
+
 Run with `sqlcmd -I` (QUOTED_IDENTIFIER must be ON for the filtered index), e.g.
 `sqlcmd -S SERVER -d easyway -U user -P *** -I -b -i DBScript\01_BackOffice_Stock.sql`
 
@@ -116,6 +119,10 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_sp_SuspendBill` / `zf_sp_GetSuspendedBills` / `zf_sp_RecallSuspendedBill` / `zf_sp_CancelSuspendedBill` | suspend / list / recall (once only) / cancel |
 | `zf_sp_FindItem` | barcode, then RefCode — or `@ItemId`; 2nd result set = the item's active price links |
 | `zf_sp_SearchItems` | cashier search by name: every word in `Descrip` or `Inv_Descrip`, max 50 (needs SQL Server 2016+) |
+| `zf_fn_BillLineCost` / `zf_sp_GetBillProfit` | cost + profit per bill line, the discount cap (§6.7) |
+| `zf_sp_GetInvoicesByDate` / `zf_sp_GetInvoiceForPrint` | bill copies (§6.7) |
+| `zf_tb_DrawerLog` / `zf_sp_LogDrawer` | every cash drawer opening (§6.7) |
+| `zf_tb_CashMovement` / `zf_sp_AddCashMovement` / `zf_sp_GetCashSummary` | opening cash, paid in, paid out, expected cash (§6.8) |
 | `zf_sp_GetUnsyncedInvoices` / `zf_sp_GetInvoicesByNo` / `zf_sp_MarkInvoicesSynced` | upload queue |
 | `zf_sp_CloseZ` / `zf_sp_GetZForSubmit` / `zf_sp_SetZStatus` | day end |
 | `zf_sp_UpsertItems` / `zf_sp_UpsertStockBalance` / `zf_sp_UpsertPriceLinks` | apply downloads |
@@ -267,6 +274,67 @@ waiting) and recall it any time later — after other bills, a restart or a day 
   its price check like any other bill.
 - Cancel = Status 9. Rows are never deleted (audit: `ClosedAt`, `ClosedBy`).
 
+### 6.7 Receipts, bill copies, cash drawer, profit view, bill discount % (till only, 2026-10-06)
+All in TillService + the till db; UI: Lovable Prompts 14 and 15.
+
+**Printing** — TillService prints ESC/POS straight to the thermal printer (`Printer:Name` = Windows printer name,
+or `Printer:Address` = `ip:9100`). No BarTender on tills. Shop name / address / footer come from
+`receipt-template.txt` next to `TillService.exe` (tags `<C> <R> <B> <H> <2>`, read on every print). The rest of the
+layout (ItemCode · MktPrice · OurPrice · Qty · Nett, totals, CASH / BALANCE, items / pcs, YOUR SAVINGS) is
+`Printing/ReceiptBuilder.cs`. Names print in English (`Inv_Descrip`), since receipt printers can't print Sinhala text.
+- `POST /invoices` saves → prints → opens the drawer when any payment is cash (`PayType 1`, also cash refunds);
+  card / credit / voucher only → no drawer. Answer `{ invoiceNo, printed, drawerOpened, printError }`. **A print
+  problem never undoes the sale** — the page shows `printError` and offers a reprint.
+- Cash `Tendered` is now stored per payment (`zf_tb_InvoicePayment.Tendered`) so the receipt and copies show
+  CASH and BALANCE. `MktPrice` = the item's `MaxPrice` at the time of sale (`zf_tb_InvoiceItem.MktPrice`).
+- **Day file**: `Receipt:SaveFolder\yyyy-MM-dd.txt`, one per day: every bill as printed, copies, No Sale, and
+  `[time] Uploaded to back office: …` lines from the sync job. It is a journal only — the bills live in the db.
+
+**Bill copy** — `GET /invoices?date=` (bills of a day on this till), `GET /invoices/{no}`, `POST /invoices/{no}/print`
+prints `***** COPY RECEIPT *****` + "Copy Taken" date/time. No PIN, never opens the drawer. Only bills of **this**
+till (they live in its db).
+
+**Cash drawer** — kick command `ESC p` through the printer (`Printer:DrawerPin` 0 = pin 2). Every opening is a row in
+`zf_tb_DrawerLog` (Kind 1 bill, 2 No Sale; `Opened 0` = the printer didn't take it). **No Sale**:
+`POST /drawer/nosale { pin, cashierId, reason }` — the supervisor PIN is checked **every time** (not the token),
+prints a small NO SALE slip (`Receipt:PrintNoSaleSlip`).
+
+**Profit view and bill discount %**
+- Cost prices now go to the tills: `z_sp_GetItemsForSync` → `CostPrice` (= `z_tb_ItemDet.CostPrice`),
+  `z_sp_GetPriceLinksForSync` → link `CostPrice`. The till re-downloads all items and links once after the upgrade.
+- Cost is **never** sent to the page without the supervisor PIN: `POST /auth/supervisor` now also returns a
+  `token` (12 h, `Till:SupervisorTokenHours`, in memory only); the page sends it as `X-Supervisor-Token`.
+  `DELETE /auth/supervisor` locks again.
+- `POST /bill/profit { items }` (token) → per line `unitCost / cost / profit`, bill `profit`, `maxDiscount`,
+  `maxDiscountPercent`, `discountBase`. Rule = `zf_fn_BillLineCost` (one place, used by the save too):
+  unit cost = the picked price link's cost, else the item's cost; profit = Amount − Qty × cost. **Other items and
+  items without a cost count as 0 profit**, so they never allow a bigger discount. Lines now send `priceLinkId`.
+- **Bill discount** needs the token (401 otherwise) and on a sale may not be more than the bill profit
+  (51012 "Discount is more than this bill allows (max Rs x)"). As a %: send `discountPercent` and
+  `discount = ROUND(base × % / 100, 2)`, base = all lines except `NoDiscount` items (51014 when it doesn't match).
+  The % is printed (`DISCOUNT 10%`) and kept on suspend / recall. `UnitCost` is stored per line for profit reports.
+  Refunds are not capped.
+- `DiscountPercent`, `UnitCost`, `Tendered` and the drawer log stay on the till (not uploaded yet).
+
+### 6.8 Opening cash, Paid In, Paid Out (till only, 2026-10-06)
+Cash put into / taken out of the drawer without a sale, per Z, in `zf_tb_CashMovement` (Kind **1** opening cash,
+**2** paid in, **3** paid out). UI: Lovable Prompt 16.
+- `POST /cash/movements { kind, amount, reason, cashierId, pin }` → saves (`zf_sp_AddCashMovement`), opens the drawer,
+  prints a slip (paid out has a signature line), day file, `zf_tb_DrawerLog` Kind 3/4/5.
+  **Opening cash and paid out need the supervisor PIN every time**; paid in does not. Paid out needs a reason (51053)
+  and can't be more than the cash in the drawer (51054).
+- **Opening cash** = the float handed to the till before it opens. Entering it opens a Z if none is open, so it can be
+  entered before the first bill. One per Z: typed again **before the Z's first bill** it replaces the old one
+  (old row Status 9); once the Z has bills and an opening cash, 51051 — use Paid In / Paid Out. A forgotten float can
+  still be entered once after bills.
+- `GET /cash/summary` → open Z's `openingCash, hasOpeningCash, cashSales, paidIn, paidOut, expectedCash` + movements.
+  `zNo null` or `hasOpeningCash false` → the page asks for the opening cash.
+- **Day end**: `zf_sp_CloseZ` stores `OpeningCash, PaidIn, PaidOut, ExpectedCash` (= opening + `CashAmount` + paid in
+  − paid out) on `zf_tb_ZReport`, and `POST /z/close` returns them and prints a Z slip (`Receipt:PrintZReport`) with
+  "CASH IN DRAWER" and lines for the counted amount and a signature. The opening cash belongs to that Z only — the next
+  Z starts at 0 until a new opening cash is entered.
+- Not uploaded to the back office yet (the Z upload is unchanged; `CashAmount` still means cash sales only).
+
 ---
 
 ## 7. Status values
@@ -280,6 +348,8 @@ waiting) and recall it any time later — after other bills, a restart or a day 
 | Invoice line `PriceType` | 1 retail, 2 wholesale price on this line |
 | Payment `PayType` | 1 cash, 2 card, 3 credit, 4 voucher |
 | `zf_tb_SuspendedBill.Status` | 1 suspended, 2 recalled, 9 cancelled |
+| `zf_tb_DrawerLog.Kind` | 1 after a cash bill, 2 No Sale, 3 opening cash, 4 paid in, 5 paid out |
+| `zf_tb_CashMovement` `Kind` / `Status` | 1 opening cash, 2 paid in, 3 paid out / 1 active, 9 replaced |
 
 ---
 

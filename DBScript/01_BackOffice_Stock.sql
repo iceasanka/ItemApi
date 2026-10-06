@@ -864,7 +864,8 @@ BEGIN
            d.DiscountAmount, d.DiscountPercent,
            d.QtyLevel2, d.PriceLevel2, d.QtyLevel3, d.PriceLevel3, d.QtyLevel4, d.PriceLevel4,
            i.Status,
-           CASE WHEN d.UDate > i.UDate THEN d.UDate ELSE i.UDate END AS UDate   -- datetime2: some items have 0001-01-01
+           CASE WHEN d.UDate > i.UDate THEN d.UDate ELSE i.UDate END AS UDate,  -- datetime2: some items have 0001-01-01
+           d.CostPrice   -- till profit view + bill discount cap (shown on the till only with the supervisor PIN)
     FROM dbo.z_tb_Item i
     LEFT JOIN dbo.z_tb_ItemDet d ON d.ItemId = i.ItemId AND d.LocationId = @LocationId
     WHERE @Since IS NULL OR i.UDate > @Since OR d.UDate > @Since;

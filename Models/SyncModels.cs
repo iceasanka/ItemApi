@@ -154,6 +154,8 @@ namespace ItemApi.Models
         public decimal? PriceLevel4 { get; set; }
         public int Status { get; set; }
         public DateTime? UDate { get; set; }
+        // z_tb_ItemDet.CostPrice — till profit view and bill discount cap
+        public decimal? CostPrice { get; set; }
     }
 
     // GET api/Sync/PriceLinks — row = z_sp_GetPriceLinksForSync = zf_tt_PriceLink on the till. Status 0 = deleted.
@@ -166,6 +168,8 @@ namespace ItemApi.Models
         public string? Remark { get; set; }
         public int Status { get; set; }
         public DateTime? UDate { get; set; }
+        // NULL → the till uses the item's CostPrice
+        public decimal? CostPrice { get; set; }
     }
 
     public class SyncStockBalance

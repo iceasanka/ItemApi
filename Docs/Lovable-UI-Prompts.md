@@ -608,3 +608,182 @@ Keep everything else (quantity prices, price links, name search, Reload, Other i
 
 6) Suspended bills are on THIS till only (they live in the till's local database).
 ```
+
+---
+
+## Prompt 14 — Cashier billing: printed receipt, bill copy, cash drawer, No Sale
+
+Backend: TillService now prints the receipt itself (thermal printer, ESC/POS) and opens the cash drawer when the
+bill has cash. `POST /invoices` answers `{ invoiceNo, printed, drawerOpened, printError }`; the bill is saved even
+when printing fails. New: `GET /invoices?date=`, `GET /invoices/{no}`, `POST /invoices/{no}/print?copy=`,
+`POST /drawer/nosale`. Details: StockSystem.md §6.7.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else (quantity prices, price links, name search, Reload, Other item, wholesale per line, suspend).
+
+1) tillLocalApi.ts
+   - InvoiceLine gets  priceLinkId?: number | null   (the price link the cashier picked, null = normal price).
+     Send it on every line of POST /invoices (suspend already sends it).
+   - Payment gets  tendered?: number | null  — for cash: the money the customer handed over (amount + change).
+   - createInvoice(...) now returns  { invoiceNo: string; printed: boolean; drawerOpened: boolean; printError?: string | null }.
+     Request gets  print?: boolean  (default true; always send true from the Pay dialog).
+   - add:
+       export interface InvoiceListRow { invoiceNo: string; invType: 1|2; invDate: string; cashierId?: string|null; zNo: number;
+         netAmount: number; discount: number; status: number; synced: boolean; lineCount: number;
+         cashAmount: number; cardAmount: number; otherAmount: number; }
+       export interface PrintBillLine { lineNum: number; itemId: number; name: string; code?: string|null; qty: number;
+         mktPrice?: number|null; unitPrice: number; discount: number; amount: number; priceType: 1|2; }
+       export interface PrintBill { invoiceNo: string; zNo: number; invType: 1|2; invDate: string; cashierId?: string|null;
+         grossAmount: number; discount: number; discountPercent?: number|null; netAmount: number; status: number;
+         priceType: 1|2; synced: boolean; terminalCode?: string|null; lines: PrintBillLine[];
+         payments: { lineNum: number; payType: number; amount: number; refNo?: string|null; tendered?: number|null }[]; }
+       export interface PrintResult { printed: boolean; drawerOpened: boolean; printError?: string|null }
+       getInvoices(date: string /* yyyy-MM-dd */)  → GET  /invoices?date=          → InvoiceListRow[]
+       getInvoice(invoiceNo)                      → GET  /invoices/{invoiceNo}     → PrintBill
+       printInvoice(invoiceNo, copy = true)       → POST /invoices/{invoiceNo}/print?copy=true|false → PrintResult
+       noSale(pin, cashierId, reason)             → POST /drawer/nosale { pin, cashierId, reason } → PrintResult
+                                                    (401 { message: "Wrong PIN." })
+
+2) Pay / tender dialog
+   - Cash: send payments [{ payType: 1, amount: <applied amount>, tendered: <cash typed> }]. Mixed cash + card: tendered on the
+     cash line only. Card only: no tendered.
+   - REMOVE any receipt printing done by the browser (window.print / receipt component) — the till prints now.
+   - After createInvoice:
+       printed → green toast "Bill <invoiceNo> saved" (+ " · drawer open" when drawerOpened).
+       not printed → yellow toast that stays until closed: "Bill <invoiceNo> saved but NOT printed: <printError>"
+         with a button "Print again" → printInvoice(invoiceNo, false). The bill is saved — never take payment again.
+   - Keep showing "Change: <balance>" big after a cash bill (as today).
+
+3) "Bill copy" button in the toolbar (shortcut F9) → dialog "Bill copy"
+   - Date picker at the top, default today (dd/MM/yyyy). Loads getInvoices(date).
+   - Table: Invoice no, Time (HH:mm), Lines, Amount (2 decimals, right), Pay (Cash / Card / Cash+Card / Other from the
+     amounts), Cashier, badges: REFUND (invType 2), VOID (status 9, grey row), "Not uploaded" (synced false, small orange).
+   - Search box filters by invoice number (the last digits are enough).
+   - Keyboard: first row highlighted, ↑/↓, Enter = Print copy, Space = preview, Esc closes.
+   - Preview panel on the right (getInvoice): lines (name, qty × price, amount), sub total, discount (with % when
+     discountPercent), net, payments, balance — like a receipt, monospace.
+   - "Print copy" → printInvoice(no) → green toast "Copy printed", or red toast with printError.
+   - No PIN needed. It only finds bills made on THIS till.
+
+4) "No Sale" button (toolbar, shortcut Ctrl+D) — opens the cash drawer without a bill
+   - Disabled while the tender dialog is open.
+   - Dialog "No Sale — open cash drawer": PIN (password field, focused), Reason (optional, max 100; quick chips:
+     "Change", "Cash count", "Wrong change", "Other"). Enter = Open drawer, Esc = cancel.
+   - The PIN is asked EVERY time (do not reuse an earlier supervisor approval or token).
+   - noSale(pin, cashierId, reason) → drawerOpened ? green toast "Drawer opened" : red toast with printError.
+     401 → "Wrong PIN", keep the dialog open and clear the PIN.
+```
+
+---
+
+## Prompt 15 — Cashier billing: profit view + bill discount % (supervisor PIN)
+
+Backend: `POST /auth/supervisor` now returns `{ ok, token, expiresAt }`; send the token as the `X-Supervisor-Token`
+header. `POST /bill/profit` (token) gives cost / profit per line, bill profit and the biggest discount allowed.
+`POST /invoices` refuses a bill discount without the token (401) or above the bill profit (400). StockSystem.md §6.7.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else.
+
+1) tillLocalApi.ts
+   - verifySupervisor(pin) now returns { ok: boolean; token?: string; expiresAt?: string }.
+     Keep the token in memory ONLY (React state / module variable — never localStorage). Wherever the page already asks
+     for the supervisor PIN (refund, wholesale, cancel suspended bill) keep the token it returns, so one PIN covers
+     everything.
+   - Every call sends the header  X-Supervisor-Token: <token>  when a token is held.
+   - lockSupervisor() → DELETE /auth/supervisor (with the header), then forget the token.
+   - getBillProfit(items: InvoiceLine[]) → POST /bill/profit { items } →
+       { lines: { lineNum: number; unitCost: number|null; cost: number|null; profit: number|null }[];
+         amount: number; cost: number; profit: number; unknownCostLines: number;
+         discountBase: number; maxDiscount: number; maxDiscountPercent: number }
+     401 → the token expired: forget it, hide the profit view, ask for the PIN again.
+   - createInvoice / suspendBill send  discountPercent?: number | null  next to discount.
+   - RecalledBill gets  discountPercent?: number | null.
+
+2) Profit view (hidden by default)
+   - "Profit" toggle button in the toolbar (eye icon, shortcut Ctrl+P). Off → no cost or profit anywhere on screen.
+   - Turning it on: no token → supervisor PIN dialog (same as Refund) → token. Then call getBillProfit(lines) now and
+     again (debounced 300 ms) whenever lines, qty, prices or discounts change.
+   - While on:
+       each bill line shows two small extra columns "Cost" (unitCost) and "Profit" (line profit; red when < 0,
+       "—" when null = cost unknown);
+       the totals panel shows "Cost", "Profit", "Margin %" (= profit / amount × 100, 1 decimal) and
+       "Profit after discount" (= profit − bill discount); when unknownCostLines > 0 a muted note
+       "N line(s) without cost — counted as 0".
+   - Turning it off → lockSupervisor() and hide the columns. Otherwise it stays on across bills until switched off
+     or the cashier signs out.
+
+3) Bill discount % — "Discount %" button in the totals panel (shortcut F6)
+   - Needs the token: no token → supervisor PIN dialog first.
+   - Dialog "Bill discount": shows "Max allowed: <maxDiscountPercent>% (Rs <maxDiscount>)" from getBillProfit.
+     Input "Discount %" (0–100, 2 decimals), live preview "Discount Rs <amount>" and "Net <net>".
+     amount = round2(discountBase × % / 100)  — use discountBase from getBillProfit (it leaves out NoDiscount items),
+     do NOT work it out on the page.
+     amount > maxDiscount → red text "More than this bill allows (max <maxDiscountPercent>%)" and disable OK.
+     Buttons: OK (Enter), Remove discount, Cancel (Esc).
+   - Totals panel: "Discount 10%  −83.80" under the sub total; net = sum(lines) − discount.
+   - The % stays on the bill: when lines change, recompute the amount from the new discountBase (call getBillProfit again).
+     If it is now above maxDiscount: red banner "Discount is more than this bill allows — change it" and disable Pay.
+   - Pay sends discount (2 decimals) + discountPercent. 400 from the till → red toast with its message, keep the bill.
+   - Refund mode: hide the Discount % button.
+   - Suspend sends discount + discountPercent; Recall restores both (then recompute as above).
+
+4) After a bill is paid or cleared: discount and discountPercent back to none. The token is kept (the profit view stays
+   as the cashier left it).
+```
+
+---
+
+## Prompt 16 — Cashier billing: Opening cash, Paid In, Paid Out, cash in drawer at day end
+
+Backend: TillService `GET /cash/summary`, `POST /cash/movements` (kind 1 opening cash, 2 paid in, 3 paid out), and
+`POST /z/close` now returns the drawer cash and prints a Z slip. StockSystem.md §6.8.
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts.
+Keep everything else.
+
+1) tillLocalApi.ts — add:
+     export interface CashMovement { moveId: number; zNo: number; kind: 1|2|3; amount: number; reason?: string|null;
+       cashierId?: string|null; createdAt: string; status: number /* 1 active, 9 replaced */ }
+     export interface CashSummary { zNo: number|null; openedAt?: string|null; openingCash: number; hasOpeningCash: boolean;
+       paidIn: number; paidOut: number; cashSales: number; expectedCash: number; movements: CashMovement[] }
+     getCashSummary()                                   → GET  /cash/summary → CashSummary
+     addCashMovement({ kind, amount, reason, cashierId, pin }) → POST /cash/movements
+                                                          → CashMovement & { printed: boolean; drawerOpened: boolean; printError?: string|null }
+                                                          401 { message: "Wrong PIN." }, 400 { message }
+   ZSummary (POST /z/close) gets: openingCash, paidIn, paidOut, expectedCash: number; printed: boolean; printError?: string|null.
+
+2) Opening cash
+   - When the billing screen loads, and again right after a day end, call getCashSummary(). If zNo is null or
+     hasOpeningCash is false → open the dialog "Opening cash" automatically:
+       "Cash given to the till for this shift", Amount (focused, 2 decimals, > 0), Supervisor PIN (password).
+       Enter = Save. A "Later" button closes it (billing is allowed without it) — then show a small orange chip
+       "No opening cash" in the status bar; clicking it opens the dialog again.
+   - addCashMovement({ kind: 1, amount, pin, cashierId }) → green toast "Opening cash Rs <amount> — drawer open".
+     401 → "Wrong PIN", keep the dialog open. 400 (already entered) → red toast with the message, close the dialog.
+   - Menu item "Opening cash" in a new "Cash" toolbar menu also opens it.
+
+3) Paid In / Paid Out — "Cash" toolbar menu (shortcut F12) with: Paid In, Paid Out, Opening cash, Drawer summary
+   - Paid In dialog: Amount (> 0), Reason (optional, max 100; chips "Change from office", "Float top-up", "Other").
+     No PIN. → addCashMovement({ kind: 2, ... }).
+   - Paid Out dialog: Amount (> 0), Reason (REQUIRED, max 100; chips "Supplier payment", "Expenses", "Cash to office",
+     "Other"), Supervisor PIN. → addCashMovement({ kind: 3, ... }). Remind: "Keep the printed slip with the bill you paid."
+   - Both: Enter = Save, Esc = Cancel. OK → green toast "Paid In Rs 1,000.00 — drawer open" / "Paid Out Rs 500.00 — drawer open";
+     printError → also a yellow toast "Saved, slip not printed: <printError>". 400 → red toast with the message.
+   - Disabled while the tender dialog is open.
+
+4) Drawer summary dialog (from the Cash menu): getCashSummary() →
+     Opening cash, + Cash sales, + Paid in, − Paid out, = Cash in drawer (big, bold), then the movements list
+     (time, type badge OPENING / PAID IN / PAID OUT, amount, reason, cashier; replaced opening cash greyed with "replaced").
+
+5) Day end (existing Z close)
+   - The Z summary dialog adds a "Cash" block: Opening cash, Cash sales, Paid in, Paid out, CASH IN DRAWER (big),
+     and a "Counted cash" input: difference = counted − expectedCash, shown green when 0, red "short Rs x" when below,
+     blue "over Rs x" when above (display only, not saved).
+   - The till prints the Z slip itself now — remove any browser printing of the Z. printed false → yellow toast with printError.
+   - After closing: the opening cash is cleared for the next shift → call getCashSummary() and show the Opening cash dialog
+     again (step 2).
+```

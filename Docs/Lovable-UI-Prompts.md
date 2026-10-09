@@ -1481,3 +1481,119 @@ Change src/pages/CashierBilling.tsx, src/lib/tillShortcuts.ts, src/components/ti
 4) No Sale dialog: the reason starts as "Change" (that chip selected, the text box filled); the PIN box has the focus
    (Prompt 27). Enter = Open drawer from any field (form submit, like the cash dialogs).
 ```
+
+---
+
+## Prompt 30 — Cashier billing: focus after "item not found", No Sale = Alt+O, line buttons restyled
+
+No backend change.
+
+```
+Change src/pages/CashierBilling.tsx and src/lib/tillShortcuts.ts. Keep everything else.
+
+1) Focus after an item is not found. Cause: the scan box has disabled={busy}; a disabled input loses the focus, and only
+   the "item found" path puts it back.
+   - Scan box: readOnly={busy} (with aria-busy and a small spinner at its right end) instead of disabled, so it keeps the
+     focus while the till looks the item up.
+   - addItem: in its finally block call focusScan() (it already does nothing while a dialog is open — the search list or
+     price picker), so after "No item found for '…'" / "Item '…' not found" the cursor is back in the scan box and the
+     wrong text is cleared, ready for the next scan.
+
+2) No Sale shortcut = Alt+O:
+   - tillShortcuts.ts: noSale default "Alt+O". A saved map that still has an old default (Ctrl+D or Insert) is moved to
+     Alt+O; a key the cashier set themselves is kept.
+   - keyFromEvent: for letters use e.code ("KeyO" → "O") so Alt+O works the same on every keyboard layout.
+   - preventDefault on Alt+O so the browser menu does not react.
+
+3) Line / mode buttons (Qty, Price, W/R, Void line, Refund, Wholesale) — make them like the Cash / Card / Mixed buttons:
+   - Two rows of three, full width of the right panel, same height as each other (h-14), filled buttons, white text,
+     icon above or left of the label, the key chip in the top-right corner (as now):
+         [ Qty      ] [ Price     ] [ W/R       ]
+         [ Void line] [ Refund    ] [ Wholesale ]
+   - Colours (different from the blue pay buttons):
+       Qty, Price, W/R  → slate (bg-slate-600, hover slate-700) — they change the selected line;
+       Void line        → red (destructive);
+       Refund           → purple (outline purple when off, filled purple + ring when refund mode is ON);
+       Wholesale        → orange (outline orange when off, filled orange + ring when the wholesale default is ON).
+     Disabled (e.g. Price on a normal-price line, nothing selected): same colour at 40 % opacity, still readable.
+   - Labels never overflow: text-sm font-semibold leading-tight, allowed to wrap to two lines, min-w-0, no fixed widths;
+     icons 18 px. Check at 1366×768 and 1920×1080 that "Void line" and "Wholesale" fit inside their buttons.
+   - Touch: at least 56 px high, 6 px gap.
+```
+
+---
+
+## Prompt 31 — Cashier billing: "000" key, one colour for the line / mode buttons
+
+No backend change. Changes Prompt 30's colours.
+
+```
+Change src/pages/CashierBilling.tsx only. Keep everything else.
+
+1) Keypad (right panel): add a "000" key (types "000", like "00"). New layout — 4 columns, Enter as a full-width bar:
+       7    8    9    ⌫
+       4    5    6    C
+       1    2    3    ×
+       0    00   000  .
+       [        Enter        ]
+   Same key style and font as now; Enter keeps the primary style. The keypad still fills the space it has (flex-1),
+   rows equal height. The Other item dialog's keypad also gets "000" next to "00".
+
+2) Line / mode buttons (Qty, Price, W/R, Void line, Refund, Wholesale): ONE colour for all six, a little different
+   from the blue Cash / Card / Mixed buttons — a darker navy of the same blue family:
+       className "bg-blue-900 hover:bg-blue-950 text-white"  (all six; drop the slate / red / purple / orange of Prompt 30)
+   - "On" states keep the same colour and add a white inner ring so they still stand out:
+       Qty / Price while the keypad types into them, Refund while refund mode is on, Wholesale while the wholesale
+       default is on, W/R on a wholesale line → "ring-2 ring-inset ring-white".
+     (Refund mode is still obvious from the red REFUND banner; wholesale from the orange banner.)
+   - Disabled: same colour at 40 % opacity. Keep the two-rows-of-three layout, sizes, icons and key chips of Prompt 30.
+```
+
+---
+
+## Prompt 32 — Cashier billing: on-screen keypad inside the payment dialog (and every number dialog)
+
+No backend change. On a touch till the main keypad is under the dialog, so the cashier can't type "cash given".
+Each dialog that takes numbers gets its own keypad.
+
+```
+Change src/pages/CashierBilling.tsx and add src/components/till/NumPad.tsx. Keep everything else.
+
+1) src/components/till/NumPad.tsx — one keypad for all dialogs:
+     props: onKey(key: string), enterLabel?: string (default "Enter"), enterDisabled?: boolean, showDot = true
+     layout (4 columns, Enter as a full-width bar, same look as the main keypad):
+         7  8  9  ⌫
+         4  5  6  C
+         1  2  3  .
+         0  00 000
+         [  <enterLabel>  ]
+   - Every key: onMouseDown={(e) => e.preventDefault()} (the focused input keeps the focus) and onClick → onKey(k).
+   - Big touch keys (h-14, text-2xl); Enter is the primary colour.
+
+2) Shared typing rule (helper typeKey(value, key, opts)):
+   - digits / 00 / 000 append; "." only once and only when decimals are allowed; at most 2 decimals for money;
+     ⌫ removes the last character; C clears.
+   - The FIRST key after a field gets the focus replaces its whole value (calculator style), later keys append — so a
+     pre-filled amount (e.g. card amount in Mixed) can be overwritten by just typing.
+   - Number inputs used with the keypad get inputMode="none" so the Windows touch keyboard does not pop up over the
+     dialog (a physical keyboard still types normally).
+
+3) Payment dialog (Cash / Card / Mixed) becomes a two-column payment screen (max-w-3xl):
+     left:  Total (big) · Cash due · the fields of that mode (Cash given / Card amount / Card ref) · quick cash buttons
+            (Exact, 500, 1000, 2000, 5000 — h-12, bigger) · Change / Short (big, green / red)
+     right: <NumPad enterLabel="Complete" enterDisabled={busy || !canFinish} …>
+   - The keypad types into the field that has the focus (track it like the Other item dialog's otherField:
+     payField "cash" | "card" | "ref"; tapping a field selects it). Default: Cash → Cash given, Card → Card ref,
+     Mixed → Card amount.
+   - Card ref takes digits from the keypad too (approval numbers are digits); letters only from a keyboard.
+   - Keypad Enter = Complete, through the same finishSale with the double-sale guard from Prompt 28.
+   - Change updates live while typing.
+
+4) The same keypad (smaller, h-12 keys) in every other dialog that takes a number or PIN, typing into its focused field:
+     Supervisor PIN (no ".", Enter = OK) · No Sale (PIN; Enter = Open drawer) · Opening cash / Paid In / Paid Out
+     (Amount and PIN; Enter = Save) · Bill discount % (Enter = OK) · Suspend note is text — no keypad there.
+   The Other item dialog switches its own keypad to <NumPad> too.
+
+5) Layout check at 1366×768 and 1920×1080 on a touch screen: the whole payment dialog, keypad included, fits without
+   scrolling; no key smaller than 56 × 56 px.
+```

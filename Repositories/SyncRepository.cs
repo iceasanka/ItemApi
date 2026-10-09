@@ -136,6 +136,14 @@ namespace ItemApi.Repositories
             }
         }
 
+        // users for the till's offline sign-in (z_sp_GetCashiersForSync)
+        public async Task<SyncDownload<SyncCashier>> GetCashiersAsync(int terminalId, DateTime? since)
+        {
+            var serverTime = await _context.GetServerTimeAsync();
+            var rows = await _context.GetCashiersForSyncAsync(terminalId, since);
+            return new SyncDownload<SyncCashier> { ServerTime = serverTime, Rows = rows };
+        }
+
         public async Task<List<SyncInvoiceResult>> UploadInvoicesAsync(SyncInvoiceBatch batch)
         {
             try

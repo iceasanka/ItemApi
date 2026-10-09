@@ -49,6 +49,8 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `04_BackOffice_SalesDashboard.sql` | back office db (`easyway`), after `01` | sales dashboard procs (§6.9). Re-runnable. **Applied to easyway on 2026-10-06.** |
 | `05_BackOffice_Export.sql` | back office db (`easyway`) | export settings, log, scale snapshot (§6.10). Re-runnable. **Applied to easyway on 2026-10-08.** |
 | `06_BackOffice_SalesDoc.sql` | back office db (`easyway`) | customers, quotations, invoices, PDF settings (§6.11). Re-runnable. **Applied to easyway on 2026-10-08.** |
+| `08_Transfer_OldItems.sql` | back office db (`easyway`) | one-time copy of old `tb_Item` / `tb_ItemDet` into `z_tb_Item` / `z_tb_ItemDet` (§6.13). Re-runnable. **Run on easyway on 2026-10-09: 5 419 items copied.** |
+| `07_BackOffice_Users.sql` | back office db (`easyway`), after `01` | users, roles, cashier download for tills (§6.12). Re-runnable. **Applied to easyway on 2026-10-09.** `02` got a "Cashier sign-in" section at the end — applied to `z_pos_fnt_db` the same day. |
 
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
 Deploy order: back office scripts + ItemApi first, then each till (`02` + TillService) — ItemApi's `SyncItem` reads `CostPrice`.
@@ -441,6 +443,85 @@ Note: easyway is at compatibility level 100, so EF's `list.Contains(...)` (trans
 
 ---
 
+### 6.12 Sign-in — back office users and till cashiers (2026-10-09)
+UI: Lovable Prompts 23 (back office sign-in + Users page) and 24 (till sign-in). SQL: `07_BackOffice_Users.sql` + the
+"Cashier sign-in" section of `02`. Code: `AuthController`, `UsersController`, `UserRepository`, `Service/AuthTokenService.cs`,
+`Common/PasswordHasher.cs`; TillService `Auth/CashierSessions.cs`, `POST /auth/cashier`.
+
+**One user list** (`z_tb_User`), kept in the back office. Role decides where the user can sign in:
+| Role | Back office | Till | Users page |
+|---|---|---|---|
+| 1 Admin | ✓ | ✓ | ✓ |
+| 2 Back office | ✓ | — | — |
+| 3 Cashier | — | ✓ | — |
+
+- User name (`LoginName`): 3–20 letters / digits / `. _ -`, any case, **never changes** (it is the `CashierId` on till
+  bills). Users are never deleted — disabled (`Status 0`). There is always one active admin (can't disable / demote the
+  last one or yourself).
+- Password: 6+ characters for Admin / Back office, 4+ for cashiers. Stored as PBKDF2-SHA256 (100 000 rounds, salted);
+  SQL never sees a password. 5 wrong passwords → locked 5 minutes (an admin's password reset unlocks).
+- **First admin**: on a new system `GET api/Auth/Status` says `setupNeeded`; the sign-in page then offers
+  `POST api/Auth/Setup` (only while there is no active admin).
+
+**Back office** — `POST api/Auth/Login` → JWT (`Auth:TokenHours`, 12), sent as `Authorization: Bearer`. Every request
+re-checks the user: disabled, or role changed → 401 at once. `Auth:Enforce`:
+- `false` (default, while the web pages are switched over): routes stay open, `api/Users` is admin-only anyway.
+- `true`: every route needs an Admin / Back office token except sign-in (`api/Auth/Status|Setup|Login`), the till sync
+  routes (`api/Sync/Items|StockBalances|PriceLinks|Invoices|ZReport` POST|`Cashiers`) and the PDF logo. The live sales hub
+  takes the token as `?access_token=` (SignalR). PDFs must be fetched with the header (blob), not opened as a bare URL.
+- `Auth:JwtKey`: set 32+ random characters **on the server** (not in git). Empty = a new key each start (restart signs
+  everyone out).
+- The request log (`logs/`) never writes the body of `api/Auth/*` / `api/Users/*` or the hub query string.
+
+**Tills** — `GET api/Sync/Cashiers?terminalId=&since=` (header `X-Terminal-Key` = `Sync:TerminalKey`, same value in
+each TillService) sends every user changed since `since`; Admin / Cashier users that are active come with
+`canUseTill true` and their hash, the rest with no hash. TillService stores them in `zf_tb_Cashier` with the other
+downloads (5 min / Reload) and signs out anyone who lost access. `POST /auth/cashier` checks the password **on the
+till** — sign-in works offline. With `Till:RequireSignIn` the till refuses billing routes without `X-Cashier-Token`, and
+the `CashierId` it stores is always the signed-in cashier's. The supervisor PIN (`Till:SupervisorPin`) is unchanged.
+
+**API**
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/Auth/Status` | `{ setupNeeded, enforced }` |
+| POST | `api/Auth/Setup` | `{ loginName, userName, password }` → `{ token, expiresAt, user }`; 400 once an admin exists |
+| POST | `api/Auth/Login` | `{ loginName, password }` → `{ token, expiresAt, user: { userId, loginName, userName, roleId, roleName, ... } }`; 401 `{ message }` |
+| GET | `api/Auth/Me` | the signed-in user (401 → sign in again) |
+| POST | `api/Auth/ChangePassword` | `{ currentPassword, newPassword }` |
+| GET | `api/Users?text=&includeDisabled=` | admin only |
+| POST | `api/Users` | `{ loginName, userName, roleId, password, phone, email }` |
+| PUT | `api/Users/{id}` | `{ userName, roleId, status, phone, email }` (user name can't change) |
+| POST | `api/Users/{id}/ResetPassword` | `{ newPassword }` — also unlocks |
+| GET | `api/Sync/Cashiers?terminalId=&since=` | tills, `X-Terminal-Key` |
+
+**Turning it on** (in this order): run `07` (+ `02` on each till) → deploy ItemApi with `Auth:JwtKey` and
+`Sync:TerminalKey` → paste Lovable Prompt 23, open the web app, create the first admin, add users → set
+`Auth:Enforce: true` and restart ItemApi → each till: new TillService with the same `Sync:TerminalKey`, press Reload
+(cashiers come down) → paste Prompt 24 → `Till:RequireSignIn: true`, restart TillService.
+
+---
+
+### 6.13 Old item master → new (2026-10-09)
+`08_Transfer_OldItems.sql` → `EXEC dbo.z_sp_TransferOldItems @DryRun = 1` (report only, rolled back), then `@DryRun = 0`.
+The full mapping is in the script header. In short:
+- **RefCode** = old `Ref_Code` when filled (the 5-digit **scale code**, 194 items — 175 KGS + 19 others), else old
+  `Item_Code`. So the scale export (§6.10) works, and cashiers type a scale item's scale code at the till.
+- **Retail price** = `ERet_Price` (what the old tills charged); `PRet_Price` is ignored. Wholesale / cost / average
+  cost / sale lock / reorder / unit (by code) copied. Quantity prices copied only when they pass the Item Entry rules.
+- **Not linked**: category, sub-category, supplier (left NULL by choice). Every item's old codes — item code, ref code,
+  category, sub-category, supplier, unit — are in **`z_tb_ItemOldCode`** (`OldItemCode` → `ItemId`), so links can be
+  added later without the old tables.
+- **Not copied**: stock (load an opening adjustment), price links (`tb_PriceLink`), sales history.
+- Re-run: already copied items are left alone; `@UpdateExisting = 1` refreshes them from the old tables (overwrites
+  edits made in the new system).
+
+Run on easyway 2026-10-09: 5 419 copied, 0 skipped; checked retail and cost prices of every item against the old
+tables (0 differences). Units LTR / PKT are not in `z_tb_Unit`, so 6 items have no unit. Old item 3256325 (SERA PEPPER
+POWDER) has a code that is also the barcode of 4555655957 (CHAMINDA NOODLES) — typing 3256325 at the till finds the
+noodles; scan its own barcode instead.
+
+---
+
 ## 7. Status values
 | Where | Values |
 |---|---|
@@ -457,11 +538,16 @@ Note: easyway is at compatibility level 100, so EF's `list.Contains(...)` (trans
 | `z_tb_ExportLog.Status` | 1 written, 9 failed |
 | `z_tb_SalesDoc` `DocType` / `Status` | 1 quotation, 2 invoice / 1 open, 2 invoiced (quotation), 9 cancelled |
 | `z_tb_Customer.Status` | 1 active, 0 deleted |
+| `z_tb_User` `RoleId` / `Status` | 1 Admin, 2 Back office, 3 Cashier / 1 active, 0 disabled |
 
 ---
 
 ## 8. Known gaps / TODO
-- [ ] **Security:** `api/Sync/*` is open like the rest of the API. Add a per-terminal API key header before going live.
+- [ ] **Security:** the till sync routes (`api/Sync/Items|StockBalances|PriceLinks|Invoices|ZReport`) are still open
+  (`[AllowAnonymous]`, tills have no user token). Only `api/Sync/Cashiers` needs the shared `Sync:TerminalKey`. Give them
+  the same key (or a per-terminal key) before going live. The rest of the API is behind sign-in once `Auth:Enforce` is on (§6.12).
+- [ ] **Sign-in:** the `userId` fields that pages send in request bodies are still trusted as sent; with sign-in on, the
+  server could take the user from the token instead.
 - [ ] **Till app:** the `zf_` database is ready, but the cashier program (billing screen + background sync job) still has to be built. It needs a local service/app that talks to the `zf_` db — a pure web page can't work offline against SQL.
 - [ ] **Item delete:** `DeleteItemzAsync` hard-deletes. Tills never hear about deletes, and an item with stock history loses its name on reports. Prefer `Status = 0` (inactive) — tills already get `Status` and `zf_sp_FindItem` ignores inactive items.
 - [ ] **Location code:** `z_tb_System.LocaId` is `'01'` but everything else uses `LocationId = 1`. `z_sp_SaveStockAdjustment` maps `1 → '01'`. Existing GRN/PRN code still hard-codes `"01"`.

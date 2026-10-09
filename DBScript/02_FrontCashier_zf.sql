@@ -1252,3 +1252,85 @@ BEGIN
     FROM dbo.zf_tb_CashMovement WHERE ZNo = @ZNo ORDER BY MoveId;
 END
 GO
+
+/* ---------------------------------------------------------------------------
+   Cashier sign-in (2026-10-09, Docs/StockSystem.md §6.12)
+   Users downloaded from the back office (api/Sync/Cashiers, needs Sync:TerminalKey) so a cashier can sign in while the
+   till is offline. TillService checks the password against PasswordHash (PBKDF2, made by ItemApi); SQL never sees a
+   password. CanUseTill 0 (disabled, or role "Back office") → sign-in refused, no hash kept. Self-contained section:
+   its own type and procs are dropped and recreated here.
+   --------------------------------------------------------------------------- */
+IF OBJECT_ID('dbo.zf_tb_Cashier', 'U') IS NULL
+CREATE TABLE dbo.zf_tb_Cashier (
+    UserId        INT           NOT NULL CONSTRAINT PK_zf_tb_Cashier PRIMARY KEY,
+    LoginName     VARCHAR(50)   NOT NULL,
+    UserName      NVARCHAR(100) NULL,
+    RoleId        INT           NULL,             -- 1 Admin, 3 Cashier (2 Back office never has CanUseTill)
+    CanUseTill    BIT           NOT NULL,
+    PasswordHash  VARCHAR(255)  NULL,
+    UpdatedDate   DATETIME      NULL              -- back office time of the last change
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_zf_tb_Cashier_Login')
+    CREATE UNIQUE INDEX UX_zf_tb_Cashier_Login ON dbo.zf_tb_Cashier (LoginName);
+GO
+IF COL_LENGTH('dbo.zf_tb_Config', 'LastCashierSyncAt') IS NULL
+    ALTER TABLE dbo.zf_tb_Config ADD LastCashierSyncAt DATETIME NULL;   -- SERVER time of the last cashier download
+GO
+
+IF OBJECT_ID('dbo.zf_sp_UpsertCashiers', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_UpsertCashiers;
+IF OBJECT_ID('dbo.zf_sp_GetCashier', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetCashier;
+GO
+IF TYPE_ID('dbo.zf_tt_Cashier') IS NOT NULL DROP TYPE dbo.zf_tt_Cashier;
+GO
+CREATE TYPE dbo.zf_tt_Cashier AS TABLE (
+    UserId        INT           NOT NULL PRIMARY KEY,
+    LoginName     VARCHAR(50)   NOT NULL,
+    UserName      NVARCHAR(100) NULL,
+    RoleId        INT           NULL,
+    CanUseTill    BIT           NOT NULL,
+    PasswordHash  VARCHAR(255)  NULL,
+    UpdatedDate   DATETIME      NULL
+);
+GO
+
+CREATE PROCEDURE dbo.zf_sp_UpsertCashiers
+    @Rows        dbo.zf_tt_Cashier READONLY,
+    @ServerTime  DATETIME
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    BEGIN TRAN;
+        -- a login name that moved to another user id (rare) — drop the old row first so the unique index holds
+        DELETE t FROM dbo.zf_tb_Cashier t
+        JOIN @Rows s ON s.LoginName = t.LoginName AND s.UserId <> t.UserId;
+
+        UPDATE t SET LoginName = s.LoginName, UserName = s.UserName, RoleId = s.RoleId, CanUseTill = s.CanUseTill,
+                     PasswordHash = CASE WHEN s.CanUseTill = 1 THEN s.PasswordHash END, UpdatedDate = s.UpdatedDate
+        FROM dbo.zf_tb_Cashier t JOIN @Rows s ON s.UserId = t.UserId;
+
+        INSERT dbo.zf_tb_Cashier (UserId, LoginName, UserName, RoleId, CanUseTill, PasswordHash, UpdatedDate)
+        SELECT s.UserId, s.LoginName, s.UserName, s.RoleId, s.CanUseTill,
+               CASE WHEN s.CanUseTill = 1 THEN s.PasswordHash END, s.UpdatedDate
+        FROM @Rows s
+        WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Cashier t WHERE t.UserId = s.UserId);
+
+        UPDATE dbo.zf_tb_Config SET LastCashierSyncAt = @ServerTime WHERE Id = 1;
+    COMMIT;
+END
+GO
+
+-- One user by login name (any case), for sign-in. Second result set: how many users may sign in on this till
+-- (0 = the cashier list was never downloaded — connect to the back office and press Reload).
+CREATE PROCEDURE dbo.zf_sp_GetCashier
+    @LoginName VARCHAR(50)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT UserId, LoginName, UserName, RoleId, CanUseTill, PasswordHash
+    FROM dbo.zf_tb_Cashier WHERE LoginName = LTRIM(RTRIM(@LoginName));
+
+    SELECT COUNT(*) AS TillUsers FROM dbo.zf_tb_Cashier WHERE CanUseTill = 1;
+END
+GO

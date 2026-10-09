@@ -43,6 +43,7 @@ namespace ItemApi.Data
             ConfigureStockLedger(modelBuilder);
             ConfigureExport(modelBuilder);
             ConfigureSalesDoc(modelBuilder);
+            ConfigureUser(modelBuilder);
         }
 
         // Implemented in the matching Data/AppDbContext.<Area>.cs file.
@@ -69,5 +70,6 @@ namespace ItemApi.Data
         partial void ConfigureStockLedger(ModelBuilder modelBuilder);
         partial void ConfigureExport(ModelBuilder modelBuilder);
         partial void ConfigureSalesDoc(ModelBuilder modelBuilder);
+        partial void ConfigureUser(ModelBuilder modelBuilder);
     }
 }

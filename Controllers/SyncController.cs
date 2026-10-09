@@ -1,6 +1,9 @@
 using ItemApi.Hubs;
 using ItemApi.Interface;
 using ItemApi.Models;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.SqlClient;
@@ -10,7 +13,8 @@ namespace ItemApi.Controllers
 {
     // Cashier till sync + Z report reconcile. Called by the till app (DOWN: items, stock; UP: invoices, Z)
     // and by the back office UI (terminals, Z report screens). See Docs/StockSystem.md.
-    // TODO: these endpoints are open like the rest of the API — add a per-terminal API key before going live.
+    // The till-called routes are [AllowAnonymous] (tills have no user token). Cashiers needs the shared terminal key;
+    // TODO: the other till routes are still open — add a per-terminal API key before going live.
     [Route("api/[controller]")]
     [ApiController]
     public class SyncController : ControllerBase
@@ -18,12 +22,16 @@ namespace ItemApi.Controllers
         private readonly ISyncRepository _repository;
         private readonly IHubContext<SalesHub> _salesHub;
         private readonly bool _livePush;
+        private readonly string? _terminalKey;
+
+        public const string TerminalKeyHeader = "X-Terminal-Key";
 
         public SyncController(ISyncRepository repository, IHubContext<SalesHub> salesHub, IConfiguration config)
         {
             _repository = repository;
             _salesHub = salesHub;
             _livePush = config.GetValue("Dashboard:LivePush", true);
+            _terminalKey = config["Sync:TerminalKey"];
         }
 
         // ─── Terminals (back office) ─────────────────────────────────────────────
@@ -63,6 +71,7 @@ namespace ItemApi.Controllers
         // ─── Download (till) ─────────────────────────────────────────────────────
 
         // GET: api/Sync/Items?terminalId=1&since=2026-09-30T10:00:00   (no since = everything)
+        [AllowAnonymous]
         [HttpGet("Items")]
         public async Task<IActionResult> Items([FromQuery] int terminalId, [FromQuery] DateTime? since)
         {
@@ -81,6 +90,7 @@ namespace ItemApi.Controllers
         }
 
         // GET: api/Sync/StockBalances?terminalId=1&since=...
+        [AllowAnonymous]
         [HttpGet("StockBalances")]
         public async Task<IActionResult> StockBalances([FromQuery] int terminalId, [FromQuery] DateTime? since)
         {
@@ -99,6 +109,7 @@ namespace ItemApi.Controllers
         }
 
         // GET: api/Sync/PriceLinks?terminalId=1&since=...   (deleted links come back with status 0)
+        [AllowAnonymous]
         [HttpGet("PriceLinks")]
         public async Task<IActionResult> PriceLinks([FromQuery] int terminalId, [FromQuery] DateTime? since)
         {
@@ -116,9 +127,37 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/Sync/Cashiers?terminalId=1&since=...   header X-Terminal-Key = Sync:TerminalKey
+        // Users for the till's offline sign-in, WITH their password hashes — so unlike the other till downloads it needs
+        // the shared terminal key (same value in each TillService's Sync:TerminalKey). No key set here → refused.
+        [AllowAnonymous]
+        [HttpGet("Cashiers")]
+        public async Task<IActionResult> Cashiers([FromQuery] int terminalId, [FromQuery] DateTime? since)
+        {
+            if (string.IsNullOrEmpty(_terminalKey))
+                return StatusCode(403, new { message = "Set Sync:TerminalKey on the back office API (and the same key on each till)." });
+            var sent = Request.Headers[TerminalKeyHeader].ToString();
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(sent), Encoding.UTF8.GetBytes(_terminalKey)))
+                return StatusCode(403, new { message = "Wrong terminal key (Sync:TerminalKey)." });
+
+            try
+            {
+                return Ok(await _repository.GetCashiersAsync(terminalId, since));
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // ─── Upload (till) ───────────────────────────────────────────────────────
 
         // POST: api/Sync/Invoices — send up to ~50 at a time; an empty list is a heartbeat
+        [AllowAnonymous]
         [HttpPost("Invoices")]
         public async Task<IActionResult> Invoices([FromBody] SyncInvoiceBatch batch)
         {
@@ -156,6 +195,7 @@ namespace ItemApi.Controllers
         }
 
         // POST: api/Sync/ZReport — Status 3 reconciled; 4 mismatch → resend MissingInvoiceNos, then submit again
+        [AllowAnonymous]
         [HttpPost("ZReport")]
         public async Task<IActionResult> ZReport([FromBody] ZReportSubmit z)
         {

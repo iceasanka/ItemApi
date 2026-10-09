@@ -29,6 +29,13 @@
 
         private async Task<string> FormatRequest(HttpRequest request)
         {
+            // passwords (sign-in, users) and tokens (SignalR sends ?access_token=) never go to the log
+            if (request.Path.StartsWithSegments("/api/Auth", StringComparison.OrdinalIgnoreCase) ||
+                request.Path.StartsWithSegments("/api/Users", StringComparison.OrdinalIgnoreCase))
+                return $"{request.Scheme} {request.Host}{request.Path} {request.QueryString} [body not logged]";
+            if (request.Path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase))
+                return $"{request.Scheme} {request.Host}{request.Path} [query not logged]";
+
             request.EnableBuffering();
             var body = request.Body;
 

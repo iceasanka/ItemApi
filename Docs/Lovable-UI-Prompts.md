@@ -1155,3 +1155,329 @@ component with docType 1 or 2 — plus the editor (/quotations/new, /quotations/
    - Cancel dialog: Reason (required, max 200) → POST /Cancel → toast, reload. Cancelling an invoice made from a
      quotation tells the user: "QT… is open again and can be invoiced again."
 ```
+
+---
+
+## Prompt 23 — Back office sign-in, Users page, token on every call
+
+Backend: `AuthController` (`api/Auth`), `UsersController` (`api/Users`), StockSystem.md §6.12. The API only REQUIRES the
+token after `Auth:Enforce` is turned on — build this first, then turn it on. The till billing page (/billing) is NOT part
+of this (it signs cashiers in at the till — Prompt 24).
+
+```
+Add sign-in to the back office app. Don't change what the existing pages do.
+
+1) src/services/auth.ts
+   - Keep { token, expiresAt, user: { userId, loginName, userName, roleId, roleName } } in localStorage "auth".
+     Also set localStorage "userId" = user.loginName and "userName" = user.userName (GRN / Goods Return already read
+     "userId"); remove all of these on sign out.
+   - getToken(), getUser(), isAdmin() (roleId 1), signOut(), and an "auth changed" event so the layout re-renders.
+   - API (use createApiClient("Auth")):
+       GET  /Auth/Status → { setupNeeded, enforced }
+       POST /Auth/Setup { loginName, userName, password } → same answer as Login
+       POST /Auth/Login { loginName, password } → { token, expiresAt, user }   (401 { message } when refused)
+       GET  /Auth/Me → user   (401 → signed out)
+       POST /Auth/ChangePassword { currentPassword, newPassword } → { message }
+
+2) src/services/apiClient.ts — every client from createApiClient:
+   - request interceptor: Authorization: Bearer <token> when signed in;
+   - response interceptor: 401 from any route except /Auth/Login and /Auth/Setup → signOut() and go to
+     /login?next=<current path> (toast "Please sign in again"). Keep the existing error handling otherwise.
+   - TodayDashboard SignalR: .withUrl(salesHubUrl, { ..., accessTokenFactory: () => getToken() ?? "" }).
+   - salesDocApi openPdf / downloadPdf: fetch the PDF through the api client with responseType "blob" (so the token is
+     sent), then open / download an object URL. Don't open the bare URL any more. The logo URL stays as it is (public).
+
+3) /login page (outside AppLayout, centred card, shop name on top):
+   - On load GET /Auth/Status. setupNeeded → "Create the first admin" form: Name, User name, Password, Confirm password
+     (6+ characters) → POST /Auth/Setup → signed in → go to "/".
+   - Else the sign-in form: User name, Password (show/hide eye), "Sign in" (Enter). 401 → show the message under the
+     form ("Wrong user name or password.", "Too many wrong passwords. Try again after 11:07.", "Cashiers sign in at the
+     till…"), clear the password, keep the user name. Then go to ?next or "/".
+   - Already signed in → go to "/".
+
+4) Guard: wrap the AppLayout route group (NOT /billing, NOT /login) in <RequireAuth>: no token or expired → /login?next=.
+   On app start, when there is a token, call GET /Auth/Me once; 401 → sign out.
+
+5) Top bar (AppLayout): user's name + role chip, menu: "Change password" (dialog: current, new, confirm; 6+ chars →
+   POST /Auth/ChangePassword → green toast) and "Sign out".
+
+6) Users page (/users, sidebar group "Settings", shown only to admins; non-admins opening it see "Admins only"):
+   API (createApiClient("Users")):
+     GET  /Users?text=&includeDisabled= → [{ userId, loginName, userName, roleId, roleName, status, phone, email,
+                                             lastLoginAt, isLocked, createdDate }]
+     POST /Users { loginName, userName, roleId, password, phone, email } → { message, data }
+     PUT  /Users/{id} { userName, roleId, status, phone, email } → { message, data }
+     POST /Users/{id}/ResetPassword { newPassword } → { message }
+     400 { message } → red toast / under the field.
+   - Search box + "Show disabled" switch. Table: Name, User name, Role chip (Admin purple, Back office blue, Cashier
+     green), Phone, Last sign-in (dd/MM/yyyy HH:mm or "never"), Status (Active / Disabled grey / "Locked" orange when
+     isLocked), actions: Edit, Reset password, Disable / Enable.
+   - "New user" dialog: Name, User name (3–20 letters/digits . _ -, no spaces; hint "Can't be changed later — it is
+     printed on bills"), Role (radio with one-line meaning: Admin = everything + users; Back office = back office only;
+     Cashier = tills only), Password + Confirm (hint: 6+ characters, cashiers 4+), Phone, Email.
+   - Edit dialog: same without User name / password. Changing a Cashier to Admin / Back office shows a hint:
+     "Back office passwords need 6+ characters — reset the password if it is shorter."
+   - Reset password dialog: New password + Confirm → also unlocks. Disable → confirm "Disable <name>? They are signed out
+     now; tills stop accepting them within 5 minutes."
+   - Footer note: "Cashier changes reach the tills within 5 minutes (or press Reload on the till)."
+```
+
+---
+
+## Prompt 24 — Till billing page: cashier sign-in screen
+
+Backend: TillService `POST /auth/cashier`, `GET /auth/cashier`, `DELETE /auth/cashier`, header `X-Cashier-Token`
+(TillService README). Checked on the till — works offline. Cashiers are made in the back office Users page (Prompt 23).
+TillService only REQUIRES it after `Till:RequireSignIn` is turned on.
+
+```
+Change the cashier billing page (src/pages/CashierBilling.tsx) and src/services/tillLocalApi.ts. Keep everything else.
+
+1) tillLocalApi.ts
+   - cashierSignIn(loginName, password) → POST /auth/cashier → { token, expiresAt, userId, loginName, userName, roleId }
+     (401 { message } refused; 400 { message } "No cashier accounts on this till yet…")
+   - cashierMe() → GET /auth/cashier (401 = not signed in);  cashierSignOut() → DELETE /auth/cashier
+   - Keep the session in sessionStorage "till.cashier" (token + names) so a page refresh keeps the cashier signed in;
+     the browser closing signs out. Every call sends X-Cashier-Token when there is one (next to X-Supervisor-Token).
+   - Any 401 with { signInRequired: true } → clear the session and show the sign-in screen (keep the bill on screen
+     in memory; after sign-in the same bill is still there).
+
+2) Sign-in screen (full screen over the billing page, touch friendly, big inputs and buttons):
+   - Shop / till code on top (from GET /sync/status terminalCode), "Cashier sign in".
+   - User name, Password (numeric keypad on screen too — cashier passwords are often 4 digits), "Sign in" (Enter).
+   - 401 / 400 → the message in red under the form, clear the password.
+   - Status line at the bottom: Online/Offline dot from /sync/status and a "Reload" button (POST /sync/now — works before
+     sign-in, so a new till can download its cashiers).
+   - On load: if sessionStorage has a token → GET /auth/cashier; ok → straight to billing, 401 → show this screen.
+   - While TillService has sign-in turned off (calls work without a token), still show this screen; a "Skip" link is
+     NOT offered — cashiers always sign in.
+
+3) Billing page with a cashier signed in:
+   - Status bar "Cashier: <userName>" from the session (replace localStorage "userId"/"userName"). Send cashierId =
+     session.loginName where the page sent it before (the till uses the signed-in cashier anyway).
+   - "Sign out" button (status bar, icon LogOut, shortcut via the shortcut-key table: action "signOut", default Ctrl+L):
+     if the bill has lines → "Suspend the bill or finish it before signing out." and stop; else confirm → cashierSignOut()
+     → clear supervisor token too → sign-in screen.
+   - Day end: after the Z is closed, sign the cashier out (next shift signs in).
+```
+
+---
+
+## Prompt 25 — Cashier billing: quantity before the scan ("5*" then scan)
+
+No backend change — the till already takes any quantity on a line. Today 5 of an item = scan → Qty → 5 → Enter.
+After this: type `5*` and scan (the scanner adds the barcode and Enter) → one line with qty 5.
+
+```
+Change src/pages/CashierBilling.tsx and src/lib/tillShortcuts.ts. Keep everything else (the Qty button still works).
+
+1) Read a quantity in front of the code — in submitInput, scan mode only:
+     const m = v.match(/^(\d+(?:\.\d{1,3})?)\s*\*\s*(.*)$/);
+   - m → qty = Number(m[1]), code = m[2].trim(). No "*" → qty 1 exactly as today.
+   - qty <= 0 → toast.error("Quantity must be more than 0").
+   - code empty (cashier typed "5*" and pressed Enter) → put "5*" back in the box and toast.info("Now scan the item").
+   - text starts with "*" (e.g. "*4252") → toast.error("Type the quantity before *, e.g. 5*").
+   - qty > 999 (usually a barcode scanned before the "*") → confirm dialog "Add <qty> × <item name>?" after the item
+     is found, with Cancel focused (Enter must NOT add it by accident).
+   - 1.25* works for loose / weighed items (up to 3 decimals).
+
+2) Carry the quantity through every add path (it is 1 everywhere today):
+   addItem(code, qty = 1) → processItem(item, qty) → the price link picker state keeps qty → addLine(item, opt, qty).
+   - New line: qty = qty, unitPrice = linePrice(item, qty, link, type, 0) — so a quantity price applies at once
+     (5* of an item with "buy 3+ at 218" is priced 218).
+   - Existing line (same merge rule: same itemId + price link + price type): qty = l.qty + qty, re-priced with linePrice.
+   - Name search: "5*sugar" with several results → the search dialog remembers qty; the picked row is added with it.
+     (The Search button dialog adds 1.)
+   - Price link picker: chosen price + qty; Esc cancels and adds nothing.
+   - Open price item: the line gets qty, then "Enter the price" as today. Sale locked items: refused as today.
+   - Refund mode: same (refund line with that qty). "Other item": unchanged (it has its own Qty field).
+   - After adding, the new / merged line is selected and the scan box is empty and focused.
+
+3) Show that a quantity is waiting: while the scan box text matches /^\d+(\.\d{1,3})?\s*\*/ show a blue chip at the right
+   end of the box "× 5". Placeholder: "Scan / enter code   ·   5* then scan = 5 pcs".
+
+4) On-screen keypad (touch): add a "×" key that types "*". Layout:
+     7 8 9 ⌫
+     4 5 6 C
+     1 2 3 ×
+     0 00 . Enter        (Enter is one row high now)
+   On the physical keyboard "*" (Num * or Shift+8) just types into the box.
+
+5) tillShortcuts.ts: "*" is the quantity key now.
+   - validKey: refuse NumpadMultiply (with or without modifiers) — "Num * is the quantity key (5* then scan)".
+   - getShortcuts(): drop any saved NumpadMultiply assignment (an older saved map may have one).
+   - The global key listener never treats "*" as a shortcut while the scan box has focus.
+```
+
+---
+
+## Prompt 26 — Cashier billing: "Other item" dialog — description "Other", price first, Enter adds
+
+No backend change.
+
+```
+Change the "Other item" dialog in src/pages/CashierBilling.tsx only.
+
+1) openOther(): description starts as "Other" (not empty), qty "1", and the field the keypad types into
+   (otherField) starts as "price":  setOtherField("price"); setOther({ descrip: "Other", price: "", qty: "1" }).
+
+2) Focus: the Price input gets the focus when the dialog opens (move autoFocus from Description to Price).
+   Description: select all its text when it gets focus (onFocus → e.target.select()), so the cashier can tap it and
+   type a different name straight over "Other".
+
+3) Enter adds the line from ANY field: wrap the fields in <form onSubmit={(e) => { e.preventDefault(); addOther(); }}>
+   and make "Add" the form's submit button (type="submit", the default button); "Cancel" is type="button".
+   Remove the Qty-only onKeyDown. Esc still cancels.
+   - Price empty or 0 → toast "Enter the price", keep the dialog open, focus Price.
+   - Description cleared → toast "Enter a description", focus Description. (Same checks addOther already has.)
+
+4) On-screen keypad in the dialog: add an "Enter" key (same as the Add button) so a touch till can do
+   Other item → type price on the keypad → Enter. Layout: 7 8 9 ⌫ / 4 5 6 C / 1 2 3 . / 0 00 Enter (Enter 2 wide).
+
+Fast path after this: F9 → type the price → Enter → the line "Other", qty 1, is on the bill and the scan box is focused.
+```
+
+---
+
+## Prompt 27 — Cashier billing: focus fixes, arrow keys on the bill, Card / Mixed keys, bill copy Space
+
+No backend change. Fixes from using the till.
+
+```
+Change src/pages/CashierBilling.tsx and src/lib/tillShortcuts.ts. Keep everything else.
+
+1) Focus that lands in the right box — the root causes, fix them once for every dialog:
+   - Radix Dialog moves focus to its own first element when it opens, so `autoFocus` on an Input is not reliable.
+     For EVERY dialog that has a "first field", give that field a ref and use
+       <DialogContent onOpenAutoFocus={(e) => { e.preventDefault(); ref.current?.focus(); ref.current?.select(); }}>
+     First fields: Supervisor PIN dialog → the PIN input (used for refund, wholesale, profit, discount, cancel suspended,
+     change keys); No Sale → PIN; Opening cash / Paid In / Paid Out → Amount; Bill discount → %; Suspend → note;
+     Bill copy → invoice no filter; Other item → Price.
+   - focusScan() must do nothing while any dialog is open (use the existing anyDialog flag), so a late focusScan from
+     the action that opened the dialog can't pull the focus back to the scan box.
+   - The "Cash" dropdown menu: <DropdownMenuContent onCloseAutoFocus={(e) => e.preventDefault()}> so closing the menu
+     does not move focus to its trigger button after the Paid In / Paid Out / Opening cash dialog has opened.
+   - Same for the "No opening cash" chip that opens the Opening cash dialog.
+
+2) Opening cash / Paid In / Paid Out dialog: Enter saves from anywhere in the dialog.
+   - Wrap the fields in <form onSubmit={(e) => { e.preventDefault(); saveCash(); }}>; the "Save" button becomes the
+     submit button (type="submit", primary, text "Save (Enter)"); "Cancel"/"Later" and the reason chips are type="button".
+     Remove the INPUT-only onKeyDown. Esc cancels.
+   - Amount empty / 0 → toast "Enter the amount" and focus Amount. PIN missing where needed → toast "Enter the supervisor
+     PIN" and focus PIN. Wrong PIN (401) → clear the PIN and focus it.
+
+3) Void line keeps a sensible selection: after removing the selected line select the line that was ABOVE it (or the new
+   first line when the top line was voided; nothing when the bill is empty), scroll it into view, and focus the scan box.
+   Same after "Void bill" of the last line → nothing selected, scan box focused.
+
+4) Arrow keys move through the bill (main screen, no dialog open, focus in the scan box or nowhere):
+   - ↑ / ↓ select the previous / next line (stop at the ends, no wrap); Home / End = first / last line.
+   - With nothing selected, ↑ selects the last line and ↓ the first.
+   - Scroll the selected line into view (scrollIntoView({ block: "nearest" })). Keep the focus in the scan box, so
+     Qty / Price / Void / W-R then work on that line and scanning still works.
+   - Do not handle the arrows when a dialog is open (the dialogs already use them).
+
+5) Shortcut keys for Card and Mixed:
+   - tillShortcuts.ts: add actions "payCard" (default Shift+F4, label "Card", "Pay by card") and "payMixed" (default
+     Ctrl+M, label "Mixed", "Cash + card"). Rename the label of "pay" to "Cash" ("Pay in cash"). A saved map from before
+     gets the new defaults when those keys are free (existing rule).
+   - runAction: "payCard" / "payMixed" do the same checks as "pay" (no lines, discount too high) and then openPay("card")
+     / openPay("mixed"). The Card and Mixed buttons call runAction too and show their key chips like Cash (F4).
+
+6) Bill copy dialog — Space previews, tap previews:
+   - Space anywhere in the dialog (also while the invoice-no box has the focus — invoice numbers never contain spaces)
+     → e.preventDefault() and preview the highlighted bill. Replace the `tag !== "INPUT"` condition.
+   - Tapping a row: highlight it and preview it (keep), and put the focus back in the invoice-no box so ↑ / ↓ / Enter /
+     Space keep working after a tap. The preview panel scrolls to the top for each new bill.
+```
+
+---
+
+## Prompt 28 — Cashier billing: payment dialog Enter = Complete (no double sale), one-key Card / Mixed, messages on top
+
+No backend change.
+
+```
+Change src/pages/CashierBilling.tsx, src/lib/tillShortcuts.ts and (for the message position) src/App.tsx. Keep everything else.
+
+1) Payment dialog (Cash / Card / Mixed): Enter completes the sale from ANY field.
+   - Wrap the fields in <form onSubmit={(e) => { e.preventDefault(); finishSale(); }}>; "Complete" becomes the submit
+     button (type="submit", primary, text "Complete (Enter)"); Cancel and the Exact / 500 / 1000 … chips are type="button".
+     Remove the onKeyDown on the cash input. Esc cancels (not while saving).
+   - Focus when the dialog opens (onOpenAutoFocus → preventDefault + ref.focus() + select(), like Prompt 27):
+     Cash → "Cash given"; Card → "Card ref / approval no" (optional — Enter right away completes); Mixed → "Card amount".
+   - NEVER SAVE A SALE TWICE: finishSale must stop at once when a save is already running. Use a ref, not only the busy
+     state (state updates too late for a fast double Enter / held key):
+       const savingRef = useRef(false);
+       const finishSale = async () => {
+         if (savingRef.current) return;
+         if (!canFinish) { toast.error(...); focus the cash input; return; }
+         savingRef.current = true; setBusy(true);
+         try { ...as today... } finally { savingRef.current = false; setBusy(false); }
+       };
+     Also ignore e.repeat on Enter in this dialog.
+
+2) One-key shortcuts for Card and Mixed (tillShortcuts.ts):
+   - payCard default "NumpadAdd" (shown "Num +"), payMixed default "NumpadSubtract" (shown "Num −").
+     Cash stays F4. A saved map that still has the old defaults (payCard Shift+F4, payMixed Ctrl+M) is moved to the new
+     ones; a key the cashier set themselves is kept.
+   - "Num +" / "Num −" only act as shortcuts on the main screen (no dialog open), like the other keys; inside a dialog
+     they type normally.
+   - The Card / Mixed buttons show the new chips.
+
+3) Messages (toasts) on the till: put them where the cashier looks, not over the status bar / Reload area.
+   - On /billing only: Sonner position "top-center", offset so the first message sits just under the scan box, over the
+     bill lines — never covering the scan box, the Total or the pay buttons. Other pages keep bottom-right.
+     (Move <Sonner /> inside <BrowserRouter> in App.tsx and pick the position from useLocation().pathname.)
+   - On /billing: bigger text (text-base, title font-semibold), richColors (error red, warning amber, success green),
+     at most 3 visible (visibleToasts={3}), durations: success 2 s, info / warning 3 s, error 5 s.
+   - Messages that need an action stay until closed, as today (e.g. "Bill saved but NOT printed — Print again").
+```
+
+---
+
+## Prompt 29 — Cashier billing: messages in the bottom bar, safer keys, scan box focused, No Sale reason
+
+No backend change. Replaces the toast position from Prompt 28 on the till.
+
+```
+Change src/pages/CashierBilling.tsx, src/lib/tillShortcuts.ts, src/components/till/* and src/App.tsx. Keep everything else.
+
+1) Messages in the bottom bar (middle), not floating toasts — on /billing only:
+   - New src/lib/tillMessages.ts: a tiny store (useSyncExternalStore) with the same calls the page uses today:
+       tillToast.success(text, opts?) / .error / .info / .warning / .dismiss()
+     opts: { duration?: number (ms; Infinity = until closed), action?: { label: string; onClick: () => void } }.
+     Keep the latest message plus the last 10 (history).
+   - In CashierBilling.tsx and every till component it uses (ShortcutSettingsDialog, sign-in screen, …):
+       import { tillToast as toast } from "@/lib/tillMessages";   (instead of sonner) — so no other code changes.
+   - Show the message in the MIDDLE of the bottom status bar (between "bills waiting to upload" and "Cashier: …"):
+       icon + text, text-base font-medium, one line (ellipsis, full text in title); colours: error = red background
+       with white text, warning = amber, success = green, info = blue / muted. An action → a small button after the text
+       (e.g. "Print again"); an × closes it.
+     Durations: success 3 s, info / warning 5 s, error 8 s, with action → until closed. A new message replaces the old.
+     Errors also play a short beep (Web Audio, 150 ms) so the cashier notices without looking.
+   - Clicking the message area opens a small popover with the last 10 messages and their times.
+   - The bottom bar must stay readable while a dialog is open: give it a z-index above the dialog overlay
+     (e.g. relative z-[60] with the page background), so "No receipt printer is set on this till…" from the Bill copy
+     dialog shows in the bar and is not dimmed.
+   - App.tsx: remove the /billing-only Sonner settings from Prompt 28 — on /billing render no Sonner at all; other pages
+     keep the normal bottom-right Sonner.
+
+2) Keys that can't reload the page / single keys (tillShortcuts.ts):
+   - Refund: default "NumpadDivide" (shown "Num /") instead of Ctrl+R (Ctrl+R is the browser's reload).
+   - No Sale: default "Insert" instead of Ctrl+D.
+   - A saved map that still has the old defaults (refund Ctrl+R, noSale Ctrl+D) is moved to the new ones; keys the cashier
+     set themselves are kept.
+   - validKey: refuse Ctrl+R, Ctrl+Shift+R, Ctrl+F5, Shift+F5 ("The browser reloads the page with this key").
+   - Safety on /billing, ALWAYS (also while a dialog is open or the global shortcuts are off): a window keydown listener
+     that calls preventDefault() for F5, Ctrl+R, Ctrl+Shift+R, Ctrl+F5 and Shift+F5 (F5 still runs the Reload action
+     when no dialog is open). And a beforeunload handler that asks the browser to confirm leaving while the bill has lines.
+
+3) Scan box focused when the page loads:
+   - Focus the scan box on mount, right after a successful cashier sign-in, and when the sign-in screen closes.
+   - When the browser window / tab gets focus back (window "focus" event) and no dialog is open → focus the scan box.
+   - focusScan() keeps the "no dialog open" rule from Prompt 27.
+
+4) No Sale dialog: the reason starts as "Change" (that chip selected, the text box filled); the PIN box has the focus
+   (Prompt 27). Enter = Open drawer from any field (form submit, like the cash dialogs).
+```

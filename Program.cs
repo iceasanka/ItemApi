@@ -8,6 +8,8 @@ using Serilog;
 using ItemApi.Utility;
 using ItemApi.Interface;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +37,50 @@ builder.Services.AddDbContext<PosDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection")));
 
 builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSettings"));
+
+// ─── Sign-in (Docs/StockSystem.md §6.12) ───
+// Tokens from api/Auth/Login, sent as "Authorization: Bearer <token>". Auth:Enforce = true → every route needs a signed-in
+// Admin / Back office user except [AllowAnonymous] ones (sign-in, till sync, logo). false = routes stay open while the
+// web pages are switched over; api/Users is admin-only either way.
+var authKey = AuthTokenService.LoadKey(builder.Configuration);
+var authEnforced = builder.Configuration.GetValue("Auth:Enforce", false);
+builder.Services.AddSingleton(new AuthTokenService(authKey, builder.Configuration.GetValue("Auth:TokenHours", 12)));
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(o =>
+    {
+        o.MapInboundClaims = false;
+        o.TokenValidationParameters = AuthTokenService.Validation(authKey);
+        o.Events = new JwtBearerEvents
+        {
+            // SignalR (live sales on the home page) can't send headers over WebSockets — it sends ?access_token=
+            OnMessageReceived = ctx =>
+            {
+                var token = ctx.Request.Query["access_token"].ToString();
+                if (token.Length > 0 && ctx.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                    ctx.Token = token;
+                return Task.CompletedTask;
+            },
+            // a disabled user, or one whose role changed, is signed out at once — not when the token expires
+            OnTokenValidated = async ctx =>
+            {
+                var userId = AuthTokenService.UserId(ctx.Principal!);
+                var roleClaim = ctx.Principal!.FindFirst(AuthTokenService.RoleIdClaim)?.Value;
+                var db = ctx.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                var current = await db.AppUsers.AsNoTracking()
+                    .Where(u => u.UserId == userId && u.Status == 1).Select(u => u.RoleId).FirstOrDefaultAsync();
+                if (current == null || current.ToString() != roleClaim)
+                    ctx.Fail("User is disabled or changed — sign in again.");
+            }
+        };
+    });
+builder.Services.AddAuthorization(o =>
+{
+    if (authEnforced)
+        o.FallbackPolicy = new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .RequireRole(UserRoles.AdminName, UserRoles.BackOfficeName)
+            .Build();
+});
 
 builder.Services.AddScoped<IGoogleSheetService, GoogleSheetService>();
 
@@ -84,6 +130,7 @@ builder.Services.AddScoped<IExportRepository, ExportRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<ISalesDocRepository, SalesDocRepository>();
 builder.Services.AddSingleton<SalesDocPdfService>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
 
 // Register the service
 builder.Services.AddControllers();
@@ -109,6 +156,15 @@ builder.Services.Configure<FormOptions>(options =>
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Item API", Version = "v1" });
+    // "Authorize" button: paste the token from api/Auth/Login
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http, Scheme = "bearer", BearerFormat = "JWT", In = ParameterLocation.Header
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        { new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } }, Array.Empty<string>() }
+    });
 });
 
 // Add this alongside your existing AddControllers()
@@ -150,6 +206,7 @@ app.UseMiddleware<RequestResponseLoggingMiddleware>();
 
 app.UseRouting();
 app.UseCors("AllowAllOrigins");
+app.UseAuthentication();
 app.UseAuthorization();
 
 

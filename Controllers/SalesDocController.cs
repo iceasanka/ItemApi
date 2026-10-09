@@ -1,6 +1,7 @@
 using ItemApi.Interface;
 using ItemApi.Models;
 using ItemApi.Service;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Serilog;
 
@@ -124,7 +125,8 @@ namespace ItemApi.Controllers
                 Ok(new { message = "Settings saved.", data = await _repository.UpdateSettingAsync(request) }));
         }
 
-        // GET: api/SalesDoc/Settings/Logo — the logo image (404 when none)
+        // GET: api/SalesDoc/Settings/Logo — the logo image (404 when none). Open: an <img> tag can't send a token.
+        [AllowAnonymous]
         [HttpGet("Settings/Logo")]
         public async Task<IActionResult> GetLogo()
         {

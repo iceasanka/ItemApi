@@ -885,3 +885,273 @@ Add a page "Sales analysis" (sidebar group "Sales", route /sales-analysis). Don'
 
 6) Loading skeletons while fetching; empty state "No sales in this period" when totals.bills = 0 and refunds = 0.
 ```
+
+---
+
+## Prompt 19 — Cashier billing: shortcut keys for every function, assignable, touch still works
+
+No backend change. Every till function works **both** ways: tap the button on the touch screen, or press its key.
+The keys live in one table that a supervisor can change on the till. Fixes the F9 clash (Prompt 11 Other item and
+Prompt 14 Bill copy both used F9 — Bill copy moves to Ctrl+B).
+
+```
+Change the existing cashier billing screen (src/pages/CashierBilling.tsx). Add src/lib/tillShortcuts.ts and
+src/components/till/ShortcutSettingsDialog.tsx. Keep every function working exactly as it does now — this change is
+only about HOW a function is started: by touch (button) or by keyboard (shortcut), both must do the same thing.
+
+1) One action list — src/lib/tillShortcuts.ts
+   export type TillAction =
+     "search" | "qty" | "price" | "voidLine" | "clearBill" | "pay" | "refund" | "wholesale" | "lineWR" |
+     "discountPct" | "otherItem" | "suspend" | "recall" | "billCopy" | "noSale" | "profit" | "cashMenu" |
+     "reload" | "dayEnd" | "shortcuts";
+   Each action has: label (button text), description (one line), and up to 2 keys (primary + alternate).
+   Defaults (primary key; alternate empty):
+     search      F1        Search item by name (opens the Search dialog)
+     qty         F2        Qty of the selected line
+     price       F3        Price of the selected line (open price / other item only)
+     pay         F4        Pay (tender dialog)
+     reload      F5        Reload items from back office
+     discountPct F6        Bill discount %
+     lineWR      F7        Selected line retail / wholesale
+     wholesale   F8        Wholesale default for new lines
+     otherItem   F9        Other item
+     suspend     F10       Suspend bill
+     recall      F11       Recall bill
+     cashMenu    F12       Cash menu (Paid in / Paid out / Opening cash / Drawer summary)
+     voidLine    Delete    Void the selected line
+     clearBill   Ctrl+Delete  Void the whole bill (confirm first)
+     billCopy    Ctrl+B    Bill copy (moved from F9)
+     noSale      Ctrl+D    No sale — open drawer
+     profit      Ctrl+P    Profit view
+     refund      Ctrl+R    Refund mode
+     dayEnd      Ctrl+E    Day end
+     shortcuts   Ctrl+K    Shortcut keys (list / change)
+   Store a key as a string built from the KeyboardEvent: modifiers in the order Ctrl+Alt+Shift, then event.code
+   for numpad keys ("NumpadMultiply", "NumpadAdd", …) and event.key otherwise ("F2", "Delete", "B").
+   Show it nicely: "Ctrl+B", "Num *", "Num +", "Del".
+   Export: getShortcuts(), saveShortcuts(map), resetShortcuts(), keyFromEvent(e), formatKey(k), findAction(k).
+
+2) Where the keys are kept
+   - localStorage "till.shortcuts.v1" on THIS till PC: { version: 1, keys: { [action]: [primary, alternate] } }.
+     Wrap every read/write in try/catch. Missing, broken or unknown data → use the defaults (never crash the till).
+     An action missing from saved data (added in a later version) gets its default key if that key is still free.
+   - Also keep "till.showKeyHints" (true by default) — see 4.
+
+3) One keyboard listener for the whole screen (window keydown, capture phase), replacing ALL existing per-key
+   handlers for the actions above (including F5 Reload, F7, F8, F9, F10, F11, F12, F6, Ctrl+D, Ctrl+P from earlier
+   prompts) so there is exactly one place that maps keys to actions:
+   - k = keyFromEvent(e); action = findAction(k). No action → do nothing (let the key through — the scan box and
+     inputs must keep working, and the barcode scanner types digits/letters + Enter into the scan box).
+   - Action found → e.preventDefault() + e.stopPropagation() (stops the browser's F1 help, F5 refresh, Ctrl+P print,
+     Ctrl+D bookmark, Ctrl+R reload, F11 full screen, …), then run the action.
+   - While ANY dialog is open, global shortcuts are OFF (the dialog's own keys work: Enter, Esc, arrows, numbers).
+     When the shortcut settings dialog is recording a key, it gets the key instead.
+   - Run the action through the SAME function the button's onClick calls — runAction(action). No separate code path
+     for keys. If the button is disabled right now (e.g. Pay with no lines, Suspend while the tender dialog is open,
+     Discount % in refund mode, Price on a normal-price line), the key does nothing and shows a short grey toast
+     with the reason ("No lines on the bill", "Select a line first", …) instead of failing silently.
+   - Ignore auto-repeat (e.repeat) so holding a key never opens a dialog twice or pays twice.
+   - After any action that does not open a dialog, put focus back in the scan box.
+
+4) Touch — every action is also a button, and the button shows its key
+   - Every action in the list has a visible button on the screen (toolbar, line toolbar, totals panel or the Cash menu).
+     Add the ones that are missing: "Search", "Void line", "Void bill", "Day end", and a keyboard icon button "Keys".
+   - Buttons are touch-sized: at least 48 px high, 8 px apart, no hover-only actions, no double-click-only actions,
+     no tiny icons without text. Line selection is a single tap on the line (selected line clearly highlighted).
+   - Each button shows its primary key as a small chip in the top-right corner ("F2", "Ctrl+B"), taken from
+     getShortcuts() — so after a change the chips update immediately. Hidden when showKeyHints is false.
+   - A tap must not steal focus into the button forever: after the action, focus goes back to the scan box (same as 3).
+   - Search dialog on a touch-only till: add a "⌨" button in the search box that shows a simple on-screen A–Z / 0–9
+     keyboard (big keys, Space, Backspace, Clear) under the input. The numeric keypad on the right keeps typing into
+     the focused field as today.
+
+5) Shortcut keys dialog ("Keys" button / Ctrl+K)
+   - Anyone can OPEN it to see the list: table Function (label + description), Key, Alternate key. Sorted like the list in 1.
+   - Changing keys needs the supervisor PIN (same PIN dialog / token as Refund). Button "Change keys" → PIN → edit mode.
+   - Edit mode: tap a Key or Alternate cell → it shows "Press a key…" and the NEXT keydown is recorded (Esc = cancel
+     recording, Backspace = clear that cell). Big "Clear" button per cell for touch.
+   - Allowed keys: F1–F12 (with or without Ctrl/Alt/Shift), Ctrl/Alt + a letter or digit, Delete, Insert, Home, End,
+     Page Up, Page Down, and the numpad operator keys (Num * / + / − / /) — with or without modifiers.
+     Refused with a red message under the table:
+       • plain letters, digits and symbols, Space, Enter, Tab, Esc, Backspace, arrow keys
+         ("This key is used for typing / scanning");
+       • keys the browser or Windows will not give up: Ctrl+W, Ctrl+T, Ctrl+N, Ctrl+Shift+N, Ctrl+Tab, Ctrl+Shift+Tab,
+         Alt+F4, Alt+Tab, Ctrl+Alt+Delete, Windows key ("Windows keeps this key").
+   - Same key on two functions → show "F2 is already used by Qty — use it here instead?" [Move it] [Cancel].
+     Move → the other function loses that key. Never save two functions on one key.
+   - Toggle "Show keys on buttons" (showKeyHints).
+   - Buttons: Save (writes localStorage, green toast "Shortcut keys saved"), Reset to defaults (confirm), Cancel (Esc).
+   - "Print list" → small window with the table, for a sticker next to the till.
+
+6) Status bar: a muted hint "Ctrl+K keys" at the right end (hidden when showKeyHints is false).
+
+7) Do not change any function's behaviour, rules, PIN checks or API calls — only how it is started.
+```
+
+---
+
+## Prompt 20 — Exports page (common) + weighing scale item file
+
+Backend: `ExportController` (`api/Export`), `DBScript/05_BackOffice_Export.sql`, StockSystem.md §6.10. The API server
+writes the file into a folder (local drive or a network share like `\SCALE-PC\Import`) — the browser never picks the
+folder. Scale items = active items with unit **KGS**; their **Ref code** is the 5-digit scale code.
+
+```
+Add a page "Exports" (sidebar group "Tools", route /exports). Use the existing API helper. Don't change other pages.
+It is a COMMON page: one card per export from GET /Export. Today there is one ("SCALE" — Weighing scale items);
+build it so a new export type only needs a new card body.
+
+1) API
+   GET  /Export → ExportSetting[] { exportCode, name, folderPath, fileName, nameMaxLength, lastExportAt, lastExportBy,
+                                    lastLineCount }
+   PUT  /Export/{code} { folderPath, fileName, nameMaxLength, userId } → { message, data: ExportSetting }  (400 { message })
+   GET  /Export/SCALE/Preview → {
+          setting: ExportSetting, filePath: string | null,
+          lines:   { itemId, refCode, plu, descrip, price, change: "new" | "changed" | "same", changes: string[], warning?: string }[],
+          skipped: { itemId, refCode, descrip, price, reason }[],
+          removed: { itemId, plu, descrip, price }[],
+          newCount, changedCount, hasChanges }
+   POST /Export/SCALE/Run { userId } → { message, data: { filePath, lineCount, skippedCount, newCount, changedCount,
+                                         removedCount, exportedAt } }   (400 { message } — folder missing / no access)
+   GET  /Export/SCALE/Download → the text file (blob; save with the fileName from Content-Disposition)
+   GET  /Export/{code}/Log?top=20 → { exportLogId, filePath, lineCount, skippedCount, status: 1 | 9, error, userId, cDate }[]
+   Send userId from the logged-in user if the app has one, else omit it.
+
+2) Export card header: name, "Last export: dd/MM/yyyy HH:mm · N items" (or "Never exported" in orange), and the full
+   file path in monospace. Buttons: "Settings", "Download", "Export now" (primary).
+
+3) Settings (dialog): Folder (text, placeholder "D:\Scale  or  \SCALE-PC\Import"), File name (default ScaleItem.txt),
+   "Max name length on the scale" (number, 0 = no limit). Muted hint under Folder: "A folder on the server PC (or a shared
+   folder the server can write to). The scale program reads the file from here." Save → PUT; 400 → show the message
+   under the Folder field (e.g. folder not found) and keep the dialog open. Green toast on success, then reload.
+   When folderPath is empty, the card shows an orange note "Set the export folder first" and Export now is disabled.
+
+4) Scale card body (loads GET /Export/SCALE/Preview on open, and a "Refresh" icon button):
+   - Summary chips: "N items", "New N" (green), "Price/name changed N" (blue), "Removed N" (grey), "Left out N" (red).
+     hasChanges false → green text "The scale is up to date with the last export."
+   - Tabs:
+       "Changes" (default when hasChanges): new + changed lines and the removed list.
+           Columns: Code (plu), Item (descrip), Price (2 decimals, right), What changed (changes joined with " · ",
+           or a "New" badge; removed rows have a "Removed" badge and are struck through).
+       "All items": every line — Code, Item, Price, badge for new/changed, warning (e.g. "Name cut to 30 characters")
+           as a small amber note. Search box filters by code or name. Sorted by code.
+       "Left out": skipped rows — Ref code, Item, Price, Reason (red). Hint above: "Fix these in Item Entry (unit KGS,
+           Ref code = 5-digit scale code, retail price), then Refresh."
+   - Preview of the file: a collapsible "File preview" with the first 20 lines in monospace, built exactly as
+     `${plu}#${descrip}#${price.toFixed(2)}#` so the user sees the format the scale gets.
+
+5) Export now → confirm dialog "Write N items to <filePath>?" (+ "Left out: N" in red when skipped > 0)
+   → POST /Export/SCALE/Run. Spinner, button disabled while running (no double clicks).
+   OK → green toast with the message, then reload the card (the Changes tab is now empty) and the log.
+   400 → red toast with the message (folder missing, no write access…). Nothing is marked as exported.
+
+6) Download → GET /Export/SCALE/Download, save the file in the browser. Muted note next to the button:
+   "Download doesn't count as an export — the Changes list stays."
+
+7) "History" section at the bottom of the card: last 20 from GET /Export/SCALE/Log — Time (dd/MM/yyyy HH:mm), Items,
+   Left out, Result (green "Written" / red "Failed" with the error), File path.
+```
+
+---
+
+## Prompt 21 — Customers page + Quotation / Invoice settings
+
+Backend: `CustomerController` (`api/Customer`), `SalesDocController` settings + logo, StockSystem.md §6.11.
+
+```
+Add two pages under a new sidebar group "Sales docs": "Customers" (/customers) and "Document settings"
+(/sales-doc-settings). Use the existing API helper. Don't change other pages.
+
+1) Customers page (kept simple on purpose — only these fields):
+   - API: GET /Customer?text=&top=200 → [{ customerId, name, address, phone, email }]
+          POST /Customer { name, address, phone, email, userId } → { message, data }
+          PUT /Customer/{id} (same body) → { message, data };  DELETE /Customer/{id}?userId= → { message }
+          400 { message } (e.g. "A customer named 'X' already exists.") → red toast / under the field.
+   - Search box (name or phone, 300 ms after typing stops), table: Name, Address, Phone, Email, edit + delete icons.
+   - "New customer" button → dialog: Name (required, max 100), Address (one line, max 200), Phone (max 20),
+     Email (optional, max 100). Enter = Save, Esc = Cancel. Same dialog for edit.
+   - Delete → confirm "Delete <name>? Quotations and invoices already made keep the customer's details."
+   - Reuse this dialog as a component (CustomerDialog) — Prompt 22 opens it from the document screen.
+
+2) Document settings page (what prints on the PDF):
+   - GET /SalesDoc/Settings → { companyName, companyAddress, companyPhone, companyEmail, logoFile, quotationValidDays,
+     quotationTerms, invoiceTerms };  PUT /SalesDoc/Settings (same fields + userId) → { message, data }.
+   - Form: Company name (required), Address, Phone, Email, "Quotation valid for (days)" (1–365, default 14),
+     Quotation terms (textarea, max 1000), Invoice terms (textarea, max 1000). Save → green toast.
+   - Logo card: shows GET /SalesDoc/Settings/Logo as an image (404 → "No logo"). "Upload logo" (PNG/JPG, max 2 MB,
+     check on the page too) → POST /SalesDoc/Settings/Logo (multipart field "file", plus "userId") → reload the image
+     (add ?t=<timestamp> to the URL). "Remove" → DELETE /SalesDoc/Settings/Logo.
+```
+
+---
+
+## Prompt 22 — Quotations & Invoices (list, editor, PDF, make invoice, cancel)
+
+Backend: `SalesDocController` (`api/SalesDoc`), StockSystem.md §6.11. **Document only** — no stock or customer balance
+effect, no tax. Quotations and invoices are editable while open. One quotation → one invoice.
+
+```
+Add pages under the "Sales docs" sidebar group: "Quotations" (/quotations) and "Invoices" (/invoices) — the SAME
+component with docType 1 or 2 — plus the editor (/quotations/new, /quotations/:id, /invoices/new, /invoices/:id).
+
+1) API
+   POST /SalesDoc/Search { docType, fromDate, toDate, customerId, text, status, page, pageSize } →
+        { total, rows: [{ docId, docType, docNo, docDate, validUntil, customerId, custName, reference, lineCount,
+                          netAmount, status, fromDocId, fromDocNo, invoiceDocNo, cDate }] }
+   GET  /SalesDoc/{id} → { doc: { docId, docType, docNo, docDate, validUntil, customerId, custName, custAddress, custPhone,
+                                   reference, notes, grossAmount, discount, netAmount, status, fromDocId, cancelReason,
+                                   items: [{ lineNum, itemId, descrip, qty, unitPrice, discount, amount }] },
+                           fromDocNo, invoiceDocId, invoiceDocNo }
+   POST /SalesDoc { docType, docDate, validUntil, customerId | (custName, custAddress, custPhone), reference, notes,
+                    discount, userId, items: [{ itemId, descrip, qty, unitPrice, discount }] } → { message, data: doc }
+   PUT  /SalesDoc/{id} (same body, open quotations and invoices) → { message, data: doc }
+   POST /SalesDoc/{id}/ToInvoice { docDate?, userId } → { message, data: invoice }
+   POST /SalesDoc/{id}/Cancel { reason, userId } → { message, data: doc }
+   GET  /SalesDoc/{id}/Pdf            → PDF inline (open in a new tab to view / print)
+   GET  /SalesDoc/{id}/Pdf?download=true → PDF download (<docNo>.pdf)
+   Items for the line picker: existing GET /Itemz/Search?query= → [{ itemId, refCode, barcode, descrip, retailPrice,
+   wholesalePrice, ... }].  400 { message } anywhere → red toast with the message, keep the form as it is.
+   Status: 1 Open, 2 Invoiced (quotation), 9 Cancelled.
+
+2) List page
+   - Filters: date range (default this month), status select, search (doc no / customer / reference), customer picker.
+     Paged 50 per page, newest first.
+   - Columns: No, Date, Customer, Reference, Lines, Amount (2 decimals, right), Status badge
+     (Open blue, Invoiced green with "→ INV000012", Cancelled grey + strike-through amount).
+     Quotations also: Valid until (red "Expired" when before today and still Open).
+     Invoices also: "From QT000005" link when fromDocNo.
+   - Row actions: View PDF (new tab), Download PDF, Open. "New quotation" / "New invoice" button.
+
+3) Editor (new / open quotation; new / open invoice). Opening a Cancelled document, or a quotation that is Invoiced,
+   shows the same layout READ-ONLY with its actions (see 5).
+   - Header: Customer combobox (search GET /Customer?text=, shows name + phone) with "+ New customer" (CustomerDialog from
+     Prompt 21; select it after saving) and a "One-off customer" switch → Name (required), Address, Phone inputs instead.
+     Date (default today). Quotations: Valid until (default empty = server uses date + settings days; show the hint
+     "Default: <quotationValidDays> days" from GET /SalesDoc/Settings). Reference ("Customer PO / ref", max 50).
+   - Lines table: #, Item / Description, Qty, Unit price, Discount, Amount, delete icon.
+       • Add line row: item search (GET /Itemz/Search, 300 ms debounce, ↑/↓/Enter) → fills descrip and unitPrice from
+         retailPrice; a small "Retail / Wholesale" toggle above the table decides which price is filled
+         (wholesalePrice, falling back to retailPrice). The price stays editable.
+       • "+ Typed line" → itemId 0, type the description (services, transport, items not in the list).
+       • Description stays editable on item lines too (max 200).
+       • Qty > 0 (3 decimals), price ≥ 0, discount 0…qty×price. Amount = qty × price − discount, live.
+       • Enter in Qty → next field; Enter in the last field → back to the item search. Max 200 lines.
+   - Totals (right): Sub total, Discount (amount input, 0…sub total), Total (big, bold). No tax.
+   - Notes (textarea, max 500, "printed under the lines").
+   - Buttons: Save (Ctrl+S) → POST or PUT → green toast, go to /<type>/:id. "Save & PDF" → save then open the PDF in a
+     new tab. Leaving with unsaved changes → confirm.
+
+4) Saved quotation (Open): Edit stays possible. Extra buttons: "View PDF", "Download PDF",
+   "Make invoice" → confirm "Make an invoice from QT… (Rs <total>)?" with an optional Invoice date (default today) →
+   POST /ToInvoice → green toast "Invoice INV… made" → open the new invoice. "Cancel quotation" (see 5).
+
+   Saved invoice (Open): Edit stays possible (same editor, PUT). Extra buttons: "View PDF", "Download PDF",
+   "Cancel invoice" (see 5). Banner "From quotation QT…" (link) when fromDocNo — editing the invoice does NOT change the
+   quotation.
+
+5) Read-only views
+   - Invoiced quotation: green banner "Invoiced → INV…" (link). No edit, no cancel (cancel the invoice first).
+   - Cancelled: grey banner "Cancelled — <cancelReason>"; PDF still available (it prints CANCELLED).
+   - Cancel dialog: Reason (required, max 200) → POST /Cancel → toast, reload. Cancelling an invoice made from a
+     quotation tells the user: "QT… is open again and can be invoiced again."
+```

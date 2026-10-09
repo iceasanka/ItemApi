@@ -80,6 +80,10 @@ builder.Services.AddScoped<ISalaryAdvanceRepository, SalaryAdvanceRepository>();
 builder.Services.AddScoped<ISalaryPayslipRepository, SalaryPayslipRepository>();
 builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>();
 builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
+builder.Services.AddScoped<IExportRepository, ExportRepository>();
+builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
+builder.Services.AddScoped<ISalesDocRepository, SalesDocRepository>();
+builder.Services.AddSingleton<SalesDocPdfService>();
 
 // Register the service
 builder.Services.AddControllers();

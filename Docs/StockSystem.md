@@ -46,8 +46,9 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `01_BackOffice_Stock.sql` | back office db (`easyway`) | prefix `z_`. **Already applied to easyway on 2026-09-30.** Re-runnable. |
 | `02_FrontCashier_zf.sql` | each till's local db (e.g. `easyway_front` on SQL Express) | prefix `zf_`. Re-runnable. Applied to the test till db `z_pos_fnt_db` (PRASADA1). |
 | `03_BackOffice_PriceLink.sql` | back office db (`easyway`) | price links (§6.5). Re-runnable. **Applied to easyway on 2026-10-02.** |
-
 | `04_BackOffice_SalesDashboard.sql` | back office db (`easyway`), after `01` | sales dashboard procs (§6.9). Re-runnable. **Applied to easyway on 2026-10-06.** |
+| `05_BackOffice_Export.sql` | back office db (`easyway`) | export settings, log, scale snapshot (§6.10). Re-runnable. **Applied to easyway on 2026-10-08.** |
+| `06_BackOffice_SalesDoc.sql` | back office db (`easyway`) | customers, quotations, invoices, PDF settings (§6.11). Re-runnable. **Applied to easyway on 2026-10-08.** |
 
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
 Deploy order: back office scripts + ItemApi first, then each till (`02` + TillService) — ItemApi's `SyncItem` reads `CostPrice`.
@@ -365,6 +366,81 @@ reads `UnitCost` from `zf_sp_GetInvoicesByNo`; an old `02` stops its uploads).
 
 ---
 
+### 6.10 Exports to a folder — weighing scale item file (back office, 2026-10-08)
+UI: Lovable Prompt 20 (common "Exports" page). SQL: `05_BackOffice_Export.sql`. Code: `ExportController`,
+`ExportRepository`. The file is written **only when someone presses Export** (not when an item is saved).
+
+**Scale file** (`SCALE`, default `ScaleItem.txt`): one line per item, CRLF, no header, UTF-8 without BOM (plain ASCII
+for English names) — `PLU#Description#Price#`, e.g. `10001#Cashew Nut 1kg#6200.00#`.
+- Scale item = active item (`Status 1`) whose unit at the location is **KGS** (`z_tb_ItemDet.UnitId` → `z_tb_Unit.UnitCode`).
+- PLU = **RefCode**, digits only, padded to 5 (`5` → `00005`). Price = `RetailPrice` (per kg), 2 decimals.
+  Name = `Descrip` with `#` and line breaks replaced by a space, cut to `NameMaxLength` (default 30, 0 = no limit).
+- Left out, with the reason shown on the page: no / non-numeric / longer than 5 digits RefCode, no description,
+  price ≤ 0, sale locked, and **both** items when two have the same PLU (the scale finds items by PLU).
+- Lines sorted by PLU. Written to `<file>.tmp` then swapped in, so the scale program never reads half a file.
+
+**Folder** = a folder the **API server** can see (local drive or `\\SCALE-PC\Import`). For a share, the IIS app pool /
+service account needs write access. Saving the settings checks that the folder exists.
+
+**Changed since last export**: `z_tb_ScaleExportItem` holds what the last successful export sent; the preview marks
+each line `new` / `changed` (code, price or name) / `same`, and lists `removed` items (sent last time, not now).
+Download sends the same file to the browser but does **not** count as an export.
+
+**API**
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/Export` | every export: folder, file name, `nameMaxLength`, last export (time, user, lines) |
+| GET | `api/Export/{code}` | one |
+| PUT | `api/Export/{code}` | `{ folderPath, fileName, nameMaxLength, userId }` → `{ message, data }`; 400 bad / missing folder |
+| GET | `api/Export/SCALE/Preview` | `{ setting, filePath, lines[], skipped[], removed[], newCount, changedCount, hasChanges }` |
+| POST | `api/Export/SCALE/Run` | `{ userId }` → `{ message, data: { filePath, lineCount, skippedCount, newCount, changedCount, removedCount, exportedAt } }`; 400 folder not set / not found / no write access (logged as failed) |
+| GET | `api/Export/SCALE/Download` | the file as an attachment |
+| GET | `api/Export/{code}/Log?top=20` | `z_tb_ExportLog`: status 1 written / 9 failed + error |
+
+To add another export: a row in `z_tb_ExportSetting` and a branch in `ExportController` / `ExportRepository`.
+
+---
+
+### 6.11 Quotations and invoices — A4 PDF (back office, 2026-10-08)
+UI: Lovable Prompts 21 (customers + document settings) and 22 (quotations & invoices). SQL: `06_BackOffice_SalesDoc.sql`.
+Code: `CustomerController`, `SalesDocController`, `SalesDocRepository`, `Service/SalesDocPdfService.cs` (QuestPDF).
+
+**Document only**: no stock movement, no customer balance, no tax. (Till bills are `z_tb_SalesInvoice`, a separate thing.)
+- Numbers: `QT000001…` and `INV000001…` from `z_tb_SalesDocCounter` (row locked in the save transaction; never reused).
+- **Quotation**: editable while open. Valid until = date + `QuotationValidDays` unless given. **Make invoice** copies it
+  into a new invoice (`FromDocId`) and marks it **invoiced** — once.
+- **Invoice**: editable while open (customer, dates, lines, discount, notes); the number and the quotation link stay.
+  Cancel needs a reason. Cancelling an invoice that came from a quotation sets the quotation back to **open**, so it can
+  be invoiced again. An invoiced quotation can't be edited or cancelled — change (or cancel) its invoice instead.
+  Cancelled documents can't be edited.
+- Customer: pick from `z_tb_Customer` (name, address, phone, email — kept simple) **or** type a one-off name. The name,
+  address and phone are **copied onto the document**, so editing / deleting a customer never changes old documents.
+- Lines: `itemId` (its description is filled in when left blank) or `itemId 0` + typed description (service, transport…).
+  Qty > 0 (3 decimals), price ≥ 0, line discount 0…qty×price; amount = qty × price − discount. Document discount
+  0…sub total. Max 200 lines. Prices are whatever is typed — the UI fills them from the item.
+- PDF: company name / address / phone / email / logo and terms from `z_tb_SalesDocSetting` (logo file in `Uploads/`).
+  Cancelled documents print a red CANCELLED box with the reason. QuestPDF Community licence (free under USD 1M revenue).
+
+**API**
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/Customer?text=&top=50` | active customers by name (text = name or phone) |
+| GET / POST / PUT / DELETE | `api/Customer[/{id}]` | `{ name, address, phone, email, userId }`; duplicate name → 400; delete = Status 0 |
+| POST | `api/SalesDoc/Search` | `{ docType, fromDate, toDate, customerId, text, status, page, pageSize }` → `{ total, rows }` (rows carry `fromDocNo` / `invoiceDocNo`) |
+| GET | `api/SalesDoc/{id}` | `{ doc (with items), fromDocNo, invoiceDocId, invoiceDocNo }` |
+| POST | `api/SalesDoc` | `{ docType, docDate, validUntil, customerId | custName+custAddress+custPhone, reference, notes, discount, userId, items:[{ itemId, descrip, qty, unitPrice, discount }] }` |
+| PUT | `api/SalesDoc/{id}` | open quotations and invoices (same body; `docType` ignored) |
+| POST | `api/SalesDoc/{id}/Cancel` | `{ reason, userId }` |
+| POST | `api/SalesDoc/{id}/ToInvoice` | `{ docDate, userId }` → the new invoice |
+| GET | `api/SalesDoc/{id}/Pdf?download=false` | A4 PDF, inline (view / print) or as a download |
+| GET / PUT | `api/SalesDoc/Settings` | `{ companyName, companyAddress, companyPhone, companyEmail, quotationValidDays, quotationTerms, invoiceTerms, userId }` |
+| GET / POST / DELETE | `api/SalesDoc/Settings/Logo` | multipart `file` (PNG/JPG ≤ 2 MB) |
+
+Note: easyway is at compatibility level 100, so EF's `list.Contains(...)` (translated to `OPENJSON`) fails there —
+`SalesDocRepository` looks items up one by one for that reason.
+
+---
+
 ## 7. Status values
 | Where | Values |
 |---|---|
@@ -378,6 +454,9 @@ reads `UnitCost` from `zf_sp_GetInvoicesByNo`; an old `02` stops its uploads).
 | `zf_tb_SuspendedBill.Status` | 1 suspended, 2 recalled, 9 cancelled |
 | `zf_tb_DrawerLog.Kind` | 1 after a cash bill, 2 No Sale, 3 opening cash, 4 paid in, 5 paid out |
 | `zf_tb_CashMovement` `Kind` / `Status` | 1 opening cash, 2 paid in, 3 paid out / 1 active, 9 replaced |
+| `z_tb_ExportLog.Status` | 1 written, 9 failed |
+| `z_tb_SalesDoc` `DocType` / `Status` | 1 quotation, 2 invoice / 1 open, 2 invoiced (quotation), 9 cancelled |
+| `z_tb_Customer.Status` | 1 active, 0 deleted |
 
 ---
 

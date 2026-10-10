@@ -50,6 +50,7 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `05_BackOffice_Export.sql` | back office db (`easyway`) | export settings, log, scale snapshot (§6.10). Re-runnable. **Applied to easyway on 2026-10-08.** |
 | `06_BackOffice_SalesDoc.sql` | back office db (`easyway`) | customers, quotations, invoices, PDF settings (§6.11). Re-runnable. **Applied to easyway on 2026-10-08.** |
 | `08_Transfer_OldItems.sql` | back office db (`easyway`) | one-time copy of old `tb_Item` / `tb_ItemDet` into `z_tb_Item` / `z_tb_ItemDet` (§6.13). Re-runnable. **Run on easyway on 2026-10-09: 5 419 items copied.** |
+| `09_Clean_ItemData.sql` | back office db (Part A) + each till db (Part B) | **clean start before going live**: deletes all items and everything that points at them (stock, till uploads, Z reports, price links, quotations/invoices, GRNs, transfer links) and resets their ids. Report only unless `@Delete = 1`. **Run on easyway on 2026-10-09** (Part A only). |
 | `07_BackOffice_Users.sql` | back office db (`easyway`), after `01` | users, roles, cashier download for tills (§6.12). Re-runnable. **Applied to easyway on 2026-10-09.** `02` got a "Cashier sign-in" section at the end — applied to `z_pos_fnt_db` the same day. |
 
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.

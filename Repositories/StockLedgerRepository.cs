@@ -62,10 +62,10 @@ namespace ItemApi.Repositories
                 int page = Math.Max(request.Page, 1);
 
                 var total = await query.CountAsync();
-                var rows = await query
-                    .OrderBy(x => x.i.Descrip)
-                    .Skip((page - 1) * pageSize)
-                    .Take(pageSize)
+                // production easyway runs on SQL Server 2008 R2: no OFFSET/FETCH, so TOP (page * pageSize) and skip here
+                var rows = (await query
+                    .OrderBy(x => x.i.Descrip).ThenBy(x => x.i.ItemId)
+                    .Take(page * pageSize)
                     .Select(x => new StockBalanceRow
                     {
                         ItemId = x.i.ItemId,
@@ -77,7 +77,7 @@ namespace ItemApi.Repositories
                         StockValue = x.b != null ? x.b.Qty * (x.b.AvgCost ?? 0) : 0,
                         UDate = x.b != null ? x.b.UDate : null
                     })
-                    .ToListAsync();
+                    .ToListAsync()).Skip((page - 1) * pageSize).ToList();
 
                 return new StockBalancePage { Total = total, Rows = rows };
             }

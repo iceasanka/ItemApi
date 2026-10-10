@@ -30,11 +30,13 @@ builder.Host.UseSerilog();
 // Two DbContexts, matching the two actual connection strings this app talks to:
 //  - AppDbContext: every entity on "DefaultConnection" (was 19 separate one-DbSet DbContexts).
 //  - PosDbContext: the one entity that lives on the separate "PosConnection" database.
+// Production easyway runs on SQL Server 2008 R2 (compatibility level 100): EF must not generate newer SQL
+// (OPENJSON for list.Contains, ...). OFFSET/FETCH paging is avoided in the repositories (Take, then skip in memory).
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"), sql => sql.UseCompatibilityLevel(100)));
 
 builder.Services.AddDbContext<PosDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("PosConnection"), sql => sql.UseCompatibilityLevel(100)));
 
 builder.Services.Configure<AppSettings>(builder.Configuration.GetSection("AppSettings"));
 

@@ -39,9 +39,10 @@ namespace ItemApi.Repositories
             var pageSize = Math.Clamp(r.PageSize, 1, 200);
             var page = Math.Max(r.Page, 1);
             var total = await q.CountAsync();
-            var rows = await q
+            // production easyway runs on SQL Server 2008 R2: no OFFSET/FETCH, so TOP (page * pageSize) and skip here
+            var rows = (await q
                 .OrderByDescending(d => d.DocDate).ThenByDescending(d => d.DocId)
-                .Skip((page - 1) * pageSize).Take(pageSize)
+                .Take(page * pageSize)
                 .Select(d => new SalesDocRow
                 {
                     DocId = d.DocId, DocType = d.DocType, DocNo = d.DocNo, DocDate = d.DocDate, ValidUntil = d.ValidUntil,
@@ -53,7 +54,7 @@ namespace ItemApi.Repositories
                         .Select(i => i.DocNo).FirstOrDefault(),
                     CDate = d.CDate
                 })
-                .ToListAsync();
+                .ToListAsync()).Skip((page - 1) * pageSize).ToList();
             return new SalesDocSearchResult { Total = total, Rows = rows };
         }
 

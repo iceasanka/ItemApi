@@ -826,7 +826,8 @@ GO
 
 -- Cashier search by name: every word typed must appear in Descrip or Inv_Descrip (any order, any case),
 -- e.g. 'sugar 1kg' finds 'SUGAR WHITE 1KG'. Active items only, names starting with the text first.
--- Pick a row, then zf_sp_FindItem @ItemId for the full item and its price links. Needs SQL Server 2016+ (STRING_SPLIT).
+-- Pick a row, then zf_sp_FindItem @ItemId for the full item and its price links.
+-- Works on SQL Server 2008 R2 (tills still on 2008): the words are split with a loop, not STRING_SPLIT.
 CREATE PROCEDURE dbo.zf_sp_SearchItems
     @Text NVARCHAR(100),
     @Top  INT = 50
@@ -834,10 +835,21 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    -- LIKE wildcards typed by the cashier are searched for literally
-    DECLARE @t NVARCHAR(100) = LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(@Text, N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]')));
-    DECLARE @words TABLE (Word NVARCHAR(100) NOT NULL);
-    INSERT @words SELECT value FROM STRING_SPLIT(@t, N' ') WHERE value <> N'';
+    -- LIKE wildcards typed by the cashier are searched for literally (escaping makes @t up to 3x longer)
+    DECLARE @t NVARCHAR(300) = LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(@Text, N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]')));
+    DECLARE @words TABLE (Word NVARCHAR(300) NOT NULL);
+
+    -- split @t on spaces; several spaces in a row = one
+    DECLARE @rest NVARCHAR(300) = @t, @p INT, @w NVARCHAR(300);
+    WHILE @rest <> N''
+    BEGIN
+        SET @rest = LTRIM(@rest);
+        SET @p = CHARINDEX(N' ', @rest);
+        IF @p = 0 SET @p = LEN(@rest) + 1;
+        SET @w = LEFT(@rest, @p - 1);
+        IF @w <> N'' INSERT @words (Word) VALUES (@w);
+        SET @rest = SUBSTRING(@rest, @p + 1, 300);
+    END
 
     IF NOT EXISTS (SELECT 1 FROM @words)
         SET @Top = 0;   -- nothing typed → no rows (same columns, so callers always get one shape)

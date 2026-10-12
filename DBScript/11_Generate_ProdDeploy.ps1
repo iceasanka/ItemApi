@@ -5,6 +5,7 @@ param([string]$Out, [string]$ProcDir, [bool]$Sql2008 = $true)
 if (-not $Out -and -not $ProcDir) { throw "Give -Out <file> and/or -ProcDir <folder>." }
 $ErrorActionPreference = "Stop"
 Add-Type -Path "C:\Program Files\Microsoft SQL Server\110\SDK\Assemblies\Microsoft.SqlServer.Smo.dll"
+. (Join-Path $PSScriptRoot "Sql2008.ps1")   # Convert-For2008, Assert-Sql2008
 
 $keepData = @("z_tb_Location","z_tb_Role","z_tb_StockAdjReason","z_tb_SubCategory","z_tb_Supplier","z_tb_System",
               "z_tb_Terminal","z_tb_Unit","z_tb_User","z_tb_Customer","z_tb_Category",
@@ -84,51 +85,10 @@ FROM sys.objects o JOIN sys.sql_modules m ON m.object_id = o.object_id
 WHERE o.name LIKE 'z[_]%' AND o.type IN ('FN','IF','TF','P','V')
 ORDER BY CASE WHEN o.type = 'P' THEN 2 ELSE 1 END, o.name
 "@)
-# Production easyway is SQL Server 2008 R2: no THROW. Procs that THROW or call another z_sp get their body in
-# TRY/CATCH and each "THROW n, 'msg', 1;" becomes RAISERROR (jumps to CATCH like THROW). The CATCH rolls back the
-# transaction only in the outermost proc and raises the message again (error 50000; ItemApi checks Number >= 50000).
-$tryStart = @"
-AS
-BEGIN
-    DECLARE @z_tc INT; SET @z_tc = @@TRANCOUNT;   -- SQL 2008 R2 error handling (RAISERROR in TRY/CATCH)
-    BEGIN TRY
-"@
-$tryEnd = @"
-    END TRY
-    BEGIN CATCH
-        DECLARE @z_msg NVARCHAR(2048); SET @z_msg = ERROR_MESSAGE();
-        IF @z_tc = 0
-        BEGIN
-            IF XACT_STATE() <> 0 ROLLBACK;
-        END
-        ELSE
-        BEGIN
-            -- called inside the caller's transaction: give its level back, the caller's CATCH rolls back
-            WHILE @@TRANCOUNT > @z_tc AND XACT_STATE() = 1 COMMIT;
-        END
-        RAISERROR(N'%s', 16, 1, @z_msg);
-        RETURN 1;
-    END CATCH
-END
-"@
-function Convert-For2008([string]$name, [string]$def) {
-    $needs = $def -match '\bTHROW\b' -or $def -match '\bEXEC\s+dbo\.z_sp_'
-    if (-not $needs -or $def -notmatch '(?im)^\s*AS\s*\r?\n\s*BEGIN\b') { return $def }
-    $def = [regex]::Replace($def, "THROW\s+\d+\s*,\s*('(?:[^']|'')*')\s*,\s*\d+\s*;", 'RAISERROR(N''%s'', 16, 1, N$1);')
-    $def = ([regex]'(?im)^\s*AS\s*\r?\n\s*BEGIN\b').Replace($def, $tryStart.TrimEnd(), 1)
-    $def = [regex]::Replace($def, '(?s)\bEND\s*;?\s*$', $tryEnd.TrimEnd())
-    return $def
-}
-
 $modFiles = @()
 foreach ($r in $mods.Tables[0].Rows) {
     $def = $r.definition.Trim()
-    if ($Sql2008) { $def = Convert-For2008 $r.name $def }
-    # anything SQL Server 2008 R2 can't run must not reach the production script (comment lines are ignored)
-    $code = ($def -split "`n" | Where-Object { $_ -notmatch '^\s*--' }) -join "`n"
-    if ($Sql2008 -and $code -match '(?i)\bTHROW\b|OFFSET\s+\S+\s+ROWS|\bIIF\s*\(|\bCONCAT\s*\(|\bFORMAT\s*\(|\bTRY_(CONVERT|CAST|PARSE)\b|\bEOMONTH\b|FROMPARTS\b|\bSTRING_(AGG|SPLIT)\b|\bOPENJSON\b|\bJSON_|NEXT VALUE FOR|\bLAG\s*\(|\bLEAD\s*\(|_VALUE\s*\(|CREATE OR ALTER|DROP\s+\w+\s+IF EXISTS') {
-        throw "$($r.name): uses SQL Server 2012+ syntax ($($Matches[0])) - production is SQL Server 2008 R2"
-    }
+    if ($Sql2008) { $def = Convert-For2008 $def; Assert-Sql2008 $r.name $def }
     W "-- ---- $($r.name)"
     W ("SET ANSI_NULLS " + ($(if ($r.uses_ansi_nulls) { "ON" } else { "OFF" })))
     W ("SET QUOTED_IDENTIFIER " + ($(if ($r.uses_quoted_identifier) { "ON" } else { "OFF" })))

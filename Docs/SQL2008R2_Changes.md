@@ -4,7 +4,8 @@ Production `easyway` runs on **SQL Server 2008 R2 RTM** (10.50.1600, Windows Ser
 It has no `THROW`, no `OFFSET … FETCH`, no `OPENJSON` and only TLS 1.0. These changes (2026-10-10) make the back
 office work on it. Undo them after production moves to SQL Server 2016 or newer.
 
-The **till** database (`z_pos_fnt_db`) is not part of this: tills need SQL Server 2016+ (item search uses STRING_SPLIT).
+The **tills** run SQL Server 2008 too (major version 10): the till database (`z_pos_fnt_db`) and TillService got the
+same treatment — see section 3.
 
 ## 1. What was changed
 
@@ -50,3 +51,19 @@ are converted.
    `Encrypt=True;TrustServerCertificate=True` (or a real certificate).
 
 Find every place: search the code for `SQL Server 2008 R2`.
+
+## 3. Tills (z_pos_fnt_db + TillService)
+
+| # | Where | Change | Undo after the tills run SQL 2012+? |
+|---|---|---|---|
+| 7 | `DBScript/Sql2008.ps1` | the THROW → RAISERROR conversion (shared by `11_` and `13_`); now also converts `THROW n, @Msg, 1;` | — |
+| 8 | `DBScript/13_Generate_TillDbFiles.ps1` | `-Sql2008 $true` (default): the 9 till procs that THROW (+ `zf_sp_GetUnsyncedInvoices`, which calls one) are converted; `00_check_server.sql` accepts SQL 2008 (compatibility 100) | generate with `-Sql2008 $false` and run the `3xx` / `4xx` files again |
+| 9 | `DBScript/02_FrontCashier_zf.sql` `zf_sp_SearchItems` (also in the dev db) | words split with a WHILE loop instead of `STRING_SPLIT` (SQL 2016+). Same results (checked on 10 searches) | **no need** — works on every version |
+| 10 | `TillService/Program.cs` error middleware | SqlException **50000** is also a business error → 400 `{ message }` (was only 51000–51999) | optional: back to `>= 51000 and < 52000` once no till runs the converted procs |
+
+Same behaviour as the back office: business errors keep their text but come back as number 50000; a SQL system error
+inside a converted till proc is also 50000, so the billing page shows it as a message instead of "Till database error".
+
+Till connection string on SQL 2008 R2: `...;Encrypt=False;TrustServerCertificate=True`. SQL 2008 R2 RTM only speaks
+TLS 1.0 — if TillService can't connect ("pre-login handshake"), the till's Windows has TLS 1.0 switched off; install
+SQL 2008 R2 Service Pack 3 + its TLS 1.2 update, or enable TLS 1.0.

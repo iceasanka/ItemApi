@@ -1597,3 +1597,363 @@ Change src/pages/CashierBilling.tsx and add src/components/till/NumPad.tsx. Keep
 5) Layout check at 1366×768 and 1920×1080 on a touch screen: the whole payment dialog, keypad included, fits without
    scrolling; no key smaller than 56 × 56 px.
 ```
+
+---
+
+## Prompt 33 — Cashier billing: scale sticker barcode (weight from the barcode)
+
+Backend: TillService `GET /items/find` reads the weighing scale's sticker (10 digits = 5 digits scale code + 5 digits
+weight in grams, e.g. `1000801410` = item 10008, 1.410 kg) and answers the item with `scaleQty: 1.41`
+(`zf_sp_FindItem`, StockSystem.md §6.14). Scale items (unit KGS) only. The page only has to use that quantity.
+
+```
+Change src/pages/CashierBilling.tsx and src/services/tillLocalApi.ts. Keep everything else.
+
+1) tillLocalApi.ts — extend TillItem with:
+     unitCode?: string | null;    // "KGS" = sold by weight
+     scaleQty?: number | null;    // weight in kg from a scale sticker barcode; null = normal scan
+
+2) After findItem(code) in addItem: when item.scaleQty is a number > 0, the line quantity is item.scaleQty
+   (e.g. 1.41) instead of 1. Everything after that is the same add flow as today (sale-locked check, price link
+   picker, quantity price via linePrice(item, qty, …), open price, refund mode, wholesale).
+   - A quantity typed in front ("2*" then the sticker) is ignored for a sticker scan — the weight is on the sticker.
+     Show toast.info("Weight taken from the sticker: 1.410 kg").
+   - The "more than 999" confirm of Prompt 25 does not apply.
+   - getItem(itemId) (name search) never has scaleQty → qty as today.
+
+3) One sticker = one bill line: a sticker scan ALWAYS adds a new line, it is never merged into an existing line of the
+   same item (two bags of the same rice = two lines, so the bill matches the stickers). Mark the line
+   fromScale: true; a later normal scan of the same item must not merge into a fromScale line either.
+   Keep fromScale on suspend / recall if the line model allows it; if not, recalled lines are normal lines.
+
+4) Display: for lines whose item.unitCode === "KGS" show the quantity with 3 decimals and "kg" (1.410 kg);
+   other lines as today. Line amount = round(qty × unitPrice, 2) as today (1.410 × 190.00 = 267.90).
+   The Qty key still works on the line (the cashier can correct a weight).
+
+5) Not found: a sticker for an unknown / inactive / non-KGS item answers 404 as today → the existing red
+   "item not found" message; the text is digits only, so no name search is started.
+```
+
+---
+
+## Prompt 34 — Cashier billing: function bar at the bottom of the page, layout rearranged
+
+No backend change. Moves the function buttons out of the top toolbar, the right panel and the Cash menu into one
+bar at the bottom of the page. Changes the button layout of Prompts 30 / 31 and the Cash menu of Prompt 16.
+
+```
+Change src/pages/CashierBilling.tsx and src/lib/tillShortcuts.ts; add src/components/till/FunctionBar.tsx.
+Keep every function, rule, PIN check, dialog and API call exactly as it is — this is only WHERE the buttons are.
+
+1) New bottom function bar (FunctionBar.tsx) — full page width, directly ABOVE the status / message bar, always
+   visible (never scrolls away; the bill list above it takes the scroll). 13 buttons, in this order, left to right:
+
+     Qty · Price · Refund · Bill copy · No Sale · Suspend · Recall · Paid In · Paid Out · Opening cash ·
+     Drawer summary · Day end · Void bill
+
+     [Qty][Price] | [Refund][Bill copy][No Sale][Suspend][Recall] | [Paid In][Paid Out][Opening cash][Drawer summary] | [Day end][Void bill]
+
+   - One row: grid with 13 equal columns (grid-cols-[repeat(13,minmax(0,1fr))]), gap 6 px, padding 6 px, each
+     button h-14 (56 px). The "|" above are a slightly bigger gap (ml-2) between the four groups: line, bill, cash, end.
+   - Below 1280 px wide: two rows (7 + 6), same order, same height.
+   - Button: icon (18 px) above the label, text-xs font-semibold leading-tight, label may wrap to two lines
+     ("Drawer summary", "Opening cash"), min-w-0, no fixed widths, the key chip in the top-right corner as now.
+   - Colour: the same navy as Prompt 31 for all ("bg-blue-900 hover:bg-blue-950 text-white"), except
+     Void bill → red (destructive) and Day end → amber, so the two that end something stand apart at the right end.
+     "On" states keep "ring-2 ring-inset ring-white" (Qty / Price while the keypad types into them, Refund while
+     refund mode is on). Disabled: same colour at 40 % opacity, with the same rules as today.
+   - Recall keeps its count badge (status.suspendedBills, hidden when 0).
+   - Every button: onMouseDown preventDefault and, after an action that opens no dialog, focusScan() — as today.
+   - Every button calls runAction(action) — the same function the shortcut key calls. No second code path.
+
+2) Remove these buttons from where they are now (they exist ONLY in the bottom bar afterwards):
+   - top toolbar: Bill copy, No Sale, Suspend, Recall, Day end, Void bill, and the "Cash" menu button;
+   - right panel: Qty, Price, Refund.
+
+3) Cash menu → four direct buttons:
+   - tillShortcuts.ts: add the actions "paidIn" | "paidOut" | "openingCash" | "drawerSummary" (labels as on the
+     buttons; no default key — the supervisor can give them one in the Keys dialog). They open the same dialogs the
+     menu items open today.
+   - "cashMenu" (F12) stays as a key only: it opens the same four choices as a small popover above the Paid In
+     button (↑/↓, Enter, Esc), so a cashier used to F12 loses nothing. A saved shortcut map keeps working; the new
+     actions are added with empty keys.
+   - The "No opening cash" chip in the status bar still opens the Opening cash dialog.
+
+4) What is left, rearranged:
+   - Top toolbar (one slim row): Search · Other item · Discount % · Reload · Profit · Keys — then the cashier name /
+     Sign out at the right. Nothing else.
+   - Right panel, top to bottom: totals → Cash / Card / Mixed → ONE row of three [ W/R ] [ Void line ] [ Wholesale ]
+     (navy, h-14, as Prompt 31) → the keypad, which takes all the height the removed row gave back (flex-1).
+   - Left: scan box, banners (REFUND / wholesale / recalled), the bill lines (flex-1, scrolls inside itself).
+   - Page = h-screen flex column: toolbar · main (bill | right panel, flex-1 min-h-0) · function bar · status bar.
+     No page scroll bar at any size.
+
+5) Layout check at 1366×768 and 1920×1080, touch: all 13 buttons visible without scrolling, no label cut off or
+   overflowing, no button under 56 px high, at least 8 bill lines visible at 1366×768, keypad keys not smaller
+   than before. The status bar stays above the dialog overlay (Prompt 29); the function bar does NOT (it is dimmed
+   under a dialog like the rest of the page).
+```
+
+---
+
+## Prompt 35 — Cashier billing: Cash and Mixed shortcut keys swapped
+
+No backend change. Changes the default keys of Prompts 19 / 28: Cash was F4 and Mixed was Num −; now the other way round.
+
+```
+Change src/lib/tillShortcuts.ts only. Keep everything else.
+
+1) New defaults:
+     pay       (Cash)   "NumpadSubtract"  (shown "Num −")   — was F4
+     payMixed  (Mixed)  "F4"                                — was Num −
+     payCard   (Card)   "NumpadAdd"       (shown "Num +")   — unchanged
+
+2) Saved maps (localStorage "till.shortcuts.v1"): swap only when BOTH still have the old defaults
+   (pay = F4 and payMixed = NumpadSubtract) → pay = NumpadSubtract, payMixed = F4. If the cashier changed either
+   key themselves, leave both as saved (never end up with one key on two functions). Do the move once
+   (bump the stored version to 2). Alternate keys are not touched.
+
+3) "Num −" still acts as a shortcut only on the main screen (no dialog open); inside a dialog it types normally.
+   The Cash / Mixed buttons, the Keys dialog and "Print list" show the new chips — they read getShortcuts(), so
+   nothing else changes. The buttons stay where they are and do what they did; only the keys swap.
+```
+
+---
+
+## Prompt 36 — Cashier billing: Reprint last bill (one key, no dialog)
+
+Backend: TillService `POST /invoices/last/print` prints a COPY RECEIPT of the newest bill on this till
+(StockSystem.md §6.7). No PIN, never opens the drawer. Needs the new TillService; no database change.
+
+```
+Change src/pages/CashierBilling.tsx, src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts and
+src/components/till/FunctionBar.tsx. Keep everything else (Bill copy stays as it is, for older bills).
+
+1) tillLocalApi.ts — add:
+     printLastInvoice() → POST /invoices/last/print
+                          → { invoiceNo: string; printed: boolean; printError?: string | null }
+                          400 { message: "No bill on this till yet." }
+
+2) tillShortcuts.ts — new action "reprintLast": label "Reprint", description "Print a copy of the last bill",
+   default key "Ctrl+L" (Ctrl+B stays Bill copy). preventDefault on it (the browser's address bar key). A saved map gets the new action with its default key when
+   Ctrl+L is still free, otherwise with no key.
+
+3) runAction("reprintLast"):
+   - No dialog, no confirm, no PIN. Works with or without lines on the bill (it never touches the bill on the screen).
+   - Guard against a double press: a ref (reprintingRef) — while one reprint is running, a second key press / tap
+     does nothing. Ignore e.repeat as for every key.
+   - While it runs: toast.info("Printing copy of the last bill…").
+   - OK and printed → toast.success("Copy printed — <invoiceNo>").
+     printed false → toast.error(printError ?? "Copy not printed") with the action "Try again" (runs it again).
+     400 → toast.error(message)  ("No bill on this till yet.").
+   - Finally focusScan().
+   - Disabled only while the payment dialog is saving a bill.
+
+4) FunctionBar.tsx — a "Reprint" button right after "Bill copy" (printer icon, same navy, key chip), calling
+   runAction("reprintLast"). The bar now has 14 buttons: grid-cols-[repeat(14,minmax(0,1fr))] in one row; below
+   1280 px two rows of 7 + 7. Order:
+     Qty · Price · Refund · Bill copy · Reprint · No Sale · Suspend · Recall · Paid In · Paid Out · Opening cash ·
+     Drawer summary · Day end · Void bill
+
+5) Keys dialog and "Print list": the new row shows up by itself (they read the action list).
+```
+
+---
+
+## Prompt 37 — Cashier billing: Price check (price and stock without adding to the bill, cost with the PIN)
+
+Backend: TillService `GET /items/{itemId}/cost` (supervisor token) and `lastStockSyncAt` in `GET /sync/status`
+(StockSystem.md §6.7). Prices and stock come from the item calls the page already has. Needs the new TillService;
+no database change.
+
+```
+Change src/pages/CashierBilling.tsx, src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts and
+src/components/till/FunctionBar.tsx; add src/components/till/PriceCheckDialog.tsx. Keep everything else.
+
+1) tillLocalApi.ts — add:
+     export interface ItemCost { itemId: number; costPrice: number | null;
+       priceLinks: { priceLinkId: number; costPrice: number | null }[] }
+     getItemCost(itemId) → GET /items/{itemId}/cost  (send X-Supervisor-Token like getBillProfit)
+                           401 { message } = no / expired token, 404 { message }
+     SyncStatus gets  lastStockSyncAt?: string | null.
+
+2) tillShortcuts.ts — new action "priceCheck": label "Price check", description "See an item's price and stock",
+   default key "Ctrl+I" (preventDefault). A saved map gets it with its default key when Ctrl+I is still free,
+   otherwise with no key.
+
+3) FunctionBar.tsx — a "Price check" button right after "Price" (tag / search icon, same navy, key chip) calling
+   runAction("priceCheck"). 15 buttons now: one row (grid-cols-[repeat(15,minmax(0,1fr))]) from 1440 px wide,
+   two rows of 8 + 7 below that. Order:
+     Qty · Price · Price check · Refund · Bill copy · Reprint · No Sale · Suspend · Recall · Paid In · Paid Out ·
+     Opening cash · Drawer summary · Day end · Void bill
+   Enabled always, except while the payment dialog is open.
+
+4) PriceCheckDialog.tsx (max-w-2xl) — title "Price check", a blue strip under it: "Nothing is added to the bill".
+   THE BILL ON THE SCREEN IS NEVER TOUCHED: this dialog has its own state and never calls addItem.
+   - Scan box at the top (focused on open, onOpenAutoFocus like the other dialogs; the barcode scanner types here
+     because the dialog has the focus). Enter:
+       · findItem(text) → show the item;
+       · 404 and the text has a letter → searchItems(text): one row → getItem(itemId); more → a list under the box
+         (name, code, price, stock; ↑/↓, Enter or tap picks) ; none → red line "No item found for '<text>'";
+       · 404 and digits only → red line "Item '<text>' not found".
+     After every lookup: clear the box, keep the focus in it — the next scan replaces the item shown (check item
+     after item without closing). A "⌨" button shows the on-screen A–Z keyboard of the Search dialog.
+   - Item shown (big, readable from a step back):
+       name (Descrip; Inv_Descrip muted under it when different), code line: barcode · RefCode · unit
+       PRICE  Rs <retailPrice>   (text-5xl bold)          MRP <maxPrice> struck through when maxPrice > retailPrice
+       Wholesale  Rs <wholesalePrice>   (only when set)
+       Quantity prices (only when a level is set): "<qtyLevel2> or more → Rs <priceLevel2>", level 3, level 4
+       Other prices (priceLinks, when any): table Remark · Retail · Wholesale
+       Badges: "Open price" (openPrice), "Sale locked" red (isSaleLocked), "No discount" (noDiscount)
+       Scale sticker scan (scaleQty > 0): "Weight 1.410 kg → Rs <round(scaleQty × retailPrice, 2)>"
+       STOCK  <stockQty>  (3 decimals + "kg" for unitCode "KGS", else no trailing zeros; red when ≤ 0;
+              "not known" when null) and muted "as of <status.lastStockSyncAt as dd/MM HH:mm>" — it is the last
+              stock downloaded from the back office, not live.
+   - Cost — only with the supervisor PIN:
+       · A "Show cost" button (lock icon, key F2 inside this dialog). If the page already holds a supervisor token
+         (profit view, discount, …) call getItemCost at once; else open the existing Supervisor PIN dialog first
+         (same token flow, focus back to this dialog's scan box afterwards).
+       · Shown: "Cost Rs <costPrice>" and "Margin Rs <retailPrice − costPrice> (<% of retailPrice>)", wholesale
+         margin when a wholesale price is set, and a Cost column in the Other prices table (per link). null →
+         "Cost not known". Cost in amber so it is clearly the private part.
+       · Once shown it stays on for the next scans in THIS dialog (getItemCost after each lookup). Closing the dialog
+         hides it again — the next price check starts without cost. A "Hide cost" button turns it off at once.
+       · 401 from getItemCost (token expired) → hide cost, drop the token, ask the PIN again. Never cache cost
+         values (no localStorage, no query cache that outlives the dialog).
+   - Buttons: "Add to bill" (secondary; closes the dialog and runs the normal addItem with that code — for the
+     customer who says yes; disabled for a sale-locked item) · "Close" (Esc). Global shortcuts are off while it is
+     open, as for every dialog; on close → focusScan().
+
+5) Keys dialog and "Print list": the new row shows up by itself.
+```
+
+---
+
+## Prompt 38 — Cashier billing: X report (mid-shift reading, the day is not closed)
+
+Backend: TillService `GET /x` and `POST /x/print` (StockSystem.md §6.8). Same figures as the day end, for the Z that
+is still open — nothing is closed, billing goes on. Needs the new TillService and till db update U002.
+
+```
+Change src/pages/CashierBilling.tsx, src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts and
+src/components/till/FunctionBar.tsx; add src/components/till/XReportDialog.tsx. Keep everything else
+(Day end and its Z summary dialog stay exactly as they are).
+
+1) tillLocalApi.ts — add (ZSummary is the type POST /z/close already answers with):
+     getXReport()    → GET  /x        → ZSummary   (closedAt null, status 0)
+     printXReport()  → POST /x/print  → ZSummary   (printed, printError filled)
+     both: 400 { message: "No Z is open - nothing to report yet." }
+
+2) tillShortcuts.ts — new action "xReport": label "X report", description "Sales and cash so far — does not close the day",
+   default key "Alt+X" (preventDefault). A saved map gets it with its default key when Alt+X is still free, otherwise
+   with no key.
+
+3) FunctionBar.tsx — an "X report" button right before "Day end" (chart / receipt icon, same navy — NOT amber, it
+   closes nothing). The bar has 16 buttons now → always two rows of 8, same order, each button a little wider:
+     Qty · Price · Price check · Refund · Bill copy · Reprint · No Sale · Suspend
+     Recall · Paid In · Paid Out · Opening cash · Drawer summary · X report · Day end · Void bill
+   Enabled always, except while the payment dialog is open (a bill on the screen does not matter — it is not saved yet
+   and is not in the figures).
+
+4) XReportDialog.tsx (max-w-md) — opens on runAction("xReport"), loads getXReport():
+   - Title "X report", a blue strip: "Reading only — the day is NOT closed".
+   - Header: Z <zNo> · opened <openedAt dd/MM HH:mm> · bills <fromSeq> – <toSeq> (<invoiceCount>) · now <time>.
+   - Sales block:   Sales, Refunds (−), NET SALES (bold)
+     Payments block: Cash, Card, Credit / voucher (only when otherAmount ≠ 0)
+     Cash block:     Opening cash, + Cash sales (cashAmount), + Paid in, − Paid out, CASH IN DRAWER (expectedCash, big, bold)
+     Money with 2 decimals and thousands separators, right aligned — the same look as the Z summary dialog, but
+     WITHOUT the "Counted cash" input (counting is for the day end).
+   - Buttons: "Print" (primary, Enter) → printXReport(): printed → toast.success("X report printed") and close;
+     printed false → toast.error(printError ?? "X report not printed"), keep the dialog open (the figures are on the
+     screen anyway). Guard against a double Enter with a ref, as in the payment dialog.
+     "Refresh" (F5 inside the dialog) loads getXReport() again. "Close" (Esc).
+   - 400 → no dialog, toast.info("No sales yet — nothing to report.").
+   - Loading: skeleton rows. On close → focusScan().
+   - If the bill on the screen has lines, a muted note at the bottom: "The bill on the screen is not included."
+
+5) No PIN, no drawer, any number of times a day. Nothing else changes: the Z number, the bills, the opening cash and
+   the day end are untouched by an X report.
+
+6) Keys dialog and "Print list": the new row shows up by itself.
+```
+
+---
+
+## Prompt 39 — Cashier billing: Bank transfer and Cheque payments, split on the Z and X
+
+Backend: TillService takes `payType` 5 (bank transfer) and 6 (cheque) in `POST /invoices`; the Z summary and the
+X report answer `bankAmount` and `chequeAmount` (StockSystem.md §6.15). Needs the new TillService and till db
+update U003.
+
+```
+Change src/pages/CashierBilling.tsx, src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts and
+src/components/till/XReportDialog.tsx. Keep everything else (Cash, Card and Mixed work exactly as now).
+
+1) tillLocalApi.ts
+   - Payment line payType: 1 | 2 | 3 | 4 | 5 | 6   (5 = bank transfer, 6 = cheque).
+   - ZSummary (POST /z/close, GET /x, POST /x/print) gets  bankAmount: number;  chequeAmount: number.
+     otherAmount still means "everything that is not cash or card" — it INCLUDES bankAmount and chequeAmount.
+   - POST /invoices can answer 400 { message: "A cheque payment needs the cheque number." } — show it as today.
+
+2) Pay buttons (right panel): a second row under Cash / Card / Mixed with two buttons, same blue, same height:
+       [ Cash ] [ Card ] [ Mixed ]
+       [ Bank transfer ] [ Cheque ]
+   They call runAction("payBank") / runAction("payCheque") → the same checks as Cash (no lines, discount too high)
+   → openPay("bank") / openPay("cheque"). Disabled in the same cases as Card.
+   tillShortcuts.ts: new actions "payBank" (label "Bank transfer", "Pay by bank transfer") and "payCheque" (label
+   "Cheque", "Pay by cheque") — no default key; the supervisor can give them one in the Keys dialog.
+
+3) Payment dialog, two new modes (same two-column screen with the NumPad as Card):
+   - Bank transfer: Total (big), "Transfer ref / slip no" (optional, max 30, focused — digits from the NumPad,
+     letters from a keyboard), a muted line "Check the transfer has arrived before you complete."
+     Complete sends payments [{ lineNum: 1, payType: 5, amount: <bill net>, refNo }].
+   - Cheque: Total (big), "Cheque no" (REQUIRED, max 30, focused), a muted line "Write the bill number on the back
+     of the cheque." Complete is disabled until a cheque number is typed;
+     sends payments [{ lineNum: 1, payType: 6, amount: <bill net>, refNo: <cheque no> }].
+   - Both: the whole bill is paid that way (no part payment, no change, no "cash given"), Enter = Complete through the
+     same finishSale with the double-sale guard. The cash drawer does NOT open (the till opens it for cash only).
+   - Refund mode: both are allowed, same fields ("Refund by bank transfer" / "Refund by cheque").
+   - Mixed stays cash + card only.
+
+4) Z summary dialog (day end) and XReportDialog — Payments block shows, in this order:
+       Cash
+       Card
+       Bank transfer      (bankAmount, only when ≠ 0)
+       Cheque             (chequeAmount, only when ≠ 0)
+       Credit / voucher   (otherAmount − bankAmount − chequeAmount, only when ≠ 0)
+   The Cash block (opening cash, cash sales, paid in / out, CASH IN DRAWER) does not change: transfers and cheques
+   are not drawer cash. Under the Cash block, when chequeAmount ≠ 0, a muted line:
+   "Cheques to hand over: Rs <chequeAmount>".
+
+5) Bill copy dialog: in the payment column / preview show "Bank transfer" and "Cheque" (with the ref / cheque no)
+   for payType 5 / 6 instead of "Other". The list row keeps Cash / Card / Other (other includes both).
+```
+
+---
+
+## Prompt 40 — Tills & Z Reports: Bank transfer and Cheque columns (change existing screen)
+
+Backend: `POST Sync/ZReports/Search` and `GET Sync/ZReport/{terminalId}/{zNo}` now also answer `bankAmount` and
+`chequeAmount` (StockSystem.md §6.15). Needs the new ItemApi and back office db update U003.
+
+```
+Change the existing "Tills & Z Reports" page (Z Reports tab and the Z detail page). Keep everything else.
+
+1) Z rows get two more fields:  bankAmount: number | null,  chequeAmount: number | null.
+   otherAmount still means "everything that is not cash or card" and INCLUDES both.
+   null = the till did not send a split (a Z from before the change, or a till still on the old program).
+
+2) Z Reports table — payment columns become: Cash, Card, Bank, Cheque, Other
+   - Bank = bankAmount, Cheque = chequeAmount, Other = otherAmount − (bankAmount ?? 0) − (chequeAmount ?? 0).
+   - When bankAmount and chequeAmount are both null: Bank and Cheque show "–" (muted) and Other shows otherAmount
+     with a small "not split" hint in the title.
+   - 0 shows as a muted "0.00"; money right aligned, 2 decimals.
+
+3) Top summary for the filter: add Bank transfer and Cheque totals next to cash and card (nulls count as 0), and
+   Other as the rest.
+
+4) Z detail page: the payments card lists Cash, Card, Bank transfer, Cheque, Credit / voucher (the rest), with the
+   same null rule. The 80 mm and A4 prints get the same lines (only the ones that are not 0).
+
+5) Nothing changes in the till / server comparison or the mismatch rules — payment types are not compared.
+```

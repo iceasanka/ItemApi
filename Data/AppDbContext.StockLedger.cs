@@ -178,7 +178,7 @@ namespace ItemApi.Data
                 "@CashierId = @CashierId, @OpenedAt = @OpenedAt, @ClosedAt = @ClosedAt, @FromSeq = @FromSeq, @ToSeq = @ToSeq, " +
                 "@InvoiceCount = @InvoiceCount, @LineCount = @LineCount, @TotalQty = @TotalQty, @SalesAmount = @SalesAmount, " +
                 "@RefundAmount = @RefundAmount, @NetSales = @NetSales, @CashAmount = @CashAmount, @CardAmount = @CardAmount, " +
-                "@OtherAmount = @OtherAmount, @Items = @Items",
+                "@OtherAmount = @OtherAmount, @BankAmount = @BankAmount, @ChequeAmount = @ChequeAmount, @Items = @Items",
                 new SqlParameter("@TerminalId", z.TerminalId),
                 new SqlParameter("@ZNo", z.ZNo),
                 new SqlParameter("@BusinessDate", SqlDbType.Date) { Value = z.BusinessDate.Date },
@@ -196,6 +196,8 @@ namespace ItemApi.Data
                 Dec("@CashAmount", z.CashAmount),
                 Dec("@CardAmount", z.CardAmount),
                 Dec("@OtherAmount", z.OtherAmount),
+                new SqlParameter("@BankAmount", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = Db(z.BankAmount) },
+                new SqlParameter("@ChequeAmount", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = Db(z.ChequeAmount) },
                 Tvp("@Items", "dbo.z_tt_ZReportItem", items)).ToListAsync();
 
             return rows.FirstOrDefault();

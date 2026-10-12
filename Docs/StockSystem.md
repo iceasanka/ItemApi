@@ -123,7 +123,7 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_sp_VoidInvoice` | only an **unsent** bill in the **open** Z. After upload → do a refund bill |
 | `zf_tb_SuspendedBill` / `…Item` | suspended (parked) bills, §6.6. Status 1 suspended, 2 recalled, 9 cancelled |
 | `zf_sp_SuspendBill` / `zf_sp_GetSuspendedBills` / `zf_sp_RecallSuspendedBill` / `zf_sp_CancelSuspendedBill` | suspend / list / recall (once only) / cancel |
-| `zf_sp_FindItem` | barcode, then RefCode — or `@ItemId`; 2nd result set = the item's active price links |
+| `zf_sp_FindItem` | barcode, then RefCode, then scale sticker (§6.14) — or `@ItemId`; 2nd result set = the item's active price links |
 | `zf_sp_SearchItems` | cashier search by name: every word in `Descrip` or `Inv_Descrip`, max 50 (needs SQL Server 2016+) |
 | `zf_fn_BillLineCost` / `zf_sp_GetBillProfit` | cost + profit per bill line, the discount cap (§6.7) |
 | `zf_sp_GetInvoicesByDate` / `zf_sp_GetInvoiceForPrint` | bill copies (§6.7) |
@@ -131,6 +131,7 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_tb_CashMovement` / `zf_sp_AddCashMovement` / `zf_sp_GetCashSummary` | opening cash, paid in, paid out, expected cash (§6.8) |
 | `zf_sp_GetUnsyncedInvoices` / `zf_sp_GetInvoicesByNo` / `zf_sp_MarkInvoicesSynced` | upload queue |
 | `zf_sp_CloseZ` / `zf_sp_GetZForSubmit` / `zf_sp_SetZStatus` | day end |
+| `zf_sp_GetXReport` | X report: the open Z's totals, read only (§6.8) |
 | `zf_sp_UpsertItems` / `zf_sp_UpsertStockBalance` / `zf_sp_UpsertPriceLinks` | apply downloads |
 
 Invoice numbers are made **on the till** (`TerminalCode-8 digits`) so two tills can never clash
@@ -300,6 +301,17 @@ layout (ItemCode · MktPrice · OurPrice · Qty · Nett, totals, CASH / BALANCE,
 prints `***** COPY RECEIPT *****` + "Copy Taken" date/time. No PIN, never opens the drawer. Only bills of **this**
 till (they live in its db).
 
+**Reprint last bill** (2026-10-12) — `POST /invoices/last/print`: one key, no dialog. Prints a COPY RECEIPT of the
+newest bill on this till (highest `InvoiceSeq`, sale or refund, any cashier) → `{ invoiceNo, printed, printError }`;
+400 when the till has no bill yet. TillService only — **no database change**, no update script. UI: Lovable Prompt 36.
+
+**Price check** (2026-10-12) — scan or search an item to see its prices and stock without touching the bill. The page
+uses the existing `GET /items/find`, `/items/search` and `/items/{id}` (prices, quantity prices, price links,
+`stockQty`); `GET /sync/status` now also gives `lastStockSyncAt` (how old that stock is). Cost only with the
+supervisor PIN: `GET /items/{id}/cost` (`X-Supervisor-Token`, 401 without) → `{ itemId, costPrice, priceLinks:
+[{ priceLinkId, costPrice }] }`, 0 / no cost = null, a link without its own cost shows the item's (same rule as the
+profit view). TillService only — **no database change**, no update script. UI: Lovable Prompt 37.
+
 **Cash drawer** — kick command `ESC p` through the printer (`Printer:DrawerPin` 0 = pin 2). Every opening is a row in
 `zf_tb_DrawerLog` (Kind 1 bill, 2 No Sale; `Opened 0` = the printer didn't take it). **No Sale**:
 `POST /drawer/nosale { pin, cashierId, reason }` — the supervisor PIN is checked **every time** (not the token),
@@ -339,7 +351,18 @@ Cash put into / taken out of the drawer without a sale, per Z, in `zf_tb_CashMov
   − paid out) on `zf_tb_ZReport`, and `POST /z/close` returns them and prints a Z slip (`Receipt:PrintZReport`) with
   "CASH IN DRAWER" and lines for the counted amount and a signature. The opening cash belongs to that Z only — the next
   Z starts at 0 until a new opening cash is entered.
+- **Cash in / out list at day end** (2026-10-12): when the Z has any paid in or paid out, `POST /z/close` prints a
+  "CASH IN / OUT" slip **before** the Z slip — each movement (time, number, cashier, amount, reason) and the totals,
+  which are the Z slip's "+ Paid in" / "− Paid out". Opening cash is not listed (it is on the Z slip). No movements →
+  only the Z slip. Follows `Receipt:PrintZReport`; day file either way. If the list fails to print the Z slip still
+  prints and `printError` says so. TillService only — no database change, no page change.
 - Not uploaded to the back office yet (the Z upload is unchanged; `CashAmount` still means cash sales only).
+- **X report** (2026-10-12) — a reading in the middle of the shift, nothing is closed. `zf_sp_GetXReport` works out the
+  open Z's totals with the **same rules as `zf_sp_CloseZ`** (change both together) but writes nothing; `GET /x` returns
+  them in the `/z/close` shape (`closedAt` null, `status` 0), `POST /x/print` also prints an "X REPORT — Z n NOT
+  CLOSED" slip (always, whatever `Receipt:PrintZReport` says; day file too). No PIN, no drawer, any number of times;
+  400 when no Z is open. Not sent to the back office. Till db update: `Updates/U002_Till_XReport.sql`.
+  UI: Lovable Prompt 38.
 
 ### 6.9 Sales dashboard — today live + date range analysis (back office, 2026-10-06)
 UI: Lovable Prompts 17 (home page) and 18 (sales analysis). SQL: `04_BackOffice_SalesDashboard.sql`.
@@ -521,6 +544,47 @@ tables (0 differences). Units LTR / PKT are not in `z_tb_Unit`, so 6 items have 
 POWDER) has a code that is also the barcode of 4555655957 (CHAMINDA NOODLES) — typing 3256325 at the till finds the
 noodles; scan its own barcode instead.
 
+### 6.14 Scale sticker barcodes at the till (2026-10-12)
+The weighing scale prints a 10-digit barcode: **5 digits scale code + 5 digits weight in grams**.
+`1000801410` = RefCode `10008`, 1.410 kg → the bill line is qty 1.410 × the item's price (190.00 → 267.90, the
+sticker's total). The price always comes from the till's item, never from the sticker.
+
+- `zf_sp_FindItem`: barcode, then RefCode exactly as before. Only when nothing matches and the code is 10 digits it is
+  read as a sticker: the item must be a **scale item (unit KGS)**, active, with a RefCode of digits only, up to 5
+  (padded with leading zeros like the PLU in the scale export, §6.10). The item comes back with `ScaleQty` (kg).
+  Weight `00000`, a non-KGS item or an unknown scale code = not found.
+- The till knows the unit now: `z_sp_GetItemsForSync` sends `UnitCode` → `zf_tb_Item.UnitCode`. Adding the column
+  clears `LastItemSyncAt`, so the till downloads every item again on its next sync.
+- Typing the 5-digit scale code alone still works as before (qty 1, or `1.25*10008`).
+- TillService `/items/find` returns `unitCode` and `scaleQty`; the page uses `scaleQty` as the line quantity
+  (Lovable Prompt 33). Until the page is changed a sticker scan adds the item with qty 1.
+
+**Deploy order**: `01` on easyway → ItemApi → each till: `02` **then** the new TillService (an old TillService can't
+download items against the new `02` — its item table has no `UnitCode` column) → press Reload → paste Prompt 33.
+
+### 6.15 Bank transfer and cheque payments (2026-10-12)
+Two more payment types: **5 bank transfer**, **6 cheque**. UI: Lovable Prompts 39 (till) and 40 (Tills & Z Reports).
+SQL: `Updates/U003_BackOffice_PayTypes.sql`, `Updates/U003_Till_PayTypes.sql` (and the full scripts `01`, `02`).
+
+- **Bills need no table change**: `PayType` was always a plain INT on `zf_tb_InvoicePayment` / `z_tb_SalesPayment`, and
+  the upload carries it. `RefNo` (30) = cheque number (**required**, checked by TillService) or the transfer
+  reference (optional). `POST /invoices` now refuses a `payType` outside 1–6.
+- **Z split**: `zf_tb_ZReport` and `z_tb_ZReport` get `BankAmount` and `ChequeAmount`. **Both are part of
+  `OtherAmount`**, which keeps its meaning (everything that is not cash or card) — so old and new tills / Zs add up
+  the same way and nothing in the reconcile changes (payment types are not compared). "Credit / voucher" on a slip or
+  screen = `OtherAmount − BankAmount − ChequeAmount`. NULL = not split (Z from before, or an old TillService).
+  `zf_sp_CloseZ` fills them, `zf_sp_GetXReport` returns them, `zf_sp_GetZForSubmit` → `POST api/Sync/ZReport`
+  (`bankAmount`, `chequeAmount`, optional) → `z_sp_SubmitZReport @BankAmount, @ChequeAmount`.
+- **Receipt**: `BANK TRANSFER <ref>` / `CHEQUE <no>`. **Z and X slips**: lines "Bank transfer" and "Cheque" (when not 0)
+  between Card and "Credit / voucher".
+- **Drawer and cash**: neither opens the drawer nor counts as drawer cash (`ExpectedCash` is cash only).
+- **Dashboards** (§6.9) still show Cash / Card / Other; Other includes both. Not split there yet.
+- **Mixing versions**: new TillService on a till db without U003 → bills save, the Z closes, but the split is 0
+  (`GetIfThere`); old TillService on an updated till db works; a new till talking to an old ItemApi → the back office
+  keeps only "Other". The new ItemApi **needs** U003 on easyway first (the Z list reads the new columns).
+
+**Deploy order**: `U003_BackOffice` on easyway → ItemApi → each till: `U003_Till` → new TillService → Prompts 39, 40.
+
 ---
 
 ## 7. Status values
@@ -532,7 +596,7 @@ noodles; scan its own barcode instead.
 | Invoice `InvType` / `Status` | 1 sale, 2 refund / 1 completed, 9 voided |
 | Invoice `PriceType` | 1 retail, 2 = has wholesale line(s) |
 | Invoice line `PriceType` | 1 retail, 2 wholesale price on this line |
-| Payment `PayType` | 1 cash, 2 card, 3 credit, 4 voucher |
+| Payment `PayType` | 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque (§6.15) |
 | `zf_tb_SuspendedBill.Status` | 1 suspended, 2 recalled, 9 cancelled |
 | `zf_tb_DrawerLog.Kind` | 1 after a cash bill, 2 No Sale, 3 opening cash, 4 paid in, 5 paid out |
 | `zf_tb_CashMovement` `Kind` / `Status` | 1 opening cash, 2 paid in, 3 paid out / 1 active, 9 replaced |

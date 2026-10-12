@@ -209,7 +209,7 @@ IF OBJECT_ID('dbo.z_tb_SalesPayment', 'U') IS NULL
 CREATE TABLE dbo.z_tb_SalesPayment (
     InvoiceId  INT           NOT NULL,
     LineNum    INT           NOT NULL,
-    PayType    INT           NOT NULL,   -- 1 cash, 2 card, 3 credit, 4 voucher
+    PayType    INT           NOT NULL,   -- 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque
     Amount     DECIMAL(18,2) NOT NULL,
     RefNo      VARCHAR(30)   NULL,
     CONSTRAINT PK_z_tb_SalesPayment PRIMARY KEY (InvoiceId, LineNum)
@@ -251,6 +251,13 @@ CREATE TABLE dbo.z_tb_ZReport (
     ReconciledAt     DATETIME      NULL,
     CONSTRAINT UQ_z_tb_ZReport UNIQUE (TerminalId, ZNo)
 );
+GO
+
+-- Bank transfer (PayType 5) and cheque (PayType 6) as their own Z totals (2026-10-12). Both are PART OF OtherAmount
+-- (= everything that is not cash or card). NULL = the till did not send a split (old TillService / old Z).
+IF COL_LENGTH('dbo.z_tb_ZReport', 'BankAmount') IS NULL
+    ALTER TABLE dbo.z_tb_ZReport ADD BankAmount   DECIMAL(18,2) NULL,
+                                     ChequeAmount DECIMAL(18,2) NULL;
 GO
 
 IF OBJECT_ID('dbo.z_tb_ZReportItem', 'U') IS NULL
@@ -766,6 +773,8 @@ CREATE PROCEDURE dbo.z_sp_SubmitZReport
     @CashAmount    DECIMAL(18,2) = 0,
     @CardAmount    DECIMAL(18,2) = 0,
     @OtherAmount   DECIMAL(18,2) = 0,
+    @BankAmount    DECIMAL(18,2) = NULL,   -- part of @OtherAmount; NULL = till without the split
+    @ChequeAmount  DECIMAL(18,2) = NULL,
     @Items         dbo.z_tt_ZReportItem READONLY
 AS
 BEGIN
@@ -788,11 +797,11 @@ BEGIN
             INSERT dbo.z_tb_ZReport
                 (TerminalId, ZNo, LocationId, BusinessDate, CashierId, OpenedAt, ClosedAt, FromSeq, ToSeq,
                  InvoiceCount, LineCount, TotalQty, SalesAmount, RefundAmount, NetSales,
-                 CashAmount, CardAmount, OtherAmount, Status)
+                 CashAmount, CardAmount, OtherAmount, BankAmount, ChequeAmount, Status)
             VALUES
                 (@TerminalId, @ZNo, @LocationId, @BusinessDate, @CashierId, @OpenedAt, @ClosedAt, @FromSeq, @ToSeq,
                  @InvoiceCount, @LineCount, @TotalQty, @SalesAmount, @RefundAmount, @NetSales,
-                 @CashAmount, @CardAmount, @OtherAmount, 2);
+                 @CashAmount, @CardAmount, @OtherAmount, @BankAmount, @ChequeAmount, 2);
             SET @ZId = SCOPE_IDENTITY();
         END
         ELSE IF @Status <> 3   -- a reconciled Z is final; a resend is ignored
@@ -802,6 +811,7 @@ BEGIN
                 FromSeq = @FromSeq, ToSeq = @ToSeq, InvoiceCount = @InvoiceCount, LineCount = @LineCount,
                 TotalQty = @TotalQty, SalesAmount = @SalesAmount, RefundAmount = @RefundAmount, NetSales = @NetSales,
                 CashAmount = @CashAmount, CardAmount = @CardAmount, OtherAmount = @OtherAmount,
+                BankAmount = @BankAmount, ChequeAmount = @ChequeAmount,
                 Status = 2, SubmittedAt = GETDATE()
             WHERE ZId = @ZId;
             DELETE dbo.z_tb_ZReportItem WHERE ZId = @ZId;
@@ -878,9 +888,11 @@ BEGIN
            d.QtyLevel2, d.PriceLevel2, d.QtyLevel3, d.PriceLevel3, d.QtyLevel4, d.PriceLevel4,
            i.Status,
            CASE WHEN d.UDate > i.UDate THEN d.UDate ELSE i.UDate END AS UDate,  -- datetime2: some items have 0001-01-01
-           d.CostPrice   -- till profit view + bill discount cap (shown on the till only with the supervisor PIN)
+           d.CostPrice,  -- till profit view + bill discount cap (shown on the till only with the supervisor PIN)
+           u.UnitCode    -- KGS = scale item: the till reads the weight from the scale sticker barcode (zf_sp_FindItem)
     FROM dbo.z_tb_Item i
     LEFT JOIN dbo.z_tb_ItemDet d ON d.ItemId = i.ItemId AND d.LocationId = @LocationId
+    LEFT JOIN dbo.z_tb_Unit u ON u.UnitId = d.UnitId
     WHERE @Since IS NULL OR i.UDate > @Since OR d.UDate > @Since;
 
     UPDATE dbo.z_tb_Terminal SET LastItemSyncAt = GETDATE() WHERE TerminalId = @TerminalId;

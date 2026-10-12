@@ -164,7 +164,7 @@ IF OBJECT_ID('dbo.zf_tb_InvoicePayment', 'U') IS NULL
 CREATE TABLE dbo.zf_tb_InvoicePayment (
     InvoiceNo  VARCHAR(30)   NOT NULL,
     LineNum    INT           NOT NULL,
-    PayType    INT           NOT NULL,   -- 1 cash, 2 card, 3 credit, 4 voucher
+    PayType    INT           NOT NULL,   -- 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque
     Amount     DECIMAL(18,2) NOT NULL,   -- amount applied to the bill (cash tendered minus change)
     RefNo      VARCHAR(30)   NULL,
     CONSTRAINT PK_zf_tb_InvoicePayment PRIMARY KEY (InvoiceNo, LineNum)
@@ -262,6 +262,13 @@ GO
 IF COL_LENGTH('dbo.zf_tb_Invoice', 'DiscountPercent') IS NULL
     ALTER TABLE dbo.zf_tb_Invoice ADD DiscountPercent DECIMAL(5,2) NULL;   -- bill discount given as %, for the receipt
 GO
+-- added with scale sticker barcodes. Items already on the till have no unit yet → download them all again.
+IF COL_LENGTH('dbo.zf_tb_Item', 'UnitCode') IS NULL
+BEGIN
+    ALTER TABLE dbo.zf_tb_Item ADD UnitCode VARCHAR(5) NULL;               -- z_tb_Unit.UnitCode; KGS = scale item
+    UPDATE dbo.zf_tb_Config SET LastItemSyncAt = NULL;
+END
+GO
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_zf_tb_Invoice_Date' AND object_id = OBJECT_ID('dbo.zf_tb_Invoice'))
     CREATE INDEX IX_zf_tb_Invoice_Date ON dbo.zf_tb_Invoice (InvDate);   -- reprint: bills of a day
 GO
@@ -325,6 +332,14 @@ IF COL_LENGTH('dbo.zf_tb_ZReport', 'OpeningCash') IS NULL
                                       ExpectedCash DECIMAL(18,2) NULL;   -- opening + CashAmount + paid in − paid out
 GO
 
+-- Bank transfer (PayType 5) and cheque (PayType 6) as their own Z totals (2026-10-12, filled by zf_sp_CloseZ).
+-- Both are PART OF OtherAmount (= everything that is not cash or card), which keeps its meaning.
+-- NULL = Z closed before this change (not split).
+IF COL_LENGTH('dbo.zf_tb_ZReport', 'BankAmount') IS NULL
+    ALTER TABLE dbo.zf_tb_ZReport ADD BankAmount   DECIMAL(18,2) NULL,
+                                      ChequeAmount DECIMAL(18,2) NULL;
+GO
+
 /* ---------------------------------------------------------------------------
    2. Drop procs, then types
    --------------------------------------------------------------------------- */
@@ -353,6 +368,7 @@ IF OBJECT_ID('dbo.zf_sp_GetInvoiceForPrint', 'P')   IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_LogDrawer', 'P')            IS NOT NULL DROP PROCEDURE dbo.zf_sp_LogDrawer;
 IF OBJECT_ID('dbo.zf_sp_AddCashMovement', 'P')      IS NOT NULL DROP PROCEDURE dbo.zf_sp_AddCashMovement;
 IF OBJECT_ID('dbo.zf_sp_GetCashSummary', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetCashSummary;
+IF OBJECT_ID('dbo.zf_sp_GetXReport', 'P')           IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetXReport;
 IF OBJECT_ID('dbo.zf_fn_BillLineCost', 'IF')        IS NOT NULL DROP FUNCTION dbo.zf_fn_BillLineCost;
 GO
 IF TYPE_ID('dbo.zf_tt_InvoiceItem')    IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceItem;
@@ -428,7 +444,8 @@ CREATE TYPE dbo.zf_tt_Item AS TABLE (
     PriceLevel4     DECIMAL(18,2)  NULL,
     Status          INT            NOT NULL,
     UDate           DATETIME2      NULL,
-    CostPrice       DECIMAL(18,2)  NULL
+    CostPrice       DECIMAL(18,2)  NULL,
+    UnitCode        VARCHAR(5)     NULL
 );
 GO
 CREATE TYPE dbo.zf_tt_StockBalance AS TABLE (
@@ -795,7 +812,10 @@ END
 GO
 
 -- Barcode, then RefCode — or one item by @ItemId (picked from zf_sp_SearchItems). Active items only.
--- 2 result sets: the item (with the last known stock, for display),
+-- Scale sticker: when nothing matches and @Code is 10 digits, it is read as 5 digits scale code + 5 digits weight in
+-- grams (1000801410 = RefCode 10008, 1.410 kg). Scale items (UnitCode KGS) only; the scale code is the RefCode padded
+-- to 5 digits, same rule as the PLU in the scale export (05_BackOffice_Export.sql). Weight 00000 = not found.
+-- 2 result sets: the item (with the last known stock, for display; ScaleQty = the sticker weight in kg, else NULL),
 -- then its active price links (empty = sell at the normal / quantity price, no price choice).
 CREATE PROCEDURE dbo.zf_sp_FindItem
     @Code   NVARCHAR(50) = NULL,
@@ -804,15 +824,32 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
+    DECLARE @ScaleQty DECIMAL(18,3);
+
     IF @ItemId IS NOT NULL
         SET @ItemId = (SELECT ItemId FROM dbo.zf_tb_Item WHERE ItemId = @ItemId AND Status = 1);   -- NULL if inactive / missing
     ELSE
+    BEGIN
         SELECT TOP 1 @ItemId = i.ItemId
         FROM dbo.zf_tb_Item i
         WHERE (i.Barcode = @Code OR i.RefCode = @Code) AND i.Status = 1
         ORDER BY CASE WHEN i.Barcode = @Code THEN 0 ELSE 1 END;
 
-    SELECT i.*, s.Qty AS StockQty
+        IF @ItemId IS NULL AND LEN(@Code) = 10 AND @Code NOT LIKE N'%[^0-9]%' AND RIGHT(@Code, 5) <> N'00000'
+        BEGIN
+            SELECT TOP 1 @ItemId = i.ItemId
+            FROM dbo.zf_tb_Item i
+            WHERE i.UnitCode = 'KGS' AND i.Status = 1
+              AND i.RefCode NOT LIKE N'%[^0-9]%' AND LEN(i.RefCode) BETWEEN 1 AND 5
+              AND RIGHT(N'00000' + i.RefCode, 5) = LEFT(@Code, 5)
+            ORDER BY i.ItemId;
+
+            IF @ItemId IS NOT NULL
+                SET @ScaleQty = CAST(RIGHT(@Code, 5) AS INT) / 1000.0;
+        END
+    END
+
+    SELECT i.*, s.Qty AS StockQty, @ScaleQty AS ScaleQty
     FROM dbo.zf_tb_Item i
     LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
     WHERE i.ItemId = @ItemId;
@@ -954,6 +991,13 @@ BEGIN
             OtherAmount  = ISNULL((SELECT SUM(CASE WHEN i.InvType = 2 THEN -p.Amount ELSE p.Amount END)
                                    FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoicePayment p ON p.InvoiceNo = i.InvoiceNo
                                    WHERE i.ZNo = @ZNo AND i.Status <> 9 AND p.PayType NOT IN (1, 2)), 0),
+            -- part of OtherAmount: 5 bank transfer, 6 cheque
+            BankAmount   = ISNULL((SELECT SUM(CASE WHEN i.InvType = 2 THEN -p.Amount ELSE p.Amount END)
+                                   FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoicePayment p ON p.InvoiceNo = i.InvoiceNo
+                                   WHERE i.ZNo = @ZNo AND i.Status <> 9 AND p.PayType = 5), 0),
+            ChequeAmount = ISNULL((SELECT SUM(CASE WHEN i.InvType = 2 THEN -p.Amount ELSE p.Amount END)
+                                   FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoicePayment p ON p.InvoiceNo = i.InvoiceNo
+                                   WHERE i.ZNo = @ZNo AND i.Status <> 9 AND p.PayType = 6), 0),
             Status       = 1
         FROM dbo.zf_tb_ZReport z
         WHERE z.ZNo = @ZNo;
@@ -985,7 +1029,7 @@ BEGIN
 
     SELECT c.TerminalId, z.ZNo, z.BusinessDate, z.CashierId, z.OpenedAt, z.ClosedAt, z.FromSeq, z.ToSeq,
            z.InvoiceCount, z.LineCount, z.TotalQty, z.SalesAmount, z.RefundAmount, z.NetSales,
-           z.CashAmount, z.CardAmount, z.OtherAmount, z.Status
+           z.CashAmount, z.CardAmount, z.OtherAmount, z.BankAmount, z.ChequeAmount, z.Status
     FROM dbo.zf_tb_ZReport z CROSS JOIN dbo.zf_tb_Config c
     WHERE z.ZNo = @ZNo AND z.Status <> 0;
 
@@ -1023,15 +1067,17 @@ BEGIN
             DiscountAmount = s.DiscountAmount, DiscountPercent = s.DiscountPercent,
             QtyLevel2 = s.QtyLevel2, PriceLevel2 = s.PriceLevel2, QtyLevel3 = s.QtyLevel3, PriceLevel3 = s.PriceLevel3,
             QtyLevel4 = s.QtyLevel4, PriceLevel4 = s.PriceLevel4, Status = s.Status, UDate = s.UDate,
-            CostPrice = s.CostPrice
+            CostPrice = s.CostPrice, UnitCode = s.UnitCode
         FROM dbo.zf_tb_Item t JOIN @Items s ON s.ItemId = t.ItemId;
 
         INSERT dbo.zf_tb_Item (ItemId, RefCode, Barcode, Descrip, Inv_Descrip, SinhalaDescrip, OpenPrice, MaxPrice,
                                RetailPrice, WholesalePrice, SpecialPrice, IsSaleLocked, NoDiscount, DiscountAmount, DiscountPercent,
-                               QtyLevel2, PriceLevel2, QtyLevel3, PriceLevel3, QtyLevel4, PriceLevel4, Status, UDate, CostPrice)
+                               QtyLevel2, PriceLevel2, QtyLevel3, PriceLevel3, QtyLevel4, PriceLevel4, Status, UDate, CostPrice,
+                               UnitCode)
         SELECT s.ItemId, s.RefCode, s.Barcode, s.Descrip, s.Inv_Descrip, s.SinhalaDescrip, s.OpenPrice, s.MaxPrice,
                s.RetailPrice, s.WholesalePrice, s.SpecialPrice, s.IsSaleLocked, s.NoDiscount, s.DiscountAmount, s.DiscountPercent,
-               s.QtyLevel2, s.PriceLevel2, s.QtyLevel3, s.PriceLevel3, s.QtyLevel4, s.PriceLevel4, s.Status, s.UDate, s.CostPrice
+               s.QtyLevel2, s.PriceLevel2, s.QtyLevel3, s.PriceLevel3, s.QtyLevel4, s.PriceLevel4, s.Status, s.UDate, s.CostPrice,
+               s.UnitCode
         FROM @Items s WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Item t WHERE t.ItemId = s.ItemId);
 
         UPDATE dbo.zf_tb_Config SET LastItemSyncAt = @ServerTime WHERE Id = 1;
@@ -1262,6 +1308,45 @@ BEGIN
 
     SELECT MoveId, ZNo, Kind, Amount, Reason, CashierId, CreatedAt, Status
     FROM dbo.zf_tb_CashMovement WHERE ZNo = @ZNo ORDER BY MoveId;
+END
+GO
+
+-- X report: the totals of the OPEN Z as zf_sp_CloseZ would store them right now - read only, nothing is closed or
+-- changed. Same columns as the zf_sp_CloseZ answer (ClosedAt NULL, Status 0); no rows when no Z is open.
+-- The rules here must match zf_sp_CloseZ.
+CREATE PROCEDURE dbo.zf_sp_GetXReport
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @ZNo INT = (SELECT MAX(ZNo) FROM dbo.zf_tb_ZReport WHERE Status = 0);
+
+    SELECT z.ZNo, z.BusinessDate, z.CashierId, z.OpenedAt, CAST(NULL AS DATETIME) AS ClosedAt, z.FromSeq, z.ToSeq,
+           b.InvoiceCount, l.LineCount, l.TotalQty, b.SalesAmount, b.RefundAmount,
+           b.SalesAmount - b.RefundAmount AS NetSales,
+           p.CashAmount, p.CardAmount, p.OtherAmount, p.BankAmount, p.ChequeAmount, m.OpeningCash, m.PaidIn, m.PaidOut,
+           m.OpeningCash + p.CashAmount + m.PaidIn - m.PaidOut AS ExpectedCash, z.Status
+    FROM dbo.zf_tb_ZReport z
+    CROSS APPLY (SELECT COUNT(*) AS InvoiceCount,
+                        ISNULL(SUM(CASE WHEN Status <> 9 AND InvType = 1 THEN NetAmount END), 0) AS SalesAmount,
+                        ISNULL(SUM(CASE WHEN Status <> 9 AND InvType = 2 THEN NetAmount END), 0) AS RefundAmount
+                 FROM dbo.zf_tb_Invoice WHERE ZNo = z.ZNo) b
+    CROSS APPLY (SELECT COUNT(*) AS LineCount,
+                        ISNULL(SUM(CASE WHEN i.InvType = 2 THEN -it.Qty ELSE it.Qty END), 0) AS TotalQty
+                 FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = i.InvoiceNo
+                 WHERE i.ZNo = z.ZNo AND i.Status <> 9) l
+    CROSS APPLY (SELECT ISNULL(SUM(CASE WHEN x.PayType = 1 THEN x.Amount END), 0) AS CashAmount,
+                        ISNULL(SUM(CASE WHEN x.PayType = 2 THEN x.Amount END), 0) AS CardAmount,
+                        ISNULL(SUM(CASE WHEN x.PayType NOT IN (1, 2) THEN x.Amount END), 0) AS OtherAmount,
+                        ISNULL(SUM(CASE WHEN x.PayType = 5 THEN x.Amount END), 0) AS BankAmount,
+                        ISNULL(SUM(CASE WHEN x.PayType = 6 THEN x.Amount END), 0) AS ChequeAmount
+                 FROM (SELECT p.PayType, CASE WHEN i.InvType = 2 THEN -p.Amount ELSE p.Amount END AS Amount
+                       FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoicePayment p ON p.InvoiceNo = i.InvoiceNo
+                       WHERE i.ZNo = z.ZNo AND i.Status <> 9) x) p
+    CROSS APPLY (SELECT ISNULL(SUM(CASE WHEN Kind = 1 THEN Amount END), 0) AS OpeningCash,
+                        ISNULL(SUM(CASE WHEN Kind = 2 THEN Amount END), 0) AS PaidIn,
+                        ISNULL(SUM(CASE WHEN Kind = 3 THEN Amount END), 0) AS PaidOut
+                 FROM dbo.zf_tb_CashMovement WHERE ZNo = z.ZNo AND Status = 1) m
+    WHERE z.ZNo = @ZNo;
 END
 GO
 

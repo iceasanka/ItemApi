@@ -57,6 +57,9 @@ namespace ItemApi.Models
         [Column(TypeName = "decimal(18,2)")] public decimal CashAmount { get; set; }
         [Column(TypeName = "decimal(18,2)")] public decimal CardAmount { get; set; }
         [Column(TypeName = "decimal(18,2)")] public decimal OtherAmount { get; set; }
+        // part of OtherAmount: bank transfer (PayType 5) and cheque (PayType 6); null = the till sent no split
+        [Column(TypeName = "decimal(18,2)")] public decimal? BankAmount { get; set; }
+        [Column(TypeName = "decimal(18,2)")] public decimal? ChequeAmount { get; set; }
         public int? SrvInvoiceCount { get; set; }
         public int? SrvLineCount { get; set; }
         [Column(TypeName = "decimal(18,3)")] public decimal? SrvTotalQty { get; set; }
@@ -156,6 +159,8 @@ namespace ItemApi.Models
         public DateTime? UDate { get; set; }
         // z_tb_ItemDet.CostPrice — till profit view and bill discount cap
         public decimal? CostPrice { get; set; }
+        // z_tb_Unit.UnitCode — KGS = scale item (the till reads the weight from the scale sticker barcode)
+        public string? UnitCode { get; set; }
     }
 
     // GET api/Sync/PriceLinks — row = z_sp_GetPriceLinksForSync = zf_tt_PriceLink on the till. Status 0 = deleted.
@@ -238,7 +243,7 @@ namespace ItemApi.Models
     public class SyncPayment
     {
         public int LineNum { get; set; }
-        // 1 cash, 2 card, 3 credit, 4 voucher
+        // 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque
         public int PayType { get; set; }
         public decimal Amount { get; set; }
         [MaxLength(30)]
@@ -273,6 +278,9 @@ namespace ItemApi.Models
         public decimal CashAmount { get; set; }
         public decimal CardAmount { get; set; }
         public decimal OtherAmount { get; set; }
+        // part of OtherAmount; not sent by tills on the old TillService
+        public decimal? BankAmount { get; set; }
+        public decimal? ChequeAmount { get; set; }
         public List<ZReportSubmitItem> Items { get; set; } = new();
     }
 

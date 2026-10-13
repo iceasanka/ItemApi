@@ -340,6 +340,18 @@ IF COL_LENGTH('dbo.zf_tb_ZReport', 'BankAmount') IS NULL
                                       ChequeAmount DECIMAL(18,2) NULL;
 GO
 
+-- Refund against the original bill (2026-10-13, zf_sp_SaveBillRefund): the refund bill points at the bill and the
+-- line it gives back, so the till can add up what was already refunded. NULL = a refund without a bill / a sale.
+IF COL_LENGTH('dbo.zf_tb_Invoice', 'RefInvoiceNo') IS NULL
+    ALTER TABLE dbo.zf_tb_Invoice ADD RefInvoiceNo VARCHAR(30) NULL;       -- refund bills: the sale bill refunded
+GO
+IF COL_LENGTH('dbo.zf_tb_InvoiceItem', 'RefLineNum') IS NULL
+    ALTER TABLE dbo.zf_tb_InvoiceItem ADD RefLineNum INT NULL;             -- LineNum on that sale bill
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_zf_tb_Invoice_Ref' AND object_id = OBJECT_ID('dbo.zf_tb_Invoice'))
+    CREATE INDEX IX_zf_tb_Invoice_Ref ON dbo.zf_tb_Invoice (RefInvoiceNo);
+GO
+
 /* ---------------------------------------------------------------------------
    2. Drop procs, then types
    --------------------------------------------------------------------------- */
@@ -369,8 +381,11 @@ IF OBJECT_ID('dbo.zf_sp_LogDrawer', 'P')            IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_AddCashMovement', 'P')      IS NOT NULL DROP PROCEDURE dbo.zf_sp_AddCashMovement;
 IF OBJECT_ID('dbo.zf_sp_GetCashSummary', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetCashSummary;
 IF OBJECT_ID('dbo.zf_sp_GetXReport', 'P')           IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetXReport;
+IF OBJECT_ID('dbo.zf_sp_GetInvoiceForRefund', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetInvoiceForRefund;
+IF OBJECT_ID('dbo.zf_sp_SaveBillRefund', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveBillRefund;
 IF OBJECT_ID('dbo.zf_fn_BillLineCost', 'IF')        IS NOT NULL DROP FUNCTION dbo.zf_fn_BillLineCost;
 GO
+IF TYPE_ID('dbo.zf_tt_RefundLine')     IS NOT NULL DROP TYPE dbo.zf_tt_RefundLine;
 IF TYPE_ID('dbo.zf_tt_InvoiceItem')    IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceItem;
 IF TYPE_ID('dbo.zf_tt_InvoicePayment') IS NOT NULL DROP TYPE dbo.zf_tt_InvoicePayment;
 IF TYPE_ID('dbo.zf_tt_InvoiceNo')      IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceNo;
@@ -405,6 +420,12 @@ CREATE TYPE dbo.zf_tt_InvoicePayment AS TABLE (
 GO
 CREATE TYPE dbo.zf_tt_InvoiceNo AS TABLE (
     InvoiceNo VARCHAR(30) NOT NULL PRIMARY KEY
+);
+GO
+-- lines picked on the refund screen (zf_sp_SaveBillRefund): the till works out price and amount itself
+CREATE TYPE dbo.zf_tt_RefundLine AS TABLE (
+    RefLineNum INT           NOT NULL PRIMARY KEY,   -- LineNum on the sale bill
+    Qty        DECIMAL(18,3) NOT NULL                -- how much of it comes back now
 );
 GO
 CREATE TYPE dbo.zf_tt_SuspendedItem AS TABLE (
@@ -1189,7 +1210,8 @@ BEGIN
         THROW 51041, 'Bill not found on this till.', 1;
 
     SELECT i.InvoiceNo, i.InvoiceSeq, i.ZNo, i.InvType, i.InvDate, i.CashierId, i.GrossAmount, i.Discount,
-           i.DiscountPercent, i.NetAmount, i.Status, i.PriceType, i.Synced, c.TerminalCode
+           i.DiscountPercent, i.NetAmount, i.Status, i.PriceType, i.Synced, c.TerminalCode,
+           i.RefInvoiceNo   -- refund against a bill: the sale bill (printed on the refund receipt)
     FROM dbo.zf_tb_Invoice i CROSS JOIN dbo.zf_tb_Config c
     WHERE i.InvoiceNo = @InvoiceNo;
 
@@ -1203,6 +1225,194 @@ BEGIN
 
     SELECT LineNum, PayType, Amount, RefNo, Tendered
     FROM dbo.zf_tb_InvoicePayment WHERE InvoiceNo = @InvoiceNo ORDER BY LineNum;
+END
+GO
+
+-- A sale bill as the refund screen shows it: what was sold, what was already given back, what is left.
+-- 3 result sets: header (CanRefund 0 + Reason when nothing on it can be refunded), lines, the bill's payments.
+-- 51041 when there is no such bill on this till — a bill is refunded on the till that made it.
+CREATE PROCEDURE dbo.zf_sp_GetInvoiceForRefund
+    @InvoiceNo VARCHAR(30)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Invoice WHERE InvoiceNo = @InvoiceNo)
+        THROW 51041, 'Bill not found on this till.', 1;
+
+    -- given back so far, per line of the sale bill (refund bills that were voided do not count)
+    DECLARE @Done TABLE (LineNum INT PRIMARY KEY, Qty DECIMAL(18,3));
+    INSERT @Done (LineNum, Qty)
+    SELECT it.RefLineNum, SUM(it.Qty)
+    FROM dbo.zf_tb_Invoice r
+    JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = r.InvoiceNo
+    WHERE r.RefInvoiceNo = @InvoiceNo AND r.InvType = 2 AND r.Status <> 9 AND it.RefLineNum IS NOT NULL
+    GROUP BY it.RefLineNum;
+
+    DECLARE @Left DECIMAL(18,3) = ISNULL((SELECT SUM(it.Qty - ISNULL(d.Qty, 0))
+                                          FROM dbo.zf_tb_InvoiceItem it LEFT JOIN @Done d ON d.LineNum = it.LineNum
+                                          WHERE it.InvoiceNo = @InvoiceNo), 0);
+
+    SELECT i.InvoiceNo, i.ZNo, i.InvType, i.InvDate, i.CashierId, i.GrossAmount, i.Discount, i.DiscountPercent,
+           i.NetAmount, i.Status, i.PriceType,
+           ISNULL((SELECT SUM(r.NetAmount) FROM dbo.zf_tb_Invoice r
+                   WHERE r.RefInvoiceNo = i.InvoiceNo AND r.InvType = 2 AND r.Status <> 9), 0) AS RefundedAmount,
+           CAST(CASE WHEN i.InvType = 1 AND i.Status = 1 AND @Left > 0 THEN 1 ELSE 0 END AS BIT) AS CanRefund,
+           CASE WHEN i.InvType <> 1 THEN N'This is a refund bill - it cannot be refunded.'
+                WHEN i.Status <> 1  THEN N'This bill was voided - it cannot be refunded.'
+                WHEN @Left <= 0     THEN N'Everything on this bill was already refunded.' END AS Reason
+    FROM dbo.zf_tb_Invoice i
+    WHERE i.InvoiceNo = @InvoiceNo;
+
+    SELECT it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount, it.PriceType,
+           COALESCE(it.LineDescrip, m.Inv_Descrip, m.Descrip, N'Item ' + CAST(it.ItemId AS NVARCHAR(20))) AS Name,
+           COALESCE(m.Barcode, m.RefCode, CASE WHEN it.ItemId <> 0 THEN CAST(it.ItemId AS NVARCHAR(20)) END) AS Code,
+           m.UnitCode,
+           CAST(ISNULL(d.Qty, 0) AS DECIMAL(18,3))          AS RefundedQty,
+           CAST(it.Qty - ISNULL(d.Qty, 0) AS DECIMAL(18,3)) AS LeftQty
+    FROM dbo.zf_tb_InvoiceItem it
+    LEFT JOIN @Done d ON d.LineNum = it.LineNum
+    LEFT JOIN dbo.zf_tb_Item m ON m.ItemId = it.ItemId AND it.ItemId <> 0
+    WHERE it.InvoiceNo = @InvoiceNo
+    ORDER BY it.LineNum;
+
+    SELECT LineNum, PayType, Amount, RefNo
+    FROM dbo.zf_tb_InvoicePayment WHERE InvoiceNo = @InvoiceNo ORDER BY LineNum;
+END
+GO
+
+-- Refund against the original bill. The page sends only WHICH lines and HOW MUCH of each (@Lines); the price,
+-- the discounts and the amount come from the sale bill, never from the page.
+--   - Only a completed sale bill of THIS till. A line can never give back more than was sold on it minus what
+--     earlier refunds of the same bill already gave back (51066) — no PIN lifts that.
+--   - Line: the sale's UnitPrice; its line discount in proportion to the quantity (the last part of a line takes
+--     what is left of the discount).
+--   - Bill discount of the sale: given back in proportion to the refunded line amounts; the refund that brings the
+--     last of the bill back takes what is left, so the refunds of a bill add up to what the customer paid.
+--   - Saved by zf_sp_SaveInvoice as a normal refund bill (InvType 2: own number, open Z, upload, stock comes back
+--     on the back office) with ONE payment of the whole amount (@PayType / @RefNo), then marked with
+--     RefInvoiceNo / RefLineNum. UnitCost and MktPrice are the sale's, so the profit taken back is the profit made.
+--   - @CheckOnly 1: nothing is saved — the same checks and amounts, for the screen before the cashier confirms.
+-- 2 result sets: totals (InvoiceNo NULL when @CheckOnly), refund lines.
+CREATE PROCEDURE dbo.zf_sp_SaveBillRefund
+    @RefInvoiceNo VARCHAR(30),
+    @CashierId    VARCHAR(20) = NULL,
+    @PayType      INT = 1,              -- how the money goes back: 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque
+    @RefNo        VARCHAR(30) = NULL,
+    @Lines        dbo.zf_tt_RefundLine READONLY,
+    @CheckOnly    BIT = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @InvoiceNo VARCHAR(30), @InvType INT, @Status INT, @BillDiscount DECIMAL(18,2), @BillLines DECIMAL(18,2),
+            @Sub DECIMAL(18,2), @Discount DECIMAL(18,2), @Net DECIMAL(18,2), @GivenBack DECIMAL(18,2), @AllBack BIT,
+            @Msg NVARCHAR(400);
+    DECLARE @Items dbo.zf_tt_InvoiceItem, @Payments dbo.zf_tt_InvoicePayment;
+    DECLARE @Map  TABLE (LineNum INT PRIMARY KEY, RefLineNum INT NOT NULL);
+    DECLARE @Done TABLE (LineNum INT PRIMARY KEY, Qty DECIMAL(18,3), Discount DECIMAL(18,2));
+
+    IF NOT EXISTS (SELECT 1 FROM @Lines)
+        THROW 51061, 'Pick at least one line to refund.', 1;
+    IF EXISTS (SELECT 1 FROM @Lines WHERE Qty <= 0)
+        THROW 51062, 'Refund quantity must be above 0.', 1;
+    IF @PayType NOT IN (1, 2, 3, 4, 5, 6)
+        THROW 51067, 'Payment type must be 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer or 6 cheque.', 1;
+
+    BEGIN TRAN;
+        -- the sale bill stays locked until the refund is saved: two refunds of one bill can't both pass the check
+        SELECT @InvType = InvType, @Status = Status, @BillDiscount = Discount
+        FROM dbo.zf_tb_Invoice WITH (UPDLOCK, HOLDLOCK) WHERE InvoiceNo = @RefInvoiceNo;
+
+        IF @InvType IS NULL
+            THROW 51041, 'Bill not found on this till.', 1;
+        IF @InvType <> 1
+            THROW 51063, 'This is a refund bill - it cannot be refunded.', 1;
+        IF @Status <> 1
+            THROW 51064, 'This bill was voided - it cannot be refunded.', 1;
+        IF EXISTS (SELECT 1 FROM @Lines l
+                   WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_InvoiceItem it WHERE it.InvoiceNo = @RefInvoiceNo AND it.LineNum = l.RefLineNum))
+            THROW 51065, 'A picked line is not on this bill. Scan the bill again.', 1;
+
+        INSERT @Done (LineNum, Qty, Discount)
+        SELECT it.RefLineNum, SUM(it.Qty), SUM(it.Discount)
+        FROM dbo.zf_tb_Invoice r
+        JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = r.InvoiceNo
+        WHERE r.RefInvoiceNo = @RefInvoiceNo AND r.InvType = 2 AND r.Status <> 9 AND it.RefLineNum IS NOT NULL
+        GROUP BY it.RefLineNum;
+
+        -- never more than was sold on the line minus what was already given back
+        SELECT TOP 1 @Msg = COALESCE(it.LineDescrip, m.Inv_Descrip, m.Descrip, N'Line ' + CAST(it.LineNum AS NVARCHAR(10)))
+               + CASE WHEN it.Qty - ISNULL(d.Qty, 0) <= 0 THEN N' was already refunded in full.'
+                      ELSE N': only ' + CONVERT(NVARCHAR(30), CAST(it.Qty - ISNULL(d.Qty, 0) AS DECIMAL(18,3)))
+                           + N' left to refund (sold ' + CONVERT(NVARCHAR(30), it.Qty)
+                           + N', already refunded ' + CONVERT(NVARCHAR(30), CAST(ISNULL(d.Qty, 0) AS DECIMAL(18,3))) + N').' END
+        FROM @Lines l
+        JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = @RefInvoiceNo AND it.LineNum = l.RefLineNum
+        LEFT JOIN @Done d ON d.LineNum = it.LineNum
+        LEFT JOIN dbo.zf_tb_Item m ON m.ItemId = it.ItemId AND it.ItemId <> 0
+        WHERE l.Qty > it.Qty - ISNULL(d.Qty, 0)
+        ORDER BY l.RefLineNum;
+        IF @Msg IS NOT NULL
+            THROW 51066, @Msg, 1;
+
+        INSERT @Map (LineNum, RefLineNum)
+        SELECT ROW_NUMBER() OVER (ORDER BY RefLineNum), RefLineNum FROM @Lines;
+
+        INSERT @Items (LineNum, ItemId, Qty, UnitPrice, Discount, Amount, LineDescrip, PriceType, PriceLinkId)
+        SELECT mp.LineNum, it.ItemId, l.Qty, it.UnitPrice, x.Discount, ROUND(l.Qty * it.UnitPrice, 2) - x.Discount,
+               CASE WHEN it.ItemId = 0 THEN it.LineDescrip END, it.PriceType, it.PriceLinkId
+        FROM @Map mp
+        JOIN @Lines l ON l.RefLineNum = mp.RefLineNum
+        JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = @RefInvoiceNo AND it.LineNum = l.RefLineNum
+        LEFT JOIN @Done d ON d.LineNum = it.LineNum
+        CROSS APPLY (SELECT CAST(CASE WHEN l.Qty < it.Qty - ISNULL(d.Qty, 0) THEN ROUND(it.Discount * l.Qty / it.Qty, 2)
+                                      WHEN it.Discount > ISNULL(d.Discount, 0) THEN it.Discount - ISNULL(d.Discount, 0)
+                                      ELSE 0 END AS DECIMAL(18,2)) AS Discount) x;
+
+        SELECT @Sub = SUM(Amount) FROM @Items;
+        SELECT @BillLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem WHERE InvoiceNo = @RefInvoiceNo;
+        SELECT @GivenBack = ISNULL(SUM(Discount), 0) FROM dbo.zf_tb_Invoice
+        WHERE RefInvoiceNo = @RefInvoiceNo AND InvType = 2 AND Status <> 9;
+        SET @AllBack = CASE WHEN EXISTS (SELECT 1 FROM dbo.zf_tb_InvoiceItem it
+                                         LEFT JOIN @Done d ON d.LineNum = it.LineNum
+                                         LEFT JOIN @Lines l ON l.RefLineNum = it.LineNum
+                                         WHERE it.InvoiceNo = @RefInvoiceNo AND it.Qty - ISNULL(d.Qty, 0) - ISNULL(l.Qty, 0) > 0)
+                            THEN 0 ELSE 1 END;
+
+        SET @Discount = CASE WHEN @BillDiscount <= 0 OR @BillLines <= 0 THEN 0
+                             WHEN @AllBack = 1 THEN @BillDiscount - @GivenBack
+                             ELSE ROUND(@BillDiscount * @Sub / @BillLines, 2) END;
+        IF @Discount < 0 SET @Discount = 0;
+        IF @Discount > @Sub SET @Discount = @Sub;
+        SET @Net = @Sub - @Discount;
+
+        IF @CheckOnly = 0
+        BEGIN
+            INSERT @Payments (LineNum, PayType, Amount, RefNo, Tendered) VALUES (1, @PayType, @Net, @RefNo, NULL);
+
+            EXEC dbo.zf_sp_SaveInvoice @InvType = 2, @PriceType = 1, @CashierId = @CashierId, @Discount = @Discount,
+                                       @Items = @Items, @Payments = @Payments, @InvoiceNo = @InvoiceNo OUTPUT;
+
+            UPDATE dbo.zf_tb_Invoice SET RefInvoiceNo = @RefInvoiceNo WHERE InvoiceNo = @InvoiceNo;
+
+            UPDATE r SET RefLineNum = mp.RefLineNum, UnitCost = o.UnitCost, MktPrice = o.MktPrice
+            FROM dbo.zf_tb_InvoiceItem r
+            JOIN @Map mp ON mp.LineNum = r.LineNum
+            JOIN dbo.zf_tb_InvoiceItem o ON o.InvoiceNo = @RefInvoiceNo AND o.LineNum = mp.RefLineNum
+            WHERE r.InvoiceNo = @InvoiceNo;
+        END
+    COMMIT;
+
+    SELECT @InvoiceNo AS InvoiceNo, @RefInvoiceNo AS RefInvoiceNo, @Sub AS LinesAmount, @Discount AS Discount, @Net AS NetAmount;
+
+    SELECT mp.RefLineNum, i.LineNum, i.ItemId,
+           COALESCE(i.LineDescrip, m.Inv_Descrip, m.Descrip, N'Item ' + CAST(i.ItemId AS NVARCHAR(20))) AS Name,
+           i.Qty, i.UnitPrice, i.Discount, i.Amount
+    FROM @Items i
+    JOIN @Map mp ON mp.LineNum = i.LineNum
+    LEFT JOIN dbo.zf_tb_Item m ON m.ItemId = i.ItemId AND i.ItemId <> 0
+    ORDER BY i.LineNum;
 END
 GO
 

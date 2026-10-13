@@ -1957,3 +1957,384 @@ Change the existing "Tills & Z Reports" page (Z Reports tab and the Z detail pag
 
 5) Nothing changes in the till / server comparison or the mismatch rules — payment types are not compared.
 ```
+
+---
+
+## Prompt 41 — Cashier billing: bigger, bold text in the scan box, search, price fields and buttons
+
+No backend change. Only text size / weight and the heights that go with it — the cashier must read the screen from
+a step back. Changes the sizes of Prompts 30 / 32 / 34 (text-xs / text-sm labels) and nothing else.
+
+```
+Change src/pages/CashierBilling.tsx, src/components/till/FunctionBar.tsx, src/components/till/NumPad.tsx,
+src/components/till/PriceCheckDialog.tsx and the till dialogs; add src/components/till/tillText.ts.
+Keep every function, rule, key, colour, dialog and API call exactly as it is — this is ONLY text size, weight and
+the height of the inputs / buttons. /billing only; the back office pages are not touched.
+
+1) src/components/till/tillText.ts — the sizes in ONE place, used everywhere below (no sizes typed by hand):
+     export const tillInput  = "h-14 text-2xl md:text-2xl font-bold placeholder:text-lg placeholder:font-normal";
+     export const tillNumber = "h-14 text-3xl md:text-3xl font-bold text-right tabular-nums";
+   The md: copies are needed: the shadcn <Input> has "text-base md:text-sm" built in, and md:text-sm wins over a
+   plain text-2xl on a till screen (wider than 768 px) — without them the typed text stays small.
+     export const tillPayBtn = "h-16 text-xl font-bold";
+     export const tillBtn    = "text-base font-bold leading-tight";
+
+2) Scan box (main screen): className tillInput — 56 px high, text-2xl bold, dark text (text-foreground, not muted),
+   the placeholder smaller and normal weight so typed text clearly stands out. Border 2 px, and a 2 px primary ring
+   while it has the focus so the cashier sees at a glance where the scanner will type. The "5*" quantity prefix chip
+   (Prompt 25) and the spinner keep their place, sized to the new height. The "Search" button next to it: same
+   height (h-14), text-lg font-bold.
+
+3) Search dialog (F1 / the Search button) and the "Select item" list:
+   - Text input: tillInput, focused on open as today. The "⌨" button same height.
+   - Result rows: Description text-lg font-semibold (inv_Descrip under it text-sm muted), Code text-base,
+     Price text-xl font-bold right aligned, Stock text-base muted. Row height at least 52 px (easy to tap);
+     the highlighted row keeps its highlight. Badges ("Locked", "Several prices") text-sm.
+   - The dialog may grow to max-w-3xl so the bigger rows do not wrap; the list scrolls inside the dialog.
+   - Price check dialog scan box (Prompt 37): tillInput too.
+
+4) Price and amount fields — every field where the cashier types a number gets tillNumber (text-3xl bold,
+   right aligned), label above it text-base font-semibold:
+     · the Qty / Price value shown while the main keypad types into the selected line;
+     · open-price dialog (price), price link picker prices, Other item dialog (Price, Qty);
+     · payment dialog: Cash given, Card amount (Card ref / Transfer ref / Cheque no: tillInput — it is text);
+     · Opening cash / Paid In / Paid Out (Amount), Bill discount %, Z summary "Counted cash";
+     · PIN fields: tillNumber but centred (text-center, tracking-widest).
+   Keep inputMode="none", the first-key-replaces rule and the focus handling of Prompt 32. The value is selected
+   on focus as today.
+
+5) Pay buttons (right panel): Cash / Card / Mixed → tillPayBtn (64 px high, text-xl bold), icon 24 px;
+   Bank transfer / Cheque → h-14 text-lg font-bold. The key chips stay text-xs in the corner.
+   The row [ W/R ] [ Void line ] [ Wholesale ] → tillBtn, icon 20 px, h-14 as now.
+
+6) Bottom function bar (FunctionBar.tsx, 16 buttons, two rows of 8):
+   - Label: tillBtn (text-base font-bold) instead of text-xs; icon 20 px; button h-16 (64 px) instead of h-14.
+   - Labels may still wrap to two lines ("Drawer summary", "Opening cash", "Price check"); min-w-0, never cut off,
+     never an ellipsis. The key chip stays text-xs in the top-right corner and must not cover the label.
+   - Colours, order, "on" ring, disabled opacity and the Recall badge: unchanged.
+
+7) Also, the same step up where it is still small: toolbar buttons (Search · Other item · Discount % · Reload ·
+   Profit · Keys) text-base font-semibold; dialog primary / secondary buttons on /billing h-12 text-lg font-semibold;
+   quick cash buttons (Exact, 500, …) text-xl font-bold. NumPad keys stay text-2xl. Bill lines and totals are
+   already big — do not change them.
+
+8) Layout check at 1366×768 and 1920×1080, touch: no page scroll bar; the function bar's two rows fully visible,
+   no label cut off or overflowing its button; at least 7 bill lines visible at 1366×768 (the bar is 16 px taller —
+   take the space from the bill list, not from the keypad); keypad keys not smaller than before; every dialog,
+   keypad included, still fits without scrolling. After each dialog closes the scan box has the focus, as today.
+```
+
+---
+
+## Prompt 42 — Cashier billing: the text the cashier TYPES is too small (scan box, Select item, Cash given)
+
+No backend change. Three boxes where the typed text is still about 14 px: the scan box on the main screen, the
+text box of the "Select item" dialog, and "Cash given" in the payment dialog. Paste this on its own, or after
+Prompt 41 if the typed text is still small.
+
+```
+Change src/pages/CashierBilling.tsx and the till dialogs (Select item / Search, payment). Only the size of the
+text inside the inputs — nothing else moves or changes.
+
+Cause to fix: the shadcn <Input> carries "text-base md:text-sm". A class like text-2xl does not remove
+md:text-sm, so on a till screen (wider than 768 px) the typed text stays 14 px. Every size below must be given
+with its md: copy too (or set with style={{ fontSize }}), and checked in the browser at 1366×768.
+
+1) Scan box (main screen, "Scan / enter code"):
+   - Typed text: 28 px bold, dark  → "h-16 text-[28px] md:text-[28px] font-bold text-foreground", the normal
+     UI font (font-sans, NOT the monospace it has now), letter-spacing normal.
+   - Placeholder stays small and light so it never looks like typed text:
+     "placeholder:text-base placeholder:font-normal placeholder:text-muted-foreground".
+   - 2 px border; while focused a 2 px primary ring. Padding px-4. The caret must be easy to see (caret-primary).
+
+2) "Select item" dialog — the text box at the top (where the cashier typed "rose ra"):
+   - "h-14 text-2xl md:text-2xl font-bold text-foreground" (24 px bold), px-4; the "⌨" button h-14 to match.
+   - List under it: Description 18 px semibold, Price 20 px bold (already bold — keep), Code and Stock 16 px.
+
+3) Payment dialog — "Cash given" (and Card amount in Card / Mixed):
+   - "h-16 text-4xl md:text-4xl font-bold text-right tabular-nums text-foreground" (36 px bold) — the same
+     weight as the Total above it; it is the number the cashier must check before pressing Complete.
+   - Its label "Cash given" 16 px semibold. "Cash due" value 20 px semibold (it is 14 px now).
+   - Card ref / Transfer ref / Cheque no: 24 px bold, like the Select item box.
+
+4) The same rule for every other box the cashier types into on /billing (Other item price and qty, open price,
+   Opening cash / Paid In / Paid Out amount, Discount %, PIN, Price check scan box): numbers 30 px bold right
+   aligned, text 24 px bold — each with its md: copy.
+
+5) Check at 1366×768 and 1920×1080: type "rose ra" in the scan box and in Select item, and 324 in Cash given —
+   the text must be clearly readable from one metre. No dialog gets a scroll bar, the keypad keys do not shrink,
+   and the focus rules stay exactly as they are.
+```
+
+---
+
+## Prompt 43 — Two themes: Light (as now) and Dark, with a switch
+
+No backend change. The look of today stays as the Light theme, untouched; a Dark theme is added. The choice is
+kept on that computer (each till / PC picks its own), not per user.
+
+```
+Add src/lib/theme.ts and src/components/ThemeToggle.tsx; change index.html, src/index.css, the app layout header,
+src/pages/CashierBilling.tsx, src/components/till/* and src/lib/tillShortcuts.ts.
+Keep every function, layout, size, key and API call exactly as it is — this is ONLY colours.
+Light must look exactly as it does today.
+
+1) How the theme is switched (shadcn way):
+   - Tailwind darkMode: ["class"]; the theme is the class "dark" on <html> (none = light).
+   - src/lib/theme.ts: getTheme() / setTheme("light" | "dark") / toggleTheme() and a useTheme() hook.
+     Saved in localStorage "app.theme"; default "light" when nothing is saved (do NOT follow the Windows setting —
+     a till must not change by itself).
+   - index.html: a tiny inline script in <head> that reads "app.theme" and adds the class before the app loads,
+     so a dark till never flashes white on start or on F5 / Reload.
+   - Also set <html style="color-scheme: dark|light"> so scroll bars and native inputs match.
+
+2) The switch (ThemeToggle.tsx): a button with a Sun / Moon icon and the text "Light" / "Dark" (the theme it
+   switches TO), title "Change theme".
+   - Back office: in the top header, next to the signed-in user.
+   - Sign-in screens (back office and till): top-right corner, so it can be changed before signing in.
+   - /billing: in the top toolbar after "Keys". onMouseDown preventDefault and focusScan() after the click, like
+     every till button. tillShortcuts.ts: new action "theme" (label "Theme", description "Switch light / dark"),
+     no default key — the supervisor can give it one in the Keys dialog. Switching never touches the bill.
+
+3) Dark colours — in src/index.css under ".dark", as the shadcn CSS variables (no new colour system):
+     background  very dark blue-grey (about #0f172a)      foreground  near white (#e5e7eb)
+     card / popover / dialog  one step lighter (#1e293b)   border / input  #334155
+     muted text  #94a3b8  (never darker — it must stay readable)
+     primary  the same blue family, a little lighter (#3b82f6) with white text
+     destructive red #ef4444 · success green #22c55e · warning amber #f59e0b
+   Use the variables everywhere (bg-background, bg-card, text-foreground, text-muted-foreground, border-border).
+   Find every hard-coded light colour (bg-white, bg-gray-50/100, bg-slate-50, text-black, text-gray-700/900,
+   border-gray-200, …) and replace it with the variable or give it a dark: pair. No white panel may be left in Dark.
+
+4) /billing in Dark — the parts with their own colours:
+   - Bill lines: rows on bg-card; the selected line "dark:bg-blue-900/60" with white text and a 2 px left primary
+     bar (today's pale blue highlight is unreadable on dark). Refund lines red text "dark:text-red-400".
+   - Totals: the Total stays the biggest, pure white. Change green "dark:text-green-400", Short red "dark:text-red-400".
+   - Scan box and every input: "dark:bg-slate-900 dark:text-white dark:border-slate-600", placeholder #94a3b8,
+     the focus ring as bright as in Light. The typed text sizes of Prompts 41 / 42 are not changed.
+   - Pay buttons (Cash / Card / Mixed / Bank transfer / Cheque): keep the bright blue, white text.
+   - Navy buttons (function bar, W/R, Void line, Wholesale — bg-blue-900) would vanish on a dark page:
+     "dark:bg-slate-700 dark:hover:bg-slate-600" with a 1 px "dark:border-slate-500" and white text.
+     Void bill stays red, Day end stays amber (dark text on amber). The "on" ring stays white.
+     Disabled: 40 % opacity as now — check a disabled label can still be read.
+   - Keypad / NumPad keys: "dark:bg-slate-800 dark:text-white dark:border-slate-600"; Enter / Complete primary.
+   - Key chips (F1, Ctrl+P …): "dark:bg-black/40 dark:text-slate-200".
+   - Banners: REFUND "dark:bg-red-900 dark:text-red-100"; wholesale "dark:bg-orange-900 dark:text-orange-100";
+     recalled bill and the "Prices were updated" note "dark:bg-amber-900 dark:text-amber-100".
+   - Status / message bar: error "dark:bg-red-800", warning "dark:bg-amber-700", success "dark:bg-green-800",
+     info "dark:bg-slate-700" — all with white text. The Online dot keeps green / red.
+   - Dialogs: bg-card, the overlay "bg-black/70". Blue info strips (Price check, X report) "dark:bg-blue-950
+     dark:text-blue-100". Cost in Price check stays amber ("dark:text-amber-400").
+
+5) Back office pages in Dark:
+   - Tables: header bg-muted, row hover "dark:hover:bg-slate-800", borders border-border; negative quantities
+     "dark:text-red-400".
+   - Chips (GRN green, PRN orange, Sale blue, Refund purple, Adjustment grey, Opening teal; the role chips) keep
+     their colour family: in Dark use the 900 shade as background with the 200 shade as text.
+   - Charts (home page, Sales analysis): axis, grid and legend colours from the variables (grid #334155, labels
+     #94a3b8), tooltip on bg-popover; the series colours a step lighter so they stand out on dark.
+   - Toasts: pass the current theme to the sonner <Toaster theme=…>.
+
+6) Always light, whatever the theme: everything that is PRINTED or exported — receipt / bill copy previews,
+   Z and X prints (80 mm and A4), quotation / invoice PDF, the shortcut "Print list". Wrap the print area in a
+   white, black-text container and in @media print force white background and black text.
+
+7) Check both themes at 1366×768 and 1920×1080: /billing with a bill of normal, refund and wholesale lines, the
+   payment dialog, Select item, Price check, X report, Day end; back office home, a table page and Sales analysis.
+   Text contrast at least 4.5 : 1 (labels on buttons, muted text, disabled buttons, placeholder). Switching the
+   theme keeps the bill, the focus in the scan box and any open page as they are; the choice survives F5 and
+   sign-out.
+```
+
+---
+
+## Prompt 44 — Till: no "Save password?" from Chrome, no browser notifications
+
+No backend change. Two parts — the page (this prompt) and the till PC (below). The page alone cannot switch
+Chrome's password manager off for certain; the PC setting does.
+
+**Till PC, once per till** (not Lovable):
+
+1. Run [Till-Chrome-Policy.reg](Till-Chrome-Policy.reg) as administrator, then close every Chrome window and open
+   it again. `chrome://policy` must list the values with status OK. It turns off the password offer, autofill,
+   notifications, the translate bar and the "make Chrome default" bar for that PC.
+2. Passwords Chrome saved before: `chrome://password-manager/passwords` → remove the till's entries.
+3. Start the till from a shortcut, so there is no address bar and no "Restore pages?" bubble after a power cut:
+   `"C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk "<till url>/billing" --no-first-run --hide-crash-restore-bubble`
+   (`--kiosk` = full screen, Alt+F4 closes it; use `--app="<till url>/billing" --start-maximized` to keep the
+   window frame.)
+
+```
+Change the cashier sign-in screen, the Supervisor PIN dialog and every other PIN / password field on /billing
+(No Sale, Opening cash / Paid In / Paid Out, Discount %, Price check "Show cost", Keys) — and src/components/till/*
+where they live. Keep every function, check, key and API call exactly as it is.
+
+1) No field on /billing may be type="password" — that is what makes Chrome offer "Save password?" and fill in an
+   old one. Make one component src/components/till/SecretInput.tsx and use it for the cashier password and every
+   PIN:
+     <input type="text" inputMode="none" autoComplete="off" autoCorrect="off" autoCapitalize="off"
+            spellCheck={false} data-lpignore="true" data-1p-ignore data-form-type="other"
+            style={{ WebkitTextSecurity: "disc" }} … />
+   - The dots come from -webkit-text-security (Chrome / Edge), so the value is still hidden on the screen.
+   - name / id must not contain "password", "pass", "pwd", "pin", "user" or "login" (use e.g. "f1", "f2").
+   - It keeps the sizes of Prompts 41 / 42, the NumPad typing and the focus rules of today.
+   - No copy / cut from it (onCopy / onCut preventDefault).
+
+2) Cashier user name field: type="text", autoComplete="off", name "f0", spellCheck false — so Chrome shows no
+   list of earlier user names under it.
+
+3) No <form> around these fields (or <form autoComplete="off" onSubmit preventDefault>): Enter and the Sign in /
+   OK buttons call the same handlers as today from onKeyDown / onClick. Chrome offers to save on a form submit
+   followed by a page change — there must be none. After a good sign-in or PIN clear the field's value at once.
+
+4) Scan box, Select item box, amount, qty and ref fields on /billing: autoComplete="off", autoCorrect="off",
+   spellCheck={false} — no suggestion list, no red spelling line under an item name.
+
+5) Notifications: the app never calls Notification.requestPermission(), registers no service worker and no push
+   on /billing — messages go to the bottom bar only (Prompt 29). Remove any such call if one exists.
+
+6) The back office sign-in (Prompt 23) is NOT changed — it keeps a normal password field; office users may let
+   their own browser remember it.
+
+7) Check in Chrome with the password manager still ON (before the PC setting): sign in as a cashier, type a
+   supervisor PIN, do a No Sale — no "Save password?" bubble, no key icon in the address bar, no filled-in or
+   suggested value in any field. The password and the PINs still show as dots.
+```
+
+---
+
+## Prompt 45 — Cashier billing: refund against the original bill (scan the bill, pick the lines)
+
+Backend: TillService `GET /invoices/{no}/refund`, `POST /refunds/check`, `POST /refunds` (StockSystem.md §6.16).
+Every sale receipt now ends with the bill number as a barcode. Needs the new TillService and till db update U004.
+The till works out the money and refuses more than was sold — the page only picks lines and quantities.
+
+```
+Change src/pages/CashierBilling.tsx, src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts and
+src/components/till/FunctionBar.tsx; add src/components/till/RefundBillDialog.tsx. Keep everything else.
+
+1) tillLocalApi.ts — add:
+     export interface RefundBillLine { lineNum: number; itemId: number; name: string; code?: string | null;
+       unitCode?: string | null; qty: number; unitPrice: number; discount: number; amount: number; priceType: number;
+       refundedQty: number; leftQty: number }
+     export interface RefundBill { invoiceNo: string; zNo: number; invDate: string; cashierId?: string | null;
+       grossAmount: number; discount: number; discountPercent?: number | null; netAmount: number; status: number;
+       refundedAmount: number; canRefund: boolean; reason?: string | null;
+       lines: RefundBillLine[]; payments: { lineNum: number; payType: number; amount: number; refNo?: string | null }[] }
+     export interface BillRefundBody { refInvoiceNo: string; lines: { refLineNum: number; qty: number }[];
+       payType?: number; refNo?: string | null; cashierId?: string | null; print?: boolean }
+     export interface BillRefundResult { invoiceNo: string | null; refInvoiceNo: string; linesAmount: number;
+       discount: number; netAmount: number;
+       lines: { refLineNum: number; lineNum: number; itemId: number; name: string; qty: number; unitPrice: number;
+                discount: number; amount: number }[];
+       printed: boolean; drawerOpened: boolean; printError?: string | null }
+
+     getRefundBill(invoiceNo)   → GET  /invoices/{invoiceNo}/refund → RefundBill
+                                   400 { message: "Bill not found on this till." }
+     checkBillRefund(body)      → POST /refunds/check → BillRefundResult (invoiceNo null, nothing saved)
+     saveBillRefund(body, token)→ POST /refunds  with header X-Supervisor-Token: <token> → BillRefundResult
+                                   401 { message } no / expired token;  400 { message } e.g.
+                                   "SUGAR 1KG: only 2.000 left to refund (sold 3.000, already refunded 1.000)."
+   The PrintBill type (GET /invoices/{no}) gets  refInvoiceNo?: string | null.
+
+2) How it opens:
+   - The "Refund" button in the function bar and its shortcut key now open the RefundBillDialog (label "Refund",
+     description "Refund against the bill"). tillShortcuts.ts: keep the action id and its saved key.
+   - Scan box on the main screen: when the text looks like a bill number — /^[A-Za-z0-9]{1,10}-\d{8}$/ (e.g.
+     T01-00000351, what the receipt barcode types) — do NOT look for an item: open the dialog with that number
+     already looked up. If the bill on the screen has lines: message "Finish or suspend the bill on the screen
+     first." and do nothing.
+   - The old refund mode (a refund without a bill) stays, behind a secondary button in the dialog:
+     "No bill — refund without a receipt" → closes the dialog and turns refund mode on exactly as today (PIN as
+     today, red REFUND banner). Nothing else about refund mode changes.
+
+3) RefundBillDialog.tsx (max-w-4xl, two columns from 1280 px: left the bill, right totals + pay back + NumPad):
+   THE BILL ON THE SCREEN IS NEVER TOUCHED — the dialog has its own state. Global shortcuts are off while it is
+   open, as for every dialog; on close → focusScan().
+   a) Top: scan box "Scan the barcode under the bill — or type the bill number" (the big input style of
+      Prompts 41 / 42, focused on open, autoComplete off). Enter → getRefundBill(text.trim().toUpperCase()).
+      400 → the message in red under the box, select the text, keep the focus (ready for the next scan).
+   b) Bill header strip: bill number · date and time (dd/MM/yyyy HH:mm) · cashier · "Paid Rs <netAmount>" ·
+      how it was paid (Cash / Card / Bank transfer / Cheque / Mixed, from payments) ·
+      "Refunded so far Rs <refundedAmount>" when > 0 · "Bill discount Rs <discount>" when > 0.
+      canRefund false → a red strip with `reason`, the lines shown greyed out, nothing can be ticked.
+   c) Lines table (scrolls inside the dialog): [tick] · Item (name; code small, muted) · Sold · Refunded · Left ·
+      Refund qty · Price · Amount.
+        - A line with leftQty 0: greyed out, badge "Refunded", cannot be ticked.
+        - Ticking a line puts leftQty in "Refund qty"; unticking clears it. "Select all" ticks every line that
+          has something left, with its full leftQty.
+        - Refund qty: more than 0 and never more than leftQty — a bigger number is cut back to leftQty and the
+          cell flashes red. Whole numbers only, except unitCode "KGS": up to 3 decimals.
+          Typing a quantity into an unticked line ticks it; 0 or empty unticks it.
+        - Amount = qty × unitPrice − (line discount × qty / sold qty), a preview only, 2 decimals.
+        - Keyboard: ↑/↓ move the highlighted line, Space ticks / unticks, digits (keyboard or NumPad) type the
+          Refund qty of the highlighted line (first key replaces, like every number field), Ctrl+A = Select all.
+   d) Right column — totals from the till, not worked out by the page: after every change (300 ms after the last
+      one) call checkBillRefund({ refInvoiceNo, lines }) with the ticked lines and show
+          Lines            <linesAmount>
+          Bill discount  − <discount>        (only when > 0)
+          REFUND TOTAL     <netAmount>       (text-4xl bold, red)
+      While it loads: the old figures dimmed. 400 → the message in red instead of the totals and the Refund
+      button disabled. No ticked line → "Tick the lines the customer brings back."
+   e) Pay back by: four buttons [ Cash ] [ Card ] [ Bank transfer ] [ Cheque ] (payType 1 / 2 / 5 / 6) — the whole
+      amount goes back ONE way. Default: the way the bill was paid when it had one payment type, else Cash.
+      Card: "Card ref" (optional, max 30). Bank transfer: "Transfer ref" (optional). Cheque: "Cheque no" (REQUIRED).
+      Under it the NumPad of the other dialogs: it types into the field that has the focus (Refund qty of the
+      highlighted line, or the ref field).
+   f) Buttons: "Refund Rs <netAmount>" (primary, red, key Enter when the focus is not in the scan box) ·
+      "Another bill" (clears the dialog, focus back to the scan box) · "Close" (Esc).
+
+4) Saving — the supervisor PIN is asked EVERY time (a token the page already holds is not enough for a refund):
+   - "Refund" → open the existing Supervisor PIN dialog (title "Refund Rs <netAmount> — supervisor PIN")
+     → POST /auth/supervisor { pin } → token → saveBillRefund({ refInvoiceNo, lines, payType, refNo,
+     cashierId, print: true }, token). Wrong PIN → stay in the PIN dialog as today. Cancel → back to the refund
+     dialog, nothing saved.
+   - Guard against a double Enter / double tap with a ref (savingRef), as in the payment dialog.
+   - 200 → close the dialog, message "Refund <invoiceNo> — Rs <netAmount> back to the customer (<Cash/Card/…>)";
+     printed false → also the printError with "Print again" (POST /invoices/{invoiceNo}/print?copy=false), as
+     after a sale. Then reload the status bar and focusScan().
+   - 400 → show the message in the dialog (e.g. another till user refunded it meanwhile), call getRefundBill
+     again so Sold / Refunded / Left are fresh, keep the dialog open.
+     401 → "The PIN was not accepted — try again." and ask the PIN again.
+   - The page never sends prices or amounts and never refunds more than Left on its own either — but the till is
+     the one that decides; always show ITS message.
+
+5) Bill copy dialog: a refund bill made this way shows "Refund of <refInvoiceNo>" in the preview header (the
+   paper already prints "REFUND OF BILL : …"). Sale bills: the preview shows a small barcode-style line
+   "||| <invoiceNo> |||" at the bottom where the real barcode is printed.
+
+6) Keys dialog and "Print list": the Refund row keeps its key; its description becomes "Refund against the bill".
+
+7) Layout check at 1366×768 and 1920×1080, touch: the dialog with a 12-line bill fits without a page scroll bar
+   (the lines table scrolls inside), tick boxes and Refund qty cells at least 44 px high, the REFUND TOTAL and
+   the typed quantity readable from one metre. Try: scan a bill → tick one line → qty 1 of 3 → Refund → PIN →
+   done; scan the same bill again → that line shows Refunded 1, Left 2.
+```
+
+---
+
+## Prompt 46 — Cashier billing: refund payment dialog — nothing to type, the amount is the refund total
+
+No backend change. In refund mode the "Refund — CASH" dialog asks for "Cash paid out" in an empty box. A refund
+always pays back exactly the refund total, so the cashier should only confirm.
+
+```
+Change the payment dialog in src/pages/CashierBilling.tsx (refund mode only). Sales are not changed.
+
+1) Refund — CASH:
+   - No input box. Show instead, big (text-4xl bold, red):   "Pay the customer   Rs <total>"
+     and under it, muted: "Give this amount from the drawer, then press Complete."
+   - Hide "Cash due", the quick cash buttons (Exact, 500, 1000, …) and Change / Short — they are for sales.
+   - The NumPad stays only as the big "Complete" key (digit keys hidden or disabled).
+   - Complete (button, NumPad key and Enter) is enabled at once and sends
+       payments: [{ lineNum: 1, payType: 1, amount: <total>, tendered: <total> }]
+     through the same finishSale with the double-sale guard. The focus is on Complete when the dialog opens,
+     so Cash key → Enter finishes the refund.
+
+2) Refund — CARD / BANK TRANSFER / CHEQUE: the amount is the refund total and is not typed either; only the
+   reference fields stay (Card ref optional, Transfer ref optional, Cheque no required), focused on open.
+   Refund — MIXED: not offered in refund mode (disable the Mixed button and its key while REFUND is on, with
+   the short grey message "A refund is paid back one way.").
+
+3) Title stays "Refund — CASH" etc.; the Complete button reads "Complete refund (Enter)".
+```

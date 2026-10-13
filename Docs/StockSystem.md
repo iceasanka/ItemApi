@@ -127,6 +127,7 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_sp_SearchItems` | cashier search by name: every word in `Descrip` or `Inv_Descrip`, max 50 (needs SQL Server 2016+) |
 | `zf_fn_BillLineCost` / `zf_sp_GetBillProfit` | cost + profit per bill line, the discount cap (§6.7) |
 | `zf_sp_GetInvoicesByDate` / `zf_sp_GetInvoiceForPrint` | bill copies (§6.7) |
+| `zf_sp_GetInvoiceForRefund` / `zf_sp_SaveBillRefund` (`zf_tt_RefundLine`) | refund against the original bill: what is left on each line / save, never more than was sold (§6.16) |
 | `zf_tb_DrawerLog` / `zf_sp_LogDrawer` | every cash drawer opening (§6.7) |
 | `zf_tb_CashMovement` / `zf_sp_AddCashMovement` / `zf_sp_GetCashSummary` | opening cash, paid in, paid out, expected cash (§6.8) |
 | `zf_sp_GetUnsyncedInvoices` / `zf_sp_GetInvoicesByNo` / `zf_sp_MarkInvoicesSynced` | upload queue |
@@ -535,7 +536,14 @@ The full mapping is in the script header. In short:
 - **Not linked**: category, sub-category, supplier (left NULL by choice). Every item's old codes — item code, ref code,
   category, sub-category, supplier, unit — are in **`z_tb_ItemOldCode`** (`OldItemCode` → `ItemId`), so links can be
   added later without the old tables.
-- **Not copied**: stock (load an opening adjustment), price links (`tb_PriceLink`), sales history.
+- **Not copied**: stock (load an opening adjustment), sales history.
+- **Price links** (2026-10-13, `Updates/U005_BackOffice_TransferPriceLinks.sql`): `EXEC dbo.z_sp_TransferOldPriceLinks
+  @DryRun = 1` (then `0`) copies the **active** `tb_PriceLink` rows (Status `1`; `0` deleted and `3` closed by a
+  purchase are left) to `z_tb_ItemPriceLink` through `z_tb_ItemOldCode`: `Price` → `RetailPrice`, `EWholePrice`,
+  `CostPrice` (0 → NULL). Skipped and listed: item not copied, a price that is not a price (a barcode typed in), the
+  item's own retail price, the same price twice, a link that is already there (so a second run adds nothing).
+  Every run also deletes (Status 0 + new `UDate`, so the tills drop them) the price links whose item is no longer
+  in `z_tb_Item`.
 - Re-run: already copied items are left alone; `@UpdateExisting = 1` refreshes them from the old tables (overwrites
   edits made in the new system).
 
@@ -585,6 +593,42 @@ SQL: `Updates/U003_BackOffice_PayTypes.sql`, `Updates/U003_Till_PayTypes.sql` (a
 
 **Deploy order**: `U003_BackOffice` on easyway → ItemApi → each till: `U003_Till` → new TillService → Prompts 39, 40.
 
+### 6.16 Refund against the original bill + bill number barcode (till only, 2026-10-13)
+The customer brings the receipt back; the cashier scans the barcode under it, picks the lines and the quantities, and
+the till gives back exactly what was paid for them. UI: Lovable Prompt 45. SQL: `Updates/U004_Till_RefundBill.sql`
+(and the full script `02`). **No back office change, no ItemApi change.**
+
+- **Barcode on the receipt**: every sale bill ends with its number (`T01-00000351`) as a CODE128 barcode — bars only,
+  no text (the number is already printed at the top), `Receipt:BillBarcodeHeight` dots high (default 40 = 5 mm of
+  paper, 0 = none; raise it if the scanner struggles). Not on refund bills or voided bills. Copies have it too.
+  Needs only the new TillService. Bills printed before it have no barcode — type the number from the top of the bill.
+- **Lookup** `GET /invoices/{no}/refund` → `zf_sp_GetInvoiceForRefund`: the sale bill with, per line, `qty`,
+  `refundedQty`, `leftQty`; `canRefund` false + `reason` for a refund bill, a voided bill or a bill with nothing left.
+- **Save** `POST /refunds { refInvoiceNo, lines: [{ refLineNum, qty }], payType, refNo }` → `zf_sp_SaveBillRefund`.
+  The page sends only which lines and how much; **price, discounts and amount come from the sale bill**:
+  - a line can never give back more than `sold − already refunded` (the sale bill row is locked while the refund is
+    saved, so two refunds can't both pass). **No PIN lifts this.**
+  - line discount: in proportion to the quantity; the last part of a line takes what is left of it.
+  - the sale's bill discount: in proportion to the refunded line amounts; the refund that brings back the last of
+    the bill takes what is left — the refunds of a bill add up to its net amount. (A kg line refunded in several
+    parts can differ by a cent: each part is `ROUND(qty × price, 2)`.)
+  - the whole amount goes back one way (`payType` 1–6; a cheque needs `refNo`). Cash opens the drawer.
+  - needs the **supervisor token** (`X-Supervisor-Token`) every time → 401 without it.
+  `POST /refunds/check` (same body, no token) returns the same amounts without saving — the screen shows them first.
+- **What is stored**: a normal refund bill (`InvType 2`, own number, open Z, uploaded like any bill — the back office
+  puts the stock back as it always did for refunds) made by `zf_sp_SaveInvoice`, plus `zf_tb_Invoice.RefInvoiceNo` and
+  `zf_tb_InvoiceItem.RefLineNum`. `UnitCost` / `MktPrice` are copied from the sale line, so the profit taken back is
+  the profit that was made. The refund receipt prints `REFUND OF BILL : T01-00000351`.
+- **Only on the till that made the bill** (the till has no other till's bills): another till answers
+  "Bill not found on this till." The back office is not told which bill a refund belongs to (`RefInvoiceNo` is not
+  uploaded yet) — both would need the back office (see §8).
+- **Refund mode without a bill** (`POST /invoices` with `invType 2`) still exists for a customer without a receipt:
+  it has no "more than sold" check, because there is no bill to check against.
+- **Mixing versions**: new TillService on a till db without U004 → selling, bill copies and the barcode work; the
+  refund routes answer 400 "This till's database needs an update…". Old TillService on an updated db works.
+
+**Deploy order**: each till: `U004_Till` → new TillService → Prompt 45.
+
 ---
 
 ## 7. Status values
@@ -613,6 +657,8 @@ SQL: `Updates/U003_BackOffice_PayTypes.sql`, `Updates/U003_Till_PayTypes.sql` (a
   the same key (or a per-terminal key) before going live. The rest of the API is behind sign-in once `Auth:Enforce` is on (§6.12).
 - [ ] **Sign-in:** the `userId` fields that pages send in request bodies are still trusted as sent; with sign-in on, the
   server could take the user from the token instead.
+- [ ] **Refund against a bill (§6.16):** works only on the till that made the bill, and the back office does not get
+  `RefInvoiceNo`. Refunding at any till needs a bill lookup + "already refunded" count on the back office (online only).
 - [ ] **Till app:** the `zf_` database is ready, but the cashier program (billing screen + background sync job) still has to be built. It needs a local service/app that talks to the `zf_` db — a pure web page can't work offline against SQL.
 - [ ] **Item delete:** `DeleteItemzAsync` hard-deletes. Tills never hear about deletes, and an item with stock history loses its name on reports. Prefer `Status = 0` (inactive) — tills already get `Status` and `zf_sp_FindItem` ignores inactive items.
 - [ ] **Location code:** `z_tb_System.LocaId` is `'01'` but everything else uses `LocationId = 1`. `z_sp_SaveStockAdjustment` maps `1 → '01'`. Existing GRN/PRN code still hard-codes `"01"`.

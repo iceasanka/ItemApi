@@ -19,11 +19,36 @@ namespace ItemApi.Models
         /// </summary>
         public int Type { get; set; }
 
-        [MaxLength(50)]
-        public string ReferenceId { get; set; }
+        /// <summary>
+        /// Left empty on add → made from the supplier code: SUP001-00001
+        /// </summary>
+        [MaxLength(100)]
+        public string? ReferenceId { get; set; }
 
-        [MaxLength(250)]
+        /// <summary>
+        /// The supplier's bill number (PURCHASE)
+        /// </summary>
+        [MaxLength(50)]
+        public string? InvoiceNo { get; set; }
+
+        [MaxLength(500)]
         public string? Remark { get; set; }
+
+        /// <summary>
+        /// PURCHASE: when the bill should be paid. Empty → TxnDate + the supplier's CreditDays
+        /// </summary>
+        public DateTime? DueDate { get; set; }
+
+        /// <summary>
+        /// PAYMENT made by a written cheque (z_tb_WrittenCheque) — change it through the cheque
+        /// </summary>
+        public int? ChequeId { get; set; }
+
+        /// <summary>
+        /// PAYMENT / RETURN: the bills it pays. null = leave as they are (on change); [] = pays no bill
+        /// </summary>
+        [NotMapped]
+        public List<SupplierAllocation>? Allocations { get; set; }
 
         [Column(TypeName = "decimal(18,2)")]
         public decimal DebitAmount { get; set; } = 0;

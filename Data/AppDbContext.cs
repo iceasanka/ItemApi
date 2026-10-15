@@ -41,6 +41,7 @@ namespace ItemApi.Data
             ConfigureSupplierLedger(modelBuilder);
             ConfigureSalary(modelBuilder);
             ConfigureStockLedger(modelBuilder);
+            ConfigureStockTake(modelBuilder);
             ConfigureExport(modelBuilder);
             ConfigureSalesDoc(modelBuilder);
             ConfigureUser(modelBuilder);
@@ -68,6 +69,7 @@ namespace ItemApi.Data
         partial void ConfigureSupplierLedger(ModelBuilder modelBuilder);
         partial void ConfigureSalary(ModelBuilder modelBuilder);
         partial void ConfigureStockLedger(ModelBuilder modelBuilder);
+        partial void ConfigureStockTake(ModelBuilder modelBuilder);
         partial void ConfigureExport(ModelBuilder modelBuilder);
         partial void ConfigureSalesDoc(ModelBuilder modelBuilder);
         partial void ConfigureUser(ModelBuilder modelBuilder);

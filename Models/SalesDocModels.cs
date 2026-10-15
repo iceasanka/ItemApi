@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
+using ItemApi.Common;
 
 namespace ItemApi.Models
 {
@@ -22,6 +24,7 @@ namespace ItemApi.Models
         public string? Email { get; set; }
         // 1 active, 0 deleted
         public int Status { get; set; } = 1;
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
         public DateTime CDate { get; set; }
         public DateTime UDate { get; set; }
@@ -55,6 +58,7 @@ namespace ItemApi.Models
         public int? FromDocId { get; set; }
         public string? CancelReason { get; set; }
         public int LocationId { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
         public DateTime CDate { get; set; }
         public DateTime UDate { get; set; }
@@ -113,6 +117,7 @@ namespace ItemApi.Models
         public string? QuotationTerms { get; set; }
         [MaxLength(1000)]
         public string? InvoiceTerms { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
         public DateTime UDate { get; set; }
     }
@@ -154,6 +159,7 @@ namespace ItemApi.Models
         public string? Reference { get; set; }
         public string? Notes { get; set; }
         public decimal Discount { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
         public List<SalesDocLineRequest> Items { get; set; } = new();
     }
@@ -174,12 +180,14 @@ namespace ItemApi.Models
     public class SalesDocCancelRequest
     {
         public string? Reason { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
     }
 
     public class SalesDocToInvoiceRequest
     {
         public DateTime? DocDate { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
     }
 

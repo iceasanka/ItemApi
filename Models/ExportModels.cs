@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
+using ItemApi.Common;
 
 namespace ItemApi.Models
 {
@@ -20,6 +22,7 @@ namespace ItemApi.Models
         public DateTime? LastExportAt { get; set; }
         public int? LastExportBy { get; set; }
         public int? LastLineCount { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
         public DateTime UDate { get; set; }
     }
@@ -37,6 +40,7 @@ namespace ItemApi.Models
         // 1 written, 9 failed
         public int Status { get; set; }
         public string? Error { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
         public DateTime CDate { get; set; }
     }
@@ -70,11 +74,13 @@ namespace ItemApi.Models
         public string? FolderPath { get; set; }
         public string? FileName { get; set; }
         public int NameMaxLength { get; set; }
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
     }
 
     public class ExportRunRequest
     {
+        [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
     }
 

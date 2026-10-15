@@ -51,6 +51,8 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `06_BackOffice_SalesDoc.sql` | back office db (`easyway`) | customers, quotations, invoices, PDF settings (§6.11). Re-runnable. **Applied to easyway on 2026-10-08.** |
 | `08_Transfer_OldItems.sql` | back office db (`easyway`) | one-time copy of old `tb_Item` / `tb_ItemDet` into `z_tb_Item` / `z_tb_ItemDet` (§6.13). Re-runnable. **Run on easyway on 2026-10-09: 5 419 items copied.** |
 | `09_Clean_ItemData.sql` | back office db (Part A) + each till db (Part B) | **clean start before going live**: deletes all items and everything that points at them (stock, till uploads, Z reports, price links, quotations/invoices, GRNs, transfer links) and resets their ids. Report only unless `@Delete = 1`. **Run on easyway on 2026-10-09** (Part A only). |
+| `14_BackOffice_StockTake.sql` | back office db (`easyway`), after `01` | stock take (§6.18). Same content as `Updates/U006_BackOffice_StockTake.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-14.** |
+| `15_BackOffice_SupplierPayments.sql` | back office db (`easyway`) | supplier bills → cheques, payees merged into suppliers (§6.19). Same content as `Updates/U007_BackOffice_SupplierPayments.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-14.** |
 | `07_BackOffice_Users.sql` | back office db (`easyway`), after `01` | users, roles, cashier download for tills (§6.12). Re-runnable. **Applied to easyway on 2026-10-09.** `02` got a "Cashier sign-in" section at the end — applied to `z_pos_fnt_db` the same day. |
 
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
@@ -629,6 +631,124 @@ the till gives back exactly what was paid for them. UI: Lovable Prompt 45. SQL: 
 
 **Deploy order**: each till: `U004_Till` → new TillService → Prompt 45.
 
+### 6.17 Customer display on a second screen (till page only, 2026-10-14)
+A second Chrome window, `/customer-display`, on the screen facing the customer: the last item scanned, the bill list,
+the total, and after payment "Thank you" with the cash given and the change. UI: Lovable Prompt 48.
+- **No backend change**: no TillService, no db, no update script. The billing page sends the bill to the display
+  window with a browser `BroadcastChannel` (same Chrome, same PC), so it works offline. Nothing secret is sent (no cost,
+  profit or PIN).
+- Opening: `Ctrl+Shift+D` or the monitor icon in the till's status strip; optional auto-open on start (needs pop-ups
+  allowed for the till site). Chrome's window management permission (asked once) puts it on the second screen.
+- Windows must be set to **Extend these displays**. Both windows must be in the same Chrome profile (two `--kiosk`
+  windows with different `--user-data-dir` would not see each other).
+
+### 6.18 Stock take — count sheets, counts, post the difference (back office, 2026-10-14)
+UI: Lovable Prompt 49. SQL: `Updates/U006_BackOffice_StockTake.sql` (full script `14_BackOffice_StockTake.sql`).
+Code: `StockTakeController`, `StockTakeRepository`, `Data/AppDbContext.StockTake.cs`, `Models/StockTake.cs`.
+
+1. **Create** (`ST00000001`) with a filter (category / sub category / supplier, items with stock only or every active
+   item). `FreezeAt` = now: the count is "as at" this moment. One sheet per category, a new one every
+   `itemsPerSheet` (default 50). Items already in another stock take that is still counting are left out (`skipped`).
+2. **Count**: print the sheets (blind — no system qty unless `showSystemQty=true`), type the counts per sheet, mark it
+   done. Extra sheets ("Store room") and items found on the shelf but not on a sheet can be added; an item on two
+   sheets counts as the **sum** of both. A count can be cleared (null) and changed until the post.
+3. **Variance**: per item counted vs **system qty as at `FreezeAt`** = `SUM(z_tb_StockLedger.Qty WHERE TxnDate <=
+   FreezeAt)`, the difference and its value at AvgCost (cost when the line was made). Totals: short, excess, net.
+4. **Post**: one stock adjustment through `z_sp_SaveStockAdjustment` (quantity mode, reason 1 "Stock count",
+   `AdjDate = FreezeAt`, remark "Stock take ST… counted …", each line's remark = the ST number). Only items with a
+   difference are posted; no difference at all → posted with no adjustment (`adjNo` null). Items nobody counted are
+   **left alone**, unless `uncountedAsZero` (then they are counted as 0 — the item is gone).
+   After the post the variance is read from the adjustment, so it never changes again. Cancel = Status 9, nothing posted.
+
+Why "as at `FreezeAt`" and not the balance at post time: the shop keeps selling while people count. A sale after the
+count is in the balance but was still on the shelf when counted → it must not be "found" again; a till bill from
+**before** the count that uploads late is in the ledger by its till time → it is allowed for at post time. So the
+count can take hours and the tills can be offline, as long as they have uploaded before the **post** (the UI warns
+about stale tills, like count-mode adjustments, §6.2).
+- Not covered: a GRN posted with a `PDate` before `FreezeAt` for goods that arrived **after** the count (GRN lines use
+  the GRN date, often midnight). Don't receive goods into the counted area during the count, or date that GRN later.
+- Values use the cost when the line was made; the posted adjustment uses AvgCost at post time (`TotalAdjValue`).
+
+| Method | Route | Notes |
+|---|---|---|
+| POST | `api/StockTake/Create` | `{ title, catId, subCatId, supId, includeZeroStock, itemsPerSheet, userId }` → `{ message, data }` (header + sheets) |
+| POST | `api/StockTake/Search` | `{ fromDate, toDate, status, stockTakeNo }` → list with `itemCount, countedItems, sheetCount, sheetsDone` |
+| GET | `api/StockTake/{id}` | header + sheets (`lineCount`, `countedLines`, `status` 1 open / 2 done) |
+| GET | `api/StockTake/{id}/Sheet/{sheetId}?showSystemQty=` | `{ header, sheet, lines }` for entering / printing |
+| POST | `api/StockTake/{id}/Sheet` | `{ sheetName, countedBy }` → new empty sheet |
+| POST | `api/StockTake/{id}/Sheet/{sheetId}/AddItem` | `{ itemId }` or `{ code }` (barcode, then item code) → the new line |
+| POST | `api/StockTake/{id}/Sheet/{sheetId}/Counts` | `{ counts: [{ itemId, countedQty, remark }], countedBy, done, userId }` — only the items sent change |
+| GET | `api/StockTake/{id}/Variance?onlyDiff=` | `{ header, itemCount, countedItems, uncountedItems, itemsWithDiff, shortValue, excessValue, netValue, rows }` |
+| POST | `api/StockTake/{id}/Post` | `{ uncountedAsZero, reasonId, userId }` → `{ message, data: { adjNo, adjustedItems } }` |
+| POST | `api/StockTake/{id}/Cancel` | `{ userId }` — only while counting |
+
+Proc errors (not found, already posted, negative count, item not on the sheet, item in another open stock take,
+nothing counted) → 400 `{ message }`.
+
+**Deploy order**: `U006_BackOffice` on easyway → ItemApi → Prompt 49. Tills: nothing.
+
+### 6.19 Supplier bills → cheques (back office, 2026-10-14)
+UI: Lovable Prompt 50. SQL: `Updates/U007_BackOffice_SupplierPayments.sql` (full script `15_BackOffice_SupplierPayments.sql`).
+Code: `SupplierLedgerController`, `SupplierLedgerRepository`, `Data/AppDbContext.SupplierLedger.cs`,
+`Models/SupplierPayments.cs`, `ChequeCreateController` (`AddCheque`, `{id}/bills`).
+
+1. **Bill received** (the GRN comes later): Supplier ledger → add a PURCHASE with the supplier's bill number
+   (`invoiceNo`, unique per supplier) and amount. `referenceId` left empty → `SUPPCODE-00001` (counter
+   `z_tb_Supplier.LedgerSeq`, also for payments and returns). `dueDate` left empty → bill date + the supplier's
+   **cheque period** `z_tb_Supplier.CreditDays` (0 when not set).
+2. **Upcoming payments**: `GET api/SupplierLedger/due` = every bill not fully paid that is due by `toDate` (default
+   today + 30), overdue ones included — shown on the cheque writer by due date.
+3. **Write a cheque**: pick the supplier (search `api/Supplierz`; the payee printed is `PayeeName`, else `SuppName`) →
+   the grid shows its bills (`GET api/SupplierLedger/invoices/{suppId}`, open ones first). Tick bills and the amount
+   paid on each; `AddCheque` with `suppId` + `allocations` saves the cheque **and** one PAYMENT row in the ledger
+   (credit = cheque amount, remark "Cheque 900001 dated … for INV-1, INV-2", `ChequeId` set) in one transaction
+   (`z_sp_LinkWrittenCheque`). `z_tb_WrittenCheque.LedgerId` = that payment row; `z_tb_SupplierPaymentAlloc` = which
+   bills it paid and how much. The cheque may be more than the bills ticked (an advance); not less.
+   **Part payment** (e.g. half now): `amount` < open and `deduction` 0 → the bill stays Part paid, the rest stays
+   open (bills grid, upcoming payments) for a later cheque. The cheque writer's default for the rest is "still owing".
+   **Less returns**: a bill's `amount` = "cheque pay", `deduction` = what was taken off it for returns, so the bill is
+   settled by `amount + deduction` (→ Paid when that is all that was open). The deduction is set against the
+   supplier's RETURN rows not yet set against a bill (oldest first); what is left becomes a new RETURN row
+   "Deducted on cheque 900003 (returns) for B-778" (`ChequeId` set, so it goes when the cheque is deleted). Every
+   allocation the cheque made has `z_tb_SupplierPaymentAlloc.ChequeId`; deleting the cheque undoes all of them.
+   A return the cheque used can't be deleted, nor lowered below what the cheque took from it.
+4. **Track it**: a bill shows Open / Part paid / Paid and `paidBy` ("900001 (25,000.00)"); a cheque's bills:
+   `GET api/ChequeCreate/{id}/bills`; the ledger shows the cheque number, cheque date and whether the bank debited it.
+   A cash payment / return entered on the ledger page can pay bills too (`allocations`).
+
+Rules (procedure errors → 400 `{ message }`): a bill can't be paid more than its amount; a paid bill can't be deleted
+or lowered below what is paid; a cheque's payment row can't be edited / deleted on the ledger page — delete the cheque
+(its payment goes, its bills are open again); a cheque in the ledger can't change its amount (`PUT` → 400).
+`PUT` / `sync` of a cheque keep `suppId` / `ledgerId` even when the page does not send them.
+
+**Payees merged into suppliers**: `z_tb_Supplier.PayeeName` + `CreditDays`. U007 copied each `z_tb_Payee` name to the
+supplier with the same name and set `SuppId` on old cheques the same way (old cheques get no ledger rows); payees that
+match no supplier are listed by the script. **U008** (`z_sp_TransferPayeesToSuppliers`, dry run first) makes those a
+new supplier each — `SuppCode` from the name (`Ceylon Biscuits Ltd` → `CEYL001`), payee name, phone / account / bank
+from the payee — and links their old cheques; applied to dev on 2026-10-15 (Sup1 → SUP004, Sup2 → SUP005). `z_tb_Payee` and
+`api/Payee` stay for old cheques (read only from now on); `z_tb_WrittenCheque.PayeeId` may be NULL.
+U007 also replaces `z_Sp_GetSupplierLedger` / `z_sp_GetSupplierLedger_ByDate`: the old ones used
+`SUM() OVER (ORDER BY)` (SQL 2012+); the running balance of a date range now starts at the opening balance.
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/SupplierLedger/{suppId}` | lines + `invoiceNo, dueDate, chequeId, chequeNumber, chequeDate, chequeDebited, allocatedAmount, openAmount, runningBalance` |
+| POST | `api/SupplierLedger/search` | `{ suppId, fromDate, toDate }` → same lines |
+| POST | `api/SupplierLedger` | `{ suppId, txnDate, type, invoiceNo, referenceId?, remark, debitAmount, creditAmount, dueDate?, allocations? }` → the saved line |
+| PUT | `api/SupplierLedger/{ledgerId}` | same; `allocations` null = what it pays stays, `[]` = pays no bill |
+| DELETE | `api/SupplierLedger/{ledgerId}` | |
+| GET | `api/SupplierLedger/invoices/{suppId}?includePaid=` | bills: `amount, paidAmount, deductedAmount, openAmount, status, paidBy, dueDate, daysToDue` |
+| GET | `api/SupplierLedger/due?toDate=&suppId=` | open bills due by `toDate`, all suppliers: `suppName, payeeName, invoiceNo, dueDate, daysToDue, openAmount` |
+| POST | `api/ChequeCreate/AddCheque` | + `suppId`, `allocations: [{ ledgerId, amount, deduction }]` (all optional — without them it works as before; `deduction` = returns taken off that bill) |
+| POST | `api/Util/printCheque` | same body and same saving as `AddCheque` (the Cheque Writer's Print button); the cheque is saved — and refused if the ledger refuses it — **before** it is printed |
+| GET | `api/ChequeCreate/{id}/bills` | the bills this cheque paid: `billAmount, paidByCheque, deducted` |
+| GET/PUT | `api/Supplierz` | + `payeeName`, `creditDays` (send them back on PUT, or they are cleared) |
+
+`GoogleSheetService` now opens its credential file on first use, so a missing file only fails the sheet sync (which
+the callers already catch), not every cheque route.
+
+**Deploy order**: `U007_BackOffice` on easyway → ItemApi → Prompt 50. Tills: nothing.
+
 ---
 
 ## 7. Status values
@@ -636,6 +756,8 @@ the till gives back exactly what was paid for them. UI: Lovable Prompt 45. SQL: 
 |---|---|
 | `z_tb_TempPurchaseSummary.Status` | 0/1 as before, **2 = posted to stock** (`Meta.PurchasePostedStatus`) |
 | `z_tb_ZReport.Status` | 2 received, 3 reconciled, 4 mismatch |
+| `z_tb_StockTake.Status` / `z_tb_StockTakeSheet.Status` | 1 counting, 2 posted, 9 cancelled / 1 open, 2 done (§6.18) |
+| `z_tb_SupplierLedger.Type` | 1 PURCHASE (bill, debit), 2 PAYMENT (credit), 3 RETURN (credit); a bill is Open / Part paid / Paid by its allocations (§6.19) |
 | `zf_tb_ZReport.Status` | 0 open, 1 closed, 2 submitted, 3 reconciled, 4 mismatch |
 | Invoice `InvType` / `Status` | 1 sale, 2 refund / 1 completed, 9 voided |
 | Invoice `PriceType` | 1 retail, 2 = has wholesale line(s) |

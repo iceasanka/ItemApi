@@ -12,7 +12,7 @@ $keepData = @("z_tb_Location","z_tb_Role","z_tb_StockAdjReason","z_tb_SubCategor
               "z_tb_ExportSetting","z_tb_SalesDocCounter","z_tb_SalesDocSetting")
 $empty    = @("z_tb_ExportLog","z_tb_Item","z_tb_ItemDet","z_tb_ItemPriceLink","z_tb_SalesInvoice",
               "z_tb_SalesInvoiceItem","z_tb_SalesPayment","z_tb_ScaleExportItem","z_tb_StockAdjustment",
-              "z_tb_StockAdjustmentItem","z_tb_StockBalance","z_tb_StockLedger","z_tb_SupplierLedger","z_tb_TempPurchase",
+              "z_tb_StockAdjustmentItem","z_tb_StockBalance","z_tb_StockLedger","z_tb_SupplierLedger","z_tb_SupplierPaymentAlloc","z_tb_TempPurchase",
               "z_tb_TempPurchaseSummary","z_tb_ZReport","z_tb_ZReportItem","z_tb_ItemOldCode","z_tb_SalesDoc","z_tb_SalesDocItem")
 $all = $keepData + $empty
 

@@ -2338,3 +2338,347 @@ Change the payment dialog in src/pages/CashierBilling.tsx (refund mode only). Sa
 
 3) Title stays "Refund — CASH" etc.; the Complete button reads "Complete refund (Enter)".
 ```
+
+---
+
+## Prompt 47 — Cheques: bank CSV upload shows the cheques that were not updated, with CSV export
+
+Backend: `POST api/ChequeCreate/upload` now answers `{ message, result }` and there is a new
+`POST api/ChequeCreate/upload/export`. Needs the new ItemApi (no db change).
+
+```
+Change the existing cheque bank-statement upload (the screen that posts the CSV to api/ChequeCreate/upload).
+Keep the upload part as it is.
+
+1) api: upload answers
+     { message, result: { fileName, totalRows,
+                          debited[], notFound[], amountMismatch[], alreadyDebited[], notUpdated[] } }
+   Each row: { lineNo, bankDate, chequeNumber, bankAmount, dbAmount | null, supplierName | null,
+               chequeDate | null, status, message }
+   status: "Debited" | "NotFound" | "AmountMismatch" | "AlreadyDebited".
+   notUpdated = notFound + amountMismatch (debited by the bank but NOT updated in the database).
+
+2) After the upload, under the upload box, a summary strip:
+     Rows in file <totalRows> · Marked debited <debited.length> (green) ·
+     Not updated <notUpdated.length> (red, bold when > 0) · Already debited <alreadyDebited.length> (muted)
+
+3) At the BOTTOM of the page: card "Debited by the bank — not updated" listing result.notUpdated:
+     Line | Bank date | Cheque no | Bank amount | DB amount | Supplier | Status | Message
+   - Status badge: NotFound red "Not in database", AmountMismatch amber "Amount differs".
+   - Money right aligned, 2 decimals; DB amount "–" when null.
+   - Empty → a green line "All debited cheques were found and updated."
+   - Top right of the card: button "Export CSV" (download icon), disabled when the list is empty.
+     It posts result.notUpdated as the JSON body to POST api/ChequeCreate/upload/export, gets a blob (text/csv)
+     and saves it with the name from Content-Disposition (fallback "Cheques_NotUpdated.csv").
+     400 → toast with the message.
+
+4) Two collapsible sections under it (closed by default): "Marked debited (n)" and "Already debited (n)",
+   same columns, no export.
+```
+
+---
+
+## Prompt 48 — Till: customer display on a second screen (items and total)
+
+No backend change (no TillService, no db). The billing page sends what is on the bill to a second browser window,
+`/customer-display`, that sits on a screen facing the customer. Both windows are in the same Chrome on the till PC, so
+they talk with a `BroadcastChannel` — it works offline too.
+
+```
+1) New file src/lib/customerDisplay.ts
+   - const CH = "till.customerDisplay"; one BroadcastChannel(CH), created lazily (no-op when BroadcastChannel is missing).
+   - Message types:
+       type CdLine  = { name: string; qty: number; unitPrice: number; discount: number; amount: number;
+                        priceType: "retail" | "wholesale" };
+       type CdState =
+         | { kind: "idle" }
+         | { kind: "bill"; refund: boolean; lines: CdLine[]; lastIndex: number | null;
+             itemCount: number; subTotal: number; discount: number; discountPercent: number | null; total: number }
+         | { kind: "paid"; refund: boolean; invoiceNo: string; total: number;
+             cashGiven: number | null; change: number | null; payLabel: string };
+       messages: { type: "state", state: CdState } | { type: "hello" }
+   - publish(state): posts { type: "state", state } and keeps it in localStorage "till.customerDisplay.last" (so a
+     reloaded display shows the bill at once). subscribe(fn) for the display page. sayHello() for the display page.
+   - openCustomerDisplay(): opens the window (see 4). Remember the window in a module variable; when it is still open
+     just focus() it.
+
+2) CashierBilling.tsx — send, never anything secret (no cost, profit, supervisor, cashier PIN):
+   - useEffect on [lines, billDiscount, discPct, total, refund, selected]:
+       no lines → publish({ kind: "idle" }) — but NOT while a "paid" screen is being held (see below);
+       else publish({ kind: "bill", ... }) with lines in bill order, name = the same name the bill grid shows,
+       amount = lineAmount(l), lastIndex = the index of the line added or changed last (fall back to the last line).
+   - finishSale success → publish({ kind: "paid", invoiceNo, total, payLabel: "Cash" | "Card" | "Bank transfer" |
+     "Cheque" | "Mixed", cashGiven / change for cash (null otherwise), refund }). Hold it for 15 s or until the first
+     line of the next bill is scanned, whichever comes first, then idle.
+   - Void bill / suspend → idle at once. Recall → the recalled bill.
+   - Listen on the channel: a "hello" from the display → publish the current state again right away.
+
+3) Opening the display — keep the till screen compact, no new big button:
+   - tillShortcuts.ts: new action "customerDisplay", label "Customer display", description "Open the customer
+     display on the second screen", default key "Ctrl+Shift+D".
+   - Status strip at the top (where online / unsent bills is shown): a small monitor icon (lucide Monitor, 18 px).
+     Green when a display answered in the last 10 s (the display sends "hello" every 5 s), grey otherwise.
+     Title "Customer display — open (Ctrl+Shift+D)". Click = openCustomerDisplay().
+   - Auto open: a checkbox "Open the customer display when the till starts" in the Keys dialog, stored in
+     localStorage "till.customerDisplay.auto". When ticked, /billing calls openCustomerDisplay() once on load. If the
+     window does not open (pop-up blocked) show once: "Allow pop-ups for this site in Chrome to open the customer
+     display automatically" and leave the icon grey.
+
+4) openCustomerDisplay() — put it on the second screen:
+   - If window.getScreenDetails exists (Chrome Window Management): await it (Chrome asks once "Manage windows on all
+     your displays" — Allow), take the first screen that is not isPrimary (else the current one), and
+       window.open("/customer-display", "tillCustomerDisplay",
+                   `popup,left=${s.availLeft},top=${s.availTop},width=${s.availWidth},height=${s.availHeight}`)
+   - Otherwise (or the permission is refused): window.open with left = window.screen.width, top 0, 1024×768.
+   - Remember the chosen screen's left/top in localStorage "till.customerDisplay.pos" and reuse it.
+
+5) New page src/pages/CustomerDisplay.tsx, route "/customer-display" next to "/billing" in App.tsx (outside
+   RequireAuth and AppLayout, no toaster, no sign-in). Full window, no scrollbars, cursor hidden, always dark
+   (bg #0b1220, white text) whatever the till theme, big tabular numbers, money "Rs 1,234.00" (same money format as
+   the till). Shop name: query ?shop=… or localStorage "till.shopName", default "Welcome".
+   On load: show localStorage "till.customerDisplay.last", subscribe, sayHello() and then every 5 s.
+   "Click anywhere for full screen" hint at the bottom until the first click → requestFullscreen().
+
+   Screens:
+   a) idle — shop name large in the middle, "Welcome" under it, a clock (HH:mm) and the date small at the bottom.
+   b) bill — two parts:
+      - Top band (about 30 % of the height): the last item — name (text-5xl, 2 lines max, ellipsis),
+        under it "qty × Rs unit price" and the line amount on the right (text-5xl bold). Wholesale lines get a small
+        "Wholesale" chip. A short flash (bg fades from amber) each time lastIndex or its qty changes.
+      - Below, left 60 %: the bill list — Item | Qty | Price | Amount, text-2xl, newest at the bottom, auto-scrolls
+        to the newest; the last item row highlighted. Line discount as a muted second line "Discount − Rs x".
+      - Below, right 40%: Items <itemCount>; Sub total; Discount (only when > 0, with "(10%)" when a percent);
+        then TOTAL very big (text-7xl bold, green).
+      - Refund: a red band "REFUND" across the top, amounts red, TOTAL label "TO PAY BACK".
+   c) paid — middle: "Thank you!" (text-6xl), the payLabel and "Rs total"; for cash: "Cash Rs cashGiven" and
+      "Your change Rs change" (text-6xl bold, amber) — change hidden when 0. Refund: "Refund Rs total — thank you".
+      Bill number small at the bottom.
+   No buttons, nothing to type; keys do nothing (Esc only leaves full screen).
+
+6) Setup (show this in the Keys dialog under the checkbox, muted, small):
+   "Customer display: connect the second screen, set Windows to Extend these displays, then press Ctrl+Shift+D.
+    Chrome asks once to manage windows — Allow."
+```
+
+---
+
+## Prompt 49 — Stock take: count sheets, enter counts, post the difference
+
+Backend: new `api/StockTake/*` (StockSystem.md §6.18). Needs the new ItemApi and back office db update U006.
+
+```
+New back office feature "Stock Take". Sidebar: "Stock Take" (lucide ClipboardList) right after "Adjustment History".
+Routes: /stock-take (list) and /stock-take/:id (one stock take). Same look as Stock Adjustment.
+
+1) src/services/stockTakeApi.ts (apiClient, same error handling: 400/404 → { message } in a toast)
+   type StockTake = { stockTakeId; stockTakeNo; title; freezeAt; catId; subCatId; supId; includeZeroStock;
+     status: 1 | 2 | 9; adjNo: string | null; uncountedAsZero: boolean | null; postedAt; postedBy; userId;
+     itemCount; countedItems; sheetCount; sheetsDone; sheets?: Sheet[] }
+   type Sheet = { sheetId; sheetNo; sheetName; countedBy; status: 1 | 2; lineCount; countedLines }
+   type SheetLine = { lineNum; itemId; refCode; barcode; descrip; unitCode; countedQty: number | null; remark;
+     countedBy; countedAt; systemQty: number | null }
+   type VarianceRow = { itemId; refCode; barcode; descrip; catName; unitCode; sheets; countedQty: number | null;
+     costPrice; systemQty; diffQty: number | null; diffValue: number | null; retailPrice; remark }
+   createStockTake(body)            POST /StockTake/Create              → { message, data: StockTake }
+   searchStockTakes(body)           POST /StockTake/Search              → StockTake[]
+   getStockTake(id)                 GET  /StockTake/{id}                → StockTake (with sheets)
+   getSheet(id, sheetId, showSys)   GET  /StockTake/{id}/Sheet/{sheetId}?showSystemQty= → { header, sheet, lines }
+   addSheet(id, { sheetName, countedBy })               POST /StockTake/{id}/Sheet
+   addItem(id, sheetId, { itemId } | { code })          POST /StockTake/{id}/Sheet/{sheetId}/AddItem → SheetLine
+   saveCounts(id, sheetId, { counts, countedBy, done, userId })  POST /StockTake/{id}/Sheet/{sheetId}/Counts
+   getVariance(id, onlyDiff)        GET  /StockTake/{id}/Variance?onlyDiff=
+   postStockTake(id, { uncountedAsZero, reasonId, userId })     POST /StockTake/{id}/Post → { message, data: { adjNo, adjustedItems } }
+   cancelStockTake(id, { userId })  POST /StockTake/{id}/Cancel
+   userId = the signed-in user's login name everywhere.
+
+2) /stock-take — list
+   - Filter: from / to date (default last 90 days), status (All / Counting / Posted / Cancelled), ST number. Search.
+   - Table: ST no | Title | Counted as at (freezeAt dd/MM/yyyy HH:mm) | Items (countedItems / itemCount + thin bar) |
+     Sheets (sheetsDone / sheetCount) | Status badge (Counting blue, Posted green with adjNo, Cancelled grey) | open →.
+   - Button "New stock take" → dialog:
+       Title (optional), Category, Sub category (filtered by category), Supplier — the same pickers as Stock Balance,
+       "Include items with no stock" (checkbox, off), "Items per sheet" (number, 50).
+       Muted note: "The count is taken as at the moment you press Start. The shop can keep selling while you count."
+       Start → createStockTake → toast message (it says how many items and sheets) → open /stock-take/:id.
+       data.skipped > 0 → also a warning toast "n items are already in another open stock take and were left out".
+
+3) /stock-take/:id — header strip: ST no, title, "Counted as at …", status badge, progress
+   "Counted 120 of 340 items · Sheets done 3 of 8". Three tabs: Sheets | Enter counts | Variance.
+   Status 2 / 9: everything read only, no Post / Cancel; posted shows "Adjustment ADJ… " as a link to
+   /adjustment-history (search by that number).
+
+   a) Sheets tab: table Sheet no | Name | Counted by | Lines counted (x / y) | Status (Open / Done) | actions:
+      "Enter counts" (switches to tab b with that sheet), "Print".
+      Buttons: "Add sheet" (dialog: name required, counted by), "Print all sheets".
+      Print = a print-only A4 layout (window.print, @media print): per sheet a page break, heading
+      "STOCK TAKE ST… — Sheet n: name", "Counted as at …", "Counted by ________  Checked by ________", and a table
+      # | Item code | Barcode | Description | Unit | Counted (empty box, 30 mm) | Remark (empty).
+      Blind count: NO system quantity on the print.
+
+   b) Enter counts tab: sheet picker (Sheet n — name, with x / y counted) at the top, "Counted by" text box.
+      - Scan / code box (autofocus): scan or type barcode / item code + Enter → jumps to that line on this sheet and
+        selects its Counted box. Not on this sheet → ask "Add <code> to this sheet?" → addItem({ code }) → new line,
+        focused. Unknown code → red message under the box.
+      - Table: # | Code | Description | Unit | Counted (number input, 3 decimals for KGS items, whole numbers
+        otherwise, ≥ 0) | Remark | Counted by / at (muted).
+        Enter in Counted → next line's Counted. Empty = not counted. Changed rows get a yellow edge until saved.
+      - "Show system qty" switch (off; when on, reload with showSystemQty=true and show a muted System column) —
+        for checking a big difference, not for counting.
+      - Buttons: Save (sends only changed rows: countedQty null when emptied), "Save and mark done" (done: true),
+        "Open again" on a done sheet (done: false). Save every 30 s automatically when something changed, and warn
+        before leaving the page with unsaved counts.
+
+   c) Variance tab: getVariance (switch "Only differences and not counted", on by default).
+      - Cards: Items counted x / y · Not counted n (amber) · Short Rs (red, shortValue) · Excess Rs (green,
+        excessValue) · Net Rs.
+      - Table: Code | Description | Category | Sheets | System qty | Counted | Difference (red −, green +) |
+        Cost | Value | Remark. Not counted rows: Counted "—" amber, Difference "not counted". Sort by any column;
+        default biggest |Value| first. Export CSV of what is shown.
+      - Status 1: buttons
+          "Post difference" (primary) → confirm dialog:
+             "Post ST… ? An adjustment is made for n items (net Rs x). This cannot be undone."
+             Radio for items not counted (only when uncountedItems > 0):
+               (•) "Leave them as they are" (uncountedAsZero false)
+               ( ) "They are not in the shop — set them to 0" (uncountedAsZero true, red text)
+             Before posting call getSyncTerminals (the Stock Adjustment page already has it); any active till with
+             isStale → amber warning in the dialog: "Till T02 has not uploaded sales since 10:42. Post after all tills
+             have uploaded, or the system quantities may be wrong." (Post still allowed.)
+             Post → toast message → reload; the variance now shows the posted figures.
+          "Cancel stock take" (outline, red) → confirm → cancelStockTake → back to the list.
+```
+
+---
+
+## Prompt 50 — Supplier bills → cheques: cheque period, upcoming payments, pay bills by cheque
+
+Backend: Docs/StockSystem.md §6.19. Needs `U007_BackOffice_SupplierPayments.sql` on easyway and the new ItemApi.
+
+```
+Supplier bills (pencil notes in the Supplier Ledger) are now paid by cheques, and the payee list is merged into the
+supplier. Change four pages. Keep everything else on them as it is.
+
+1) Types / services
+   - src/Models/SupplierEntity.ts: add  payeeName?: string | null;  creditDays?: number | null;
+   - src/services/supplierLedgerApi.ts:
+       SupplierLedgerEntry: add invoiceNo, dueDate, chequeId, chequeNumber, chequeDate, chequeDebited,
+                            allocatedAmount, openAmount (all may be null).
+       AddLedgerPayload: referenceId becomes optional (empty → the server makes SUP001-00001); add
+                         invoiceNo?: string; dueDate?: string | null;
+                         allocations?: { ledgerId: number; amount: number }[] | null.
+       POST/PUT answer with the saved line (PUT: { message, data }).
+       new  getSupplierInvoices(suppId, includePaid=false) → GET /invoices/{suppId}?includePaid=
+            rows: { ledgerId, txnDate, referenceId, invoiceNo, remark, dueDate, daysToDue, amount, paidAmount,
+                    deductedAmount, openAmount, status: "Open" | "Part paid" | "Paid", paidBy }
+       new  getPaymentsDue(toDate?, suppId?) → GET /due?toDate=&suppId=
+            rows: { ledgerId, suppId, suppCode, suppName, payeeName, creditDays, txnDate, referenceId, invoiceNo,
+                    dueDate, daysToDue, amount, paidAmount, openAmount }
+   - src/services/chequeApi.ts: createCheque also sends  suppId?: number | null;
+       allocations?: { ledgerId: number; amount: number; deduction: number }[].
+       new getChequeBills(chequeId) → GET /{id}/bills
+       rows { ledgerId, txnDate, referenceId, invoiceNo, billAmount, paidByCheque, deducted }.
+   - All 400 answers carry { message } → show it in a toast.
+
+2) Supplier page (/supplier): two new fields in the add / edit form and two columns in the grid:
+     "Payee name (on cheques)"  text, placeholder = the supplier name ("empty = supplier name")
+     "Cheque period (days)"     number 0-365, helper "A bill is due this many days after its date"
+   Always send both back on update (the API clears them when they are missing).
+
+3) Supplier Ledger page (/supplier-ledger)
+   - Add / edit dialog:
+       PURCHASE: "Bill no" (invoiceNo, required for a purchase, max 50) | Date | Amount | "Due date" (date,
+                 optional — prefilled with date + the supplier's creditDays and following the date until the user
+                 changes it; helper "Cheque period n days") | Remark.
+       "Reference" becomes read-only text: "auto (SUP001-00001)" on add, the referenceId on edit.
+       PAYMENT / RETURN: Date | Amount | Remark, then a table "Pays these bills" from getSupplierInvoices(suppId)
+                 (open ones; on edit also the ones this payment already pays): tick box | Bill no | Date | Due |
+                 Open | "Pay" amount (prefilled with min(open, what is left of the payment)). Footer "Allocated x of
+                 y". Send allocations = the ticked rows (on edit send [] when nothing is ticked). Optional — a
+                 payment with no bill ticked is fine.
+   - Grid: add columns "Bill no" and "Due" (PURCHASE only; red when due date < today and openAmount > 0) and
+     "Open" (PURCHASE: openAmount, green "Paid" badge when 0, amber "Part paid" when 0 < open < amount).
+     An entry made by a cheque (chequeId not null: its PAYMENT, and a RETURN "Deducted on cheque …"): show
+     "Cheque 900001 · 20 Oct" in the Bill no column, a small
+     "Debited" / "Not debited" badge (chequeDebited 1/0), and hide its edit / delete buttons (tooltip "Change it
+     on the cheque").
+   - Running balance column uses runningBalance from the API (a date range now starts at the opening balance).
+
+4) Cheque Writer page (/cheque-writer)
+   - Supplier search: search SUPPLIERS (searchSuppliersByName from supplierzApi) instead of payees. Dropdown row:
+     "SUP001 — Suppliers 001  (Payee: Suppliers 001 (Pvt) Ltd)". On pick: payee = supplier.payeeName ||
+     supplier.suppName (still editable), keep suppId; supplierName = suppName.
+   - Under the form, when a supplier is picked: card "Bills from <suppName>" = getSupplierInvoices(suppId),
+     switch "Show paid bills" (includePaid).
+       Columns: tick | Bill no | Ref | Date | Due (red "overdue n days" / amber "due in n days" when <= 7) |
+                Amount | Paid | Open | Status badge | Paid by (paidBy text, small; "less returns x" when
+                deductedAmount > 0).
+       Paid rows: no tick box, muted.
+       When a bill is ticked, two columns appear in that row (hidden / empty when not ticked):
+         "Cheque pay"  number input, prefilled with the bill's open amount (0 .. open), with small quick buttons
+                       "Full" (= open) and "Half" (= open / 2, rounded to 2 decimals).
+         "Rest"        shown only when cheque pay < open: the rest (= open − cheque pay) and a two-way choice
+                       (segmented toggle), default "Still owing":
+                         "Still owing"   → part payment: no deduction, the bill stays Part paid and the rest
+                                           shows up again in the bills grid and in Upcoming payments.
+                         "Less returns"  → the rest was taken off for returns: deduction = rest, the bill becomes
+                                           Paid (amber text "returns x").
+                       Status preview in the row: "Paid" / "Part paid — x still owing" / "Paid (less returns x)".
+       The cheque Amount field is filled with the sum of "Cheque pay" of the ticked bills while the user has not
+       typed an amount by hand (after that, show "Bills ticked: x — cheque: y", red when the bills are more than
+       the cheque). Under the grid: "Part paid: Rs x still owing" (when any) and "Returns taken off: Rs x — those bills
+       are marked paid" (when any).
+       Save / print is blocked with a toast when the cheque pay total is more than the cheque amount.
+   - createCheque sends suppId and allocations [{ ledgerId, amount: chequePay, deduction }] for the ticked rows,
+     deduction = (Rest = "Less returns" ? open − chequePay : 0). A row with cheque pay 0 and a deduction is allowed (a bill
+     settled by returns only). None ticked → the cheque is still saved, as an advance in the ledger.
+     After save: toast, reload the bills grid.
+     (Server side the deduction first uses returns already entered in the ledger that are not set against a bill,
+     then adds a RETURN row "Deducted on cheque …"; so a return typed on the ledger page is not counted twice.)
+   - New card on the right (or above the chart) "Upcoming payments" = getPaymentsDue(today + 30 days):
+       grouped by due date ("Overdue" group first, red), each row: Supplier | Bill no | Open amount, and per
+       group the total. Header total of everything. Clicking a row picks that supplier in the form and ticks
+       that bill. A select 7 / 14 / 30 / 60 days changes toDate.
+   - In the chart (cheques by date), add a second series "Bills due" = sum of openAmount by dueDate from the
+     same getPaymentsDue data, so written cheques and coming bills are seen together.
+
+5) Payee page (/payee): payees now live on the supplier. Remove "Payee" from the sidebar; keep the route, and at
+   the top of the page show an info banner "Payee names are now set on the Supplier page (Payee name). This list
+   is kept for old cheques." with a link to /supplier; hide its add button.
+
+6) Cheque Summary page (/cheque-summary): the row of a cheque written for a supplier gets an expand arrow that
+   loads getChequeBills(chequeId): Bill no | Ref | Date | Bill amount | Paid by this cheque | Less returns.
+```
+
+---
+
+## Prompt 51 — Supplier Ledger: Refresh button, From / To dates start at today
+
+Backend: nothing new (`POST api/SupplierLedger/search` already filters by date and its running balance starts at the
+balance brought forward). UI only.
+
+```
+Supplier Ledger page (/supplier-ledger, src/pages/SupplierLedger.tsx):
+
+1) From Date and To Date start filled with TODAY (yyyy-MM-dd) when the page opens.
+
+2) One load function used everywhere, e.g. reloadLedger():
+   - no supplier picked → do nothing;
+   - both dates filled → searchLedger(suppId, fromDate, toDate), else getLedgerBySupplier(suppId);
+   - always also getLedgerSummary(suppId) (the summary cards stay for the whole ledger);
+   - loadingLedger while it runs; on error toast "Failed to load ledger".
+   Send the dates as plain "yyyy-MM-dd" strings (not new Date(x).toISOString()).
+   From after To → toast "From date is after To date" and don't load.
+
+3) Picking a supplier loads with the dates shown (today..today at first), NOT the whole ledger.
+   Changing a supplier keeps the dates the user set.
+   After Add / Edit / Delete of an entry the grid reloads the same way (same dates).
+
+4) Header buttons (top right, before Print): "Refresh" (outline, RefreshCw icon, spins while loadingLedger),
+   disabled when no supplier is picked → reloadLedger() with the dates shown. Only this one Refresh button.
+
+5) Date filter card buttons: "Search" → reloadLedger(); "Today" → both dates = today and reload;
+   "All dates" (replaces "Clear") → empty both dates and reload (whole ledger).
+   Under the inputs a muted line: "Showing <from> to <to> — balance includes earlier entries" or
+   "Showing all dates" when empty.
+
+6) Empty grid for the range → "No entries from <from> to <to>." with a link-button "Show all dates".
+```

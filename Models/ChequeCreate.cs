@@ -21,10 +21,23 @@ namespace ItemApi.Models
         [JsonPropertyName("chequeWrittenDate")]
         public DateTime ChequeWrittenDate { get; set; } = DateTime.Now;
 
-        public int PayeeId { get; set; }
+        // old payee list (z_tb_Payee); cheques written for a supplier have SuppId instead
+        [JsonPropertyName("payeeId")]
+        public int? PayeeId { get; set; }
 
         [JsonPropertyName("supplierName")]
         public string SupplierName { get; set; }
+
+        [JsonPropertyName("suppId")]
+        public int? SuppId { get; set; }
+
+        // the PAYMENT row this cheque made in z_tb_SupplierLedger (z_sp_LinkWrittenCheque)
+        [JsonPropertyName("ledgerId")]
+        public int? LedgerId { get; set; }
+
+        // the name printed on the cheque
+        [JsonPropertyName("payeeName")]
+        public string? PayeeName { get; set; }
 
 
         /// <summary>

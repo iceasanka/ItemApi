@@ -28,6 +28,14 @@ namespace ItemApi.Common
             Mismatch = 4
         }
 
+        // z_tb_StockTake.Status
+        public enum StockTakeStatus
+        {
+            Counting = 1,
+            Posted = 2,
+            Cancelled = 9
+        }
+
         // z_tb_TempPurchaseSummary.Status once z_sp_PostGrn / z_sp_PostPrn has moved it into stock
         public const int PurchasePostedStatus = 2;
     }

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text;
 using ItemApi.Interface;
+using Microsoft.Data.SqlClient;
 
 
 namespace ItemApi.Controllers
@@ -188,22 +189,30 @@ namespace ItemApi.Controllers
                 cheque.printTemplatePath = _appSettings.ChequePrintTemplatePath;
                 cheque.printType = 4; // Cheque Print
 
-                //Asanka
-                await PrintLocalAgent(PrintJobType.Cheque, cheque);
+                // saved before it is printed: a cheque the supplier ledger refuses (bill already paid, ...) is not printed
+                if (await _repository.ChequeNumberExistsAsync(cheque.chequeNumber))
+                    return Conflict(new { code = "DUPLICATE_CHEQUE_NUMBER", message = $"Cheque number {cheque.chequeNumber} already exists." });
+                var billsError = cheque.BillsError();
+                if (billsError != null)
+                    return BadRequest(new { message = billsError });
 
-                ChequeCreate chequeCreate = new ChequeCreate();
-                chequeCreate.Amount  = cheque.amount;
-                chequeCreate.ChequeDate = cheque.chequeDate;
-                chequeCreate.PayeeId    = cheque.payeeId;
-                chequeCreate.SupplierName= cheque.supplierName;
-                chequeCreate.ChequeNumber = cheque.chequeNumber;
-                chequeCreate.IsSync = 0;
+                // same as ChequeCreate/AddCheque: with a supplier it is also a PAYMENT in the supplier ledger (§6.19)
+                ChequeCreate chequeCreate;
+                try
+                {
+                    chequeCreate = await _repository.WriteChequeAsync(cheque);
+                }
+                catch (SqlException ex) when (ex.Number >= 50000)
+                {
+                    // the first error is the proc's message; inside our transaction SQL adds "Transaction count ..." ones after it
+                    return BadRequest(new { message = ex.Errors.Count > 0 ? ex.Errors[0].Message : ex.Message });
+                }
+
+                //Asanka  --ice uncomment
+                await PrintLocalAgent(PrintJobType.Cheque, cheque);
 
                 //Asanka : Need to remove
                 //return Ok(new { message = "Print request processed successfully." });
-
-
-                await _repository.AddChequeAsync(chequeCreate);
 
 
                 bool isSyncSuccess = false;

@@ -116,6 +116,7 @@ builder.Services.AddScoped<ITempPurchaseReturnSummaryRepository, TempPurchaseRet
 builder.Services.AddScoped<ITempPurchaseReturnRepository, TempPurchaseReturnRepository>();
 builder.Services.AddScoped<IStockLedgerRepository, StockLedgerRepository>();
 builder.Services.AddScoped<IStockAdjustmentRepository, StockAdjustmentRepository>();
+builder.Services.AddScoped<IStockTakeRepository, StockTakeRepository>();
 builder.Services.AddScoped<ISyncRepository, SyncRepository>();
 builder.Services.AddScoped<ISystemRepository, SystemRepository>();
 builder.Services.AddScoped<ISupplierLedgerRepository, SupplierLedgerRepository>();

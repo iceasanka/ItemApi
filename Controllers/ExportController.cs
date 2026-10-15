@@ -1,3 +1,4 @@
+using ItemApi.Common;
 using ItemApi.Interface;
 using ItemApi.Models;
 using ItemApi.Repositories;
@@ -43,6 +44,7 @@ namespace ItemApi.Controllers
         {
             if (request == null)
                 return BadRequest(new { message = "Settings are required." });
+            request.UserId = User.CurrentUserId(request.UserId);
             return await Run(async () =>
                 Ok(new { message = "Export settings saved.", data = await _repository.UpdateSettingAsync(exportCode, request) }));
         }
@@ -63,7 +65,7 @@ namespace ItemApi.Controllers
             if (!IsScale(exportCode)) return UnknownExport(exportCode);
             return await Run(async () =>
             {
-                var result = await _repository.RunScaleExportAsync(request?.UserId);
+                var result = await _repository.RunScaleExportAsync(User.CurrentUserId(request?.UserId));
                 return Ok(new { message = $"{result.LineCount} items written to {result.FilePath}.", data = result });
             });
         }

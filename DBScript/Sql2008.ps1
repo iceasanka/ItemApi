@@ -53,4 +53,8 @@ function Assert-Sql2008([string]$name, [string]$def) {
     if ($code -match '(?i)\bTHROW\b|OFFSET\s+\S+\s+ROWS|\bIIF\s*\(|\bCHOOSE\s*\(|\bCONCAT\s*\(|\bFORMAT\s*\(|\bTRY_(CONVERT|CAST|PARSE)\b|\bEOMONTH\b|FROMPARTS\b|\bSTRING_(AGG|SPLIT)\b|\bOPENJSON\b|\bJSON_|NEXT VALUE FOR|\bLAG\s*\(|\bLEAD\s*\(|_VALUE\s*\(|CREATE OR ALTER|DROP\s+\w+\s+IF EXISTS|ALTER DATABASE CURRENT') {
         throw "${name}: uses SQL Server 2012+ syntax ($($Matches[0])) - production and tills are SQL Server 2008 R2"
     }
+    # running totals: SUM(x) OVER (ORDER BY ...) is 2012+ (ROW_NUMBER() OVER (ORDER BY) and SUM() OVER (PARTITION BY) are fine)
+    if ($code -match '(?i)\b(SUM|COUNT|AVG|MIN|MAX)\s*\((?:[^()]|\([^()]*\))*\)\s*OVER\s*\([^)]*\bORDER\s+BY') {
+        throw "${name}: uses SQL Server 2012+ syntax ($($Matches[0])) - production and tills are SQL Server 2008 R2"
+    }
 }

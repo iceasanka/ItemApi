@@ -6,6 +6,12 @@ namespace ItemApi.Interface
     {
         Task AddChequeAsync(ChequeCreate cheque);
 
+        Task<ChequeCreate> WriteChequeAsync(Cheque cheque);
+
+        Task AddChequeForSupplierAsync(ChequeCreate cheque, int suppId, List<SupplierAllocation>? allocations);
+
+        Task<List<ChequeBillRow>> GetChequeBillsAsync(int chequeId);
+
         Task<IEnumerable<ChequeCreate>> SearchChequesByDateRangeAsync(DateTime fromDate, DateTime toDate,int? chequeNumber,string? supplierName,decimal? amount);
 
         Task<IEnumerable<ChequeCreate>> GetChequesByPayeeIdAsync(int payeeId);
@@ -17,7 +23,9 @@ namespace ItemApi.Interface
         Task SyncChequesAsync(IEnumerable<ChequeCreate> cheques);
 
         Task SyncPrintedChequeAsync(ChequeCreate cheque);
-        Task ProcessFile(string filePath);
+        Task<ChequeUploadResult> ProcessFile(string filePath);
+
+        byte[] BuildUploadRowsCsv(IEnumerable<ChequeUploadRow> rows);
 
         Task<bool> ChequeNumberExistsAsync(int chequeNumber);
 

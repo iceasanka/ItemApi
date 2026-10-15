@@ -1,3 +1,4 @@
+using ItemApi.Common;
 using ItemApi.Interface;
 using ItemApi.Models;
 using ItemApi.Service;
@@ -51,6 +52,7 @@ namespace ItemApi.Controllers
             if (request == null) return BadRequest(new { message = "Document is required." });
             return await Run(async () =>
             {
+                request.UserId = User.CurrentUserId(request.UserId);
                 var doc = await _repository.CreateAsync(request);
                 return Ok(new { message = $"{Name(doc)} {doc.DocNo} saved.", data = doc });
             });
@@ -63,6 +65,7 @@ namespace ItemApi.Controllers
             if (request == null) return BadRequest(new { message = "Document is required." });
             return await Run(async () =>
             {
+                request.UserId = User.CurrentUserId(request.UserId);
                 var doc = await _repository.UpdateAsync(docId, request);
                 return Ok(new { message = $"{Name(doc)} {doc.DocNo} saved.", data = doc });
             });
@@ -74,7 +77,9 @@ namespace ItemApi.Controllers
         {
             return await Run(async () =>
             {
-                var doc = await _repository.CancelAsync(docId, request ?? new SalesDocCancelRequest());
+                request ??= new SalesDocCancelRequest();
+                request.UserId = User.CurrentUserId(request.UserId);
+                var doc = await _repository.CancelAsync(docId, request);
                 return Ok(new { message = $"{Name(doc)} {doc.DocNo} cancelled.", data = doc });
             });
         }
@@ -85,7 +90,9 @@ namespace ItemApi.Controllers
         {
             return await Run(async () =>
             {
-                var invoice = await _repository.ToInvoiceAsync(docId, request ?? new SalesDocToInvoiceRequest());
+                request ??= new SalesDocToInvoiceRequest();
+                request.UserId = User.CurrentUserId(request.UserId);
+                var invoice = await _repository.ToInvoiceAsync(docId, request);
                 return Ok(new { message = $"Invoice {invoice.DocNo} made.", data = invoice });
             });
         }
@@ -121,6 +128,7 @@ namespace ItemApi.Controllers
         public async Task<IActionResult> UpdateSettings([FromBody] SalesDocSetting request)
         {
             if (request == null) return BadRequest(new { message = "Settings are required." });
+            request.UserId = User.CurrentUserId(request.UserId);
             return await Run(async () =>
                 Ok(new { message = "Settings saved.", data = await _repository.UpdateSettingAsync(request) }));
         }
@@ -142,7 +150,7 @@ namespace ItemApi.Controllers
 
         // POST: api/SalesDoc/Settings/Logo (multipart: file, userId) — PNG or JPG, max 2 MB
         [HttpPost("Settings/Logo")]
-        public async Task<IActionResult> UploadLogo(IFormFile file, [FromForm] int? userId)
+        public async Task<IActionResult> UploadLogo(IFormFile file, [FromForm] string? userId)
         {
             if (file == null || file.Length == 0) return BadRequest(new { message = "Choose a logo file." });
             if (file.Length > MaxLogoBytes) return BadRequest(new { message = "Logo must be 2 MB or smaller." });
@@ -157,7 +165,7 @@ namespace ItemApi.Controllers
                 var name = $"company-logo-{DateTime.Now:yyyyMMddHHmmss}{ext}";
                 await using (var stream = System.IO.File.Create(Path.Combine(_pdf.UploadsPath, name)))
                     await file.CopyToAsync(stream);
-                var s = await _repository.SetLogoAsync(name, userId);
+                var s = await _repository.SetLogoAsync(name, User.CurrentUserId(UserIdentity.ParseUserId(userId)));
                 DeleteLogoFile(old);
                 return Ok(new { message = "Logo saved.", data = s });
             });
@@ -165,12 +173,12 @@ namespace ItemApi.Controllers
 
         // DELETE: api/SalesDoc/Settings/Logo?userId=3
         [HttpDelete("Settings/Logo")]
-        public async Task<IActionResult> DeleteLogo([FromQuery] int? userId)
+        public async Task<IActionResult> DeleteLogo([FromQuery] string? userId)
         {
             return await Run(async () =>
             {
                 var old = (await _repository.GetSettingAsync()).LogoFile;
-                var s = await _repository.SetLogoAsync(null, userId);
+                var s = await _repository.SetLogoAsync(null, User.CurrentUserId(UserIdentity.ParseUserId(userId)));
                 DeleteLogoFile(old);
                 return Ok(new { message = "Logo removed.", data = s });
             });

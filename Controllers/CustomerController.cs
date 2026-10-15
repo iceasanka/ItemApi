@@ -1,3 +1,4 @@
+using ItemApi.Common;
 using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -42,6 +43,7 @@ namespace ItemApi.Controllers
         public async Task<IActionResult> Add([FromBody] Customer customer)
         {
             if (customer == null) return BadRequest(new { message = "Customer is required." });
+            customer.UserId = User.CurrentUserId(customer.UserId);
             return await Run(async () => Ok(new { message = "Customer saved.", data = await _repository.AddAsync(customer) }));
         }
 
@@ -50,17 +52,18 @@ namespace ItemApi.Controllers
         public async Task<IActionResult> Update(int customerId, [FromBody] Customer customer)
         {
             if (customer == null) return BadRequest(new { message = "Customer is required." });
+            customer.UserId = User.CurrentUserId(customer.UserId);
             return await Run(async () =>
                 Ok(new { message = "Customer saved.", data = await _repository.UpdateAsync(customerId, customer) }));
         }
 
         // DELETE: api/Customer/5?userId=3 — Status 0; old documents are not changed
         [HttpDelete("{customerId:int}")]
-        public async Task<IActionResult> Delete(int customerId, [FromQuery] int? userId)
+        public async Task<IActionResult> Delete(int customerId, [FromQuery] string? userId)
         {
             return await Run(async () =>
             {
-                await _repository.DeleteAsync(customerId, userId);
+                await _repository.DeleteAsync(customerId, User.CurrentUserId(UserIdentity.ParseUserId(userId)));
                 return Ok(new { message = "Customer deleted." });
             });
         }

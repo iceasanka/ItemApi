@@ -9,7 +9,9 @@
 
     public class GoogleSheetService : IGoogleSheetService
     {
-        private readonly SheetsService _service;
+        // made on first use: a missing credential file only fails the sync (caught by the callers), not every cheque route
+        private readonly Lazy<SheetsService> _lazyService;
+        private SheetsService _service => _lazyService.Value;
         private readonly string _spreadsheetId = "1S394E29YEWtDKjPQgW5zrdFCfDOrMmid0Z-FXmZvOJw";
         private readonly string _sheetName = "AsankaTemp";
         private readonly AppSettings _appSettings;
@@ -17,18 +19,20 @@
         public GoogleSheetService(IWebHostEnvironment env, IOptions<AppSettings> appSettings)
         {
             _appSettings = appSettings.Value;
-            var credentialPath = Path.Combine(/*env.ContentRootPath*/_appSettings.Apicre, "peppy-road-357-f3c4409465bf.json");
-
-            var credential = GoogleCredential
-                .FromFile(credentialPath)
-                .CreateScoped(SheetsService.Scope.Spreadsheets);
-
-            _service = new SheetsService(new BaseClientService.Initializer()
+            _lazyService = new Lazy<SheetsService>(() =>
             {
-                HttpClientInitializer = credential,
-                ApplicationName = "Cheque Sync Service",
-            });
+                var credentialPath = Path.Combine(/*env.ContentRootPath*/_appSettings.Apicre, "peppy-road-357-f3c4409465bf.json");
 
+                var credential = GoogleCredential
+                    .FromFile(credentialPath)
+                    .CreateScoped(SheetsService.Scope.Spreadsheets);
+
+                return new SheetsService(new BaseClientService.Initializer()
+                {
+                    HttpClientInitializer = credential,
+                    ApplicationName = "Cheque Sync Service",
+                });
+            });
         }
 
         public async Task InsertOrUpdateChequeAsync(ChequeCreate cheque)

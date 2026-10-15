@@ -2,6 +2,7 @@
 using ItemApi.Models;
 using ItemApi.Service;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 
 namespace ItemApi.Controllers
 {
@@ -40,15 +41,21 @@ namespace ItemApi.Controllers
 
            
 
-            ChequeCreate chequeCreate = new ChequeCreate();
-            chequeCreate.Amount = cheque.amount;
-            chequeCreate.ChequeDate = cheque.chequeDate;
-            chequeCreate.PayeeId = cheque.payeeId;
-            chequeCreate.SupplierName = cheque.supplierName;
-            chequeCreate.ChequeNumber = cheque.chequeNumber;
-            chequeCreate.IsSync = 0;
+            var billsError = cheque.BillsError();
+            if (billsError != null)
+                return BadRequest(new { message = billsError });
 
-            await _repository.AddChequeAsync(chequeCreate);
+            // supplier cheque (Docs/StockSystem.md §6.19): + a PAYMENT in the supplier ledger, paying the picked bills
+            ChequeCreate chequeCreate;
+            try
+            {
+                chequeCreate = await _repository.WriteChequeAsync(cheque);
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                // the first error is the proc's message; inside our transaction SQL adds "Transaction count ..." ones after it
+                return BadRequest(new { message = ex.Errors.Count > 0 ? ex.Errors[0].Message : ex.Message });
+            }
 
             bool isSyncSuccess = false;
 
@@ -70,6 +77,16 @@ namespace ItemApi.Controllers
             //Asanka message
 
             return CreatedAtAction(nameof(GetChequeById), new { id = chequeCreate.ChequeId }, cheque);
+        }
+
+        // GET: api/ChequeCreate/5/bills — the supplier bills this cheque paid
+        [HttpGet("{id:int}/bills")]
+        public async Task<IActionResult> GetChequeBills(int id)
+        {
+            var cheque = await _repository.GetByIdAsync(id);
+            if (cheque == null)
+                return NotFound();
+            return Ok(await _repository.GetChequeBillsAsync(id));
         }
 
         [HttpGet("{id}")]
@@ -123,6 +140,10 @@ namespace ItemApi.Controllers
                 return NotFound();
             }
 
+            // its ledger payment pays bills for exactly this amount
+            if (existingCheque.LedgerId != null && existingCheque.Amount != cheque.Amount)
+                return BadRequest(new { message = "This cheque is in the supplier ledger — delete it and write it again to change the amount." });
+
             await _repository.UpdateChequeAsync(cheque);
             return NoContent();
         }
@@ -165,9 +186,28 @@ namespace ItemApi.Controllers
             {
                 await file.CopyToAsync(stream);
             }
-            await _repository.ProcessFile(filePath);
+            var result = await _repository.ProcessFile(filePath);
 
-            return Ok(new { message = "File uploaded successfully." });
+            return Ok(new
+            {
+                message = "File uploaded successfully.",
+                result
+            });
+        }
+
+        /// <summary>
+        /// Export upload rows (usually result.notUpdated from POST upload) as a CSV file.
+        /// </summary>
+        [HttpPost("upload/export")]
+        public IActionResult ExportUploadRows([FromBody] List<ChequeUploadRow> rows)
+        {
+            if (rows == null || rows.Count == 0)
+                return BadRequest("No rows to export.");
+
+            var bytes = _repository.BuildUploadRowsCsv(rows);
+            var fileName = $"Cheques_NotUpdated_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
+
+            return File(bytes, "text/csv", fileName);
         }
 
 

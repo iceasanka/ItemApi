@@ -3205,3 +3205,160 @@ Change src/pages/CashierBilling.tsx (Search dialog + function bar buttons) and s
    Retail price — never itemId as "Code".
    Test: 10034 → WHITE RAW 1KG loads directly (not DREAMRON). 30010883 → the same item. "dream" → DREAMRON in the list.
 ```
+
+---
+
+## Prompt 63 — Cashier billing: item discount (old Tax2 % / Tax3 amount) taken off automatically
+
+Backend: till db U013 + new TillService. `GET /items/find` and `GET /items/{id}` now return the item discount PER UNIT,
+already worked out by the till (rule `zf_fn_UnitDiscount`: % first, else the amount; never below cost — cut to
+cost; no cost known → 0). The cost itself is not sent:
+  item.unitDiscount (at retailPrice), item.unitDiscount2 / 3 / 4 (at priceLevel2 / 3 / 4),
+  priceLinks[].unitDiscount (at that link's retailPrice).
+The save checks it (400 "Item discount of <item> has changed. Remove the line and scan it again." when more).
+Profit (profit view, bill discount cap, back office reports) uses the line amount after this discount — no change.
+
+```
+Change src/services/tillLocalApi.ts, src/pages/CashierBilling.tsx, src/components/till/PriceCheckDialog.tsx,
+src/lib/customerDisplay.ts (if it shows lines).
+
+1) tillLocalApi.ts: TillItem gets unitDiscount, unitDiscount2, unitDiscount3, unitDiscount4: number (0 when none);
+   PriceLink gets unitDiscount: number. Add next to quantityPrice():
+     export function unitDiscount(item: TillItem, qty: number, link: PriceLink | null, wholesale: boolean): number
+       - wholesale line, item.openPrice, other item (itemId 0) → 0
+       - link → link.unitDiscount ?? 0
+       - else the SAME level quantityPrice() picks (highest qtyLevel reached with price > 0):
+           level 2 → unitDiscount2, 3 → unitDiscount3, 4 → unitDiscount4, none → unitDiscount
+       - missing values → 0 (an older TillService sends none: no discount, the bill still saves).
+
+2) CashierBilling.tsx — every line keeps l.discount = round2(l.qty × unitDiscount(item, qty, link, isWholesaleLine(l))).
+   Set it wherever the line price is set or changed: new line, merge (qty added), Qty change, W/R toggle,
+   Wholesale bill mode, price link picked, scale sticker qty, recall of a suspended bill (re-priced lines),
+   "prices updated" re-pricing. Open price / Other item lines: 0. Refund mode (no receipt): same rule, so the
+   refund gives back the discounted price; refund against the bill keeps the bill's own line discount (as now).
+   The line amount, sub total, bill discount base, payment and the save already use qty × price − discount.
+
+3) Bill lines on screen: when l.discount > 0 show a second small line under the item, green (text-success):
+     "Item discount  −Rs 20.00"   and for a % item  "Item discount 10%  −Rs 35.00"
+   (% from item.discountPercent when > 0 and the discount was not cut to cost, i.e. discount = round2(price × % / 100) × qty).
+   The Amount column shows the amount after the discount. Totals area: "Item discounts −Rs x" line above Bill
+   discount when any line has one. Customer display: the same second line.
+
+4) Price check dialog: under the price, when unitDiscount(item, 1, null, false) > 0:
+     "Discount −Rs 35.00 (10%)" and "You pay Rs 315.00" (text-2xl bold, green). Price links: each row the same.
+
+5) A save answered 400 with "Item discount of" → toast.error(message) and keep the bill (as other price errors).
+
+6) Test (dev till): KREST SOYA MEAT (070010001) price 175 → line discount −10.00 (15% = 26.25 cut to cost);
+   qty 2 → −20.00, amount 330.00. KIST PINEAPPLE JAM (30011553) 350 → −35.00 (10%). KIST OYSTER SAUSE 290 → no
+   discount (cost = price). Wholesale line → no discount. Bill discount % after that is taken off the discounted
+   amounts; the profit view shows the profit after the item discount.
+```
+
+---
+
+## Prompt 64 — Cashier billing: item discount in its own "Disc" column (not under the item name)
+
+No backend change. Today (Prompt 63) the item discount is a green line under the item name. Move it to a column.
+The printed bill (TillService) now prints SUB TOTAL (before discounts), ITEM DISCOUNTS, BILL DISCOUNT x%, NET TOTAL.
+
+```
+Change src/pages/CashierBilling.tsx only (bill lines table).
+
+1) Columns: # | Item | Qty | Price | Disc | [Cost | Profit when profitOn] | Amount
+   gridCols:  profitOn ? "3rem 1fr 5rem 8rem 7rem 6rem 6rem 9rem" : "3rem 1fr 6rem 8rem 7rem 9rem"
+   Header row: add <span className="text-right">Disc</span> after Price.
+
+2) Row: REMOVE the "Item discount … −Rs x" span under the item name (the one using lineDiscountPercent).
+   New cell after the Price cell:
+     discount > 0 → right aligned, tabular-nums, text-success font-semibold: "−" + money(l.discount)
+                    and under it, text-xs text-success: "<n>%" when lineDiscountPercent(l) != null
+     discount 0   → empty cell (no dash)
+   Amount stays the amount after the discount (lineAmount).
+
+3) Totals area unchanged ("Item discounts −Rs x" line, then bill discount, total). Customer display unchanged.
+
+4) Check at 1366×768: item names still get the most space; Qty / Price / Disc / Amount never wrap; with the
+   profit view on, all 8 columns fit.
+```
+
+---
+
+## Prompt 65 — Day end / X report show the discounts; Menu "Full item reload"
+
+Backend: till db U014 + new TillService.
+- `POST /z/close` and `GET /x` (ZSummary) now also return `itemDiscount` and `billDiscount` (sales, not voided bills).
+  `salesAmount` is still AFTER the discounts. 0 on a Z closed before U014. The printed Z / X slip shows them already.
+- `POST /sync/full` (signed-in cashier): like Reload (`/sync/now`), same answer, but items and price links come down
+  whole and any till item / price link the back office no longer has is switched off.
+
+```
+Change src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts, src/components/till/TillMenu.tsx,
+src/pages/CashierBilling.tsx (Day end summary + X report dialog).
+
+1) tillLocalApi.ts: ZSummary gets itemDiscount: number; billDiscount: number (treat missing as 0).
+   syncFull(): POST /sync/full → SyncNowResult (timeout 120000 - the whole item list comes down).
+
+2) Day end summary and X report (the same grid that shows Net sales / Cash / Card …): when
+   itemDiscount + billDiscount > 0, ABOVE "Net sales" add:
+     Sales before discounts   Rs <salesAmount + itemDiscount + billDiscount>
+     Item discounts           −Rs <itemDiscount>   (text-success)
+     Bill discounts           −Rs <billDiscount>   (text-success)
+     Sales                    Rs <salesAmount>
+   (only the discount lines that are not 0). Nothing changes when there were no discounts.
+
+3) Menu: "Full item reload" (icon RefreshCcwDot) right under Reload. tillShortcuts.ts: action "fullReload",
+   label "Full item reload", description "Download all items and price links again and remove old ones", no key.
+   Click → confirm dialog "Download every item and price link again? Items and price links deleted in the back
+   office are removed from this till. Takes up to a minute." [Cancel] [Full reload]. Then the same spinner / toast
+   as Reload: ok → toast.success(`Full reload done — ${itemsDownloaded} items, ${priceLinksDownloaded} price links`);
+   error → toast.error(error). Disabled while paying or while a bill has lines ("Finish or void the bill first").
+
+4) Test: Day end with a bill that had an item discount 35 and a bill discount 10 → Sales before discounts 350.00,
+   Item discounts −35.00, Bill discounts −10.00, Sales 305.00. X report shows the same before closing.
+```
+
+---
+
+## Prompt 66 — Cashier billing: same item again → "Add again?" popup with a warning sound
+
+No backend change. Today scanning an item that is already on the bill silently adds 1 to that line, so an accidental
+double scan (or a second tap) is not noticed. Ask first, with a sound.
+
+```
+Change src/lib/tillMessages.ts, src/lib/tillShortcuts.ts, src/pages/CashierBilling.tsx.
+
+1) tillMessages.ts: export function warnBeep() — two short tones, clearly different from the error beep:
+   660 Hz 0.12 s, pause 0.08 s, 990 Hz 0.12 s, gain 0.2 (same AudioContext, try/catch, no audio = silent).
+
+2) tillShortcuts.ts: a till setting stored like showKeyHints:
+     getConfirmRepeat(): boolean (localStorage "till.confirmRepeat", default true) / setConfirmRepeat(v)
+   In the Shortcuts / settings dialog add a switch "Ask before adding an item that is already on the bill".
+
+3) CashierBilling.tsx — in processItem(item, qty), right after the "locked" check and BEFORE the price link picker:
+   if getConfirmRepeat() and the bill already has a line with the same itemId (any price / link / W-R),
+   and the item is not open price, not an Other item, and not a scale sticker (item.scaleQty > 0 → every sticker
+   is its own weighed pack, never ask):
+     → warnBeep(), open the "Add again?" dialog and STOP (add nothing yet). Remember { item, qty }.
+   Dialog (big, readable from a step back):
+     Title  "Add again?"
+     Body   <item name, text-2xl bold>
+            "Already on this bill: <qty on the bill> (line <n>)"   — sum of the qty of its lines, first line number
+            "Add <qty> more?"                                       — qty from "5*" or 1
+     Buttons (h-14, text-lg):  [Cancel  Esc]   [Add again  Enter]  (Add again = primary)
+   Keys: Enter / Y / + = Add again, Esc / N / Del = Cancel. For the first 400 ms after it opens ignore Enter
+   (the tail of a scanner burst must not confirm it). A scan typed while it is open is ignored (warnBeep again);
+   the dialog stays until the cashier answers. Touch: both buttons tappable.
+   Add again → continue exactly as today (price link picker if the item has links, then addLine → merges into
+   the same line, re-priced with the quantity price + item discount). Cancel → nothing added, toast.info
+   "Not added", the line of that item is selected (scrolled into view) so the cashier sees it.
+   Focus goes back to the scan box after either answer (same as other dialogs).
+
+4) Not asked: the Qty key / keypad changing a line's qty, recalling a suspended bill, refund-against-bill lines,
+   the Search dialog picking a row that is NOT yet on the bill. Asked: scan box, Search dialog / Select item list
+   picking an item that IS already on the bill, refund mode (no receipt) — same rule.
+
+5) Test: scan sugar → line 1 qty 1. Scan sugar again → two-tone sound + "Add again? Already on this bill: 1 (line 1)".
+   Enter (after 0.4 s) → qty 2. Scan again, Esc → still 2, "Not added". 3*sugar → "Add 3 more?". Scale sticker of the
+   same item twice → two lines, no popup. Switch the setting off → no popup, adds as before.
+```

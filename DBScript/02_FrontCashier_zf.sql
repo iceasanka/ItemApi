@@ -352,6 +352,15 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_zf_tb_Invoice_Ref' AND
     CREATE INDEX IX_zf_tb_Invoice_Ref ON dbo.zf_tb_Invoice (RefInvoiceNo);
 GO
 
+-- Discounts given in the Z (2026-10-21, filled by zf_sp_CloseZ; zf_sp_GetXReport works them out the same way).
+-- Sales bills only (not voided): ItemDiscount = SUM(line Discount), BillDiscount = SUM(bill Discount).
+-- SalesAmount is already after both; SalesAmount + ItemDiscount + BillDiscount = sales before discounts.
+-- NULL = Z closed before this change. Not sent to the back office (zf_sp_GetZForSubmit lists its columns).
+IF COL_LENGTH('dbo.zf_tb_ZReport', 'ItemDiscount') IS NULL
+    ALTER TABLE dbo.zf_tb_ZReport ADD ItemDiscount DECIMAL(18,2) NULL,
+                                      BillDiscount DECIMAL(18,2) NULL;
+GO
+
 /* ---------------------------------------------------------------------------
    2. Drop procs, then types
    --------------------------------------------------------------------------- */
@@ -384,6 +393,7 @@ IF OBJECT_ID('dbo.zf_sp_GetXReport', 'P')           IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_GetInvoiceForRefund', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetInvoiceForRefund;
 IF OBJECT_ID('dbo.zf_sp_SaveBillRefund', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveBillRefund;
 IF OBJECT_ID('dbo.zf_fn_BillLineCost', 'IF')        IS NOT NULL DROP FUNCTION dbo.zf_fn_BillLineCost;
+IF OBJECT_ID('dbo.zf_fn_UnitDiscount', 'FN')        IS NOT NULL DROP FUNCTION dbo.zf_fn_UnitDiscount;
 GO
 IF TYPE_ID('dbo.zf_tt_RefundLine')     IS NOT NULL DROP TYPE dbo.zf_tt_RefundLine;
 IF TYPE_ID('dbo.zf_tt_InvoiceItem')    IS NOT NULL DROP TYPE dbo.zf_tt_InvoiceItem;
@@ -492,12 +502,33 @@ GO
    4. Procs
    --------------------------------------------------------------------------- */
 
+-- Item discount per unit — the ONE rule (2026-10-21), used by zf_sp_FindItem (what the billing page takes off)
+-- and zf_fn_BillLineCost (what zf_sp_SaveInvoice allows):
+--   DiscountPercent > 0 → ROUND(price * % / 100, 2), else DiscountAmount (Rs off each unit), else 0;
+--   never below cost: at most price - cost (cut to cost); no cost known (NULL / 0) → no discount.
+-- The line discount = ROUND(Qty * this, 2). Wholesale lines, open price items and other items get none.
+CREATE FUNCTION dbo.zf_fn_UnitDiscount (@Price DECIMAL(18,2), @Percent DECIMAL(18,2), @Amount DECIMAL(18,2), @Cost DECIMAL(18,2))
+RETURNS DECIMAL(18,2)
+AS
+BEGIN
+    DECLARE @d DECIMAL(18,2);
+    IF ISNULL(@Price, 0) <= 0 OR ISNULL(@Cost, 0) <= 0 RETURN 0;
+    SET @d = CASE WHEN @Percent > 0 THEN ROUND(@Price * @Percent / 100, 2) ELSE ISNULL(@Amount, 0) END;
+    IF @d > @Price - @Cost SET @d = @Price - @Cost;
+    IF @d < 0 SET @d = 0;
+    RETURN @d;
+END
+GO
+
 -- Cost and profit of each bill line — the ONE rule used by the profit view (zf_sp_GetBillProfit) and the
 -- bill discount cap (zf_sp_SaveInvoice).
 --   UnitCost: the picked price link's CostPrice, else the item's CostPrice (0 counts as unknown).
 --   Profit = Amount - ROUND(Qty * UnitCost, 2); NULL when the cost is unknown (other items, items without a cost).
+--   Amount is after the item discount, so the profit (and the bill discount cap) already counts it.
 --   Unknown-cost lines add nothing to the bill profit, so they never allow a bigger discount.
 --   InDiscountBase 0 = a NoDiscount item: a bill discount % is not taken off its amount.
+--   MaxDiscount: the most item discount the line may have (zf_fn_UnitDiscount; 0 for wholesale / open price /
+--   other items). A line without PriceType counts as retail.
 CREATE FUNCTION dbo.zf_fn_BillLineCost (@Items dbo.zf_tt_InvoiceItem READONLY)
 RETURNS TABLE
 AS RETURN
@@ -505,7 +536,10 @@ AS RETURN
            CAST(ROUND(l.Qty * uc.UnitCost, 2) AS DECIMAL(18,2))            AS Cost,
            CAST(l.Amount - ROUND(l.Qty * uc.UnitCost, 2) AS DECIMAL(18,2)) AS Profit,
            CAST(CASE WHEN ISNULL(i.NoDiscount, 0) = 1 THEN 0 ELSE 1 END AS BIT) AS InDiscountBase,
-           CASE WHEN i.MaxPrice > 0 THEN i.MaxPrice END                     AS MktPrice
+           CASE WHEN i.MaxPrice > 0 THEN i.MaxPrice END                     AS MktPrice,
+           CAST(CASE WHEN l.ItemId = 0 OR ISNULL(i.OpenPrice, 0) = 1 OR ISNULL(l.PriceType, 1) = 2 THEN 0
+                     ELSE ROUND(l.Qty * dbo.zf_fn_UnitDiscount(l.UnitPrice, i.DiscountPercent, i.DiscountAmount, uc.UnitCost), 2)
+                END AS DECIMAL(18,2))                                        AS MaxDiscount
     FROM @Items l
     LEFT JOIN dbo.zf_tb_Item i          ON i.ItemId = l.ItemId AND l.ItemId <> 0
     LEFT JOIN dbo.zf_tb_ItemPriceLink p ON p.PriceLinkId = l.PriceLinkId AND p.ItemId = l.ItemId
@@ -570,6 +604,8 @@ GO
 -- Refunds are not price-checked: they give back what was charged, which may be an older price.
 -- "Other item" lines (ItemId 0, item not in the list): any price above 0 with a typed LineDescrip.
 --   They are not price-checked and the back office does not move stock for them.
+-- Item (line) discount: never negative or more than the line (51016); on a sale never more than the item allows —
+--   zf_fn_BillLineCost.MaxDiscount (51017). Less is fine (an older page sends 0). Refunds give back what was charged.
 -- Bill discount (sales): never more than the bill's profit (zf_fn_BillLineCost) — 51012. Given as a % →
 --   @DiscountPercent is stored for the receipt and @Discount must be ROUND(base * % / 100, 2), base = the lines
 --   that are not NoDiscount items. The billing page uses the SAME rule (GET the cap from POST /bill/profit).
@@ -588,7 +624,8 @@ BEGIN
     SET XACT_ABORT ON;
 
     DECLARE @Seq INT, @TerminalCode VARCHAR(10), @ZNo INT, @Gross DECIMAL(18,2), @Net DECIMAL(18,2), @BillPriceType INT;
-    DECLARE @Lines TABLE (LineNum INT PRIMARY KEY, UnitCost DECIMAL(18,2), Profit DECIMAL(18,2), InDiscountBase BIT, Amount DECIMAL(18,2), MktPrice DECIMAL(18,2));
+    DECLARE @Lines TABLE (LineNum INT PRIMARY KEY, UnitCost DECIMAL(18,2), Profit DECIMAL(18,2), InDiscountBase BIT, Amount DECIMAL(18,2), MktPrice DECIMAL(18,2),
+                          MaxDiscount DECIMAL(18,2));
 
     IF @InvType NOT IN (1, 2)
         THROW 51001, 'InvType must be 1 (sale) or 2 (refund).', 1;
@@ -617,8 +654,26 @@ BEGIN
     IF EXISTS (SELECT 1 FROM @Payments WHERE Tendered < Amount)
         THROW 51015, 'Cash tendered cannot be less than the amount paid.', 1;
 
-    INSERT @Lines (LineNum, UnitCost, Profit, InDiscountBase, Amount, MktPrice)
-    SELECT LineNum, UnitCost, Profit, InDiscountBase, Amount, MktPrice FROM dbo.zf_fn_BillLineCost(@Items);
+    INSERT @Lines (LineNum, UnitCost, Profit, InDiscountBase, Amount, MktPrice, MaxDiscount)
+    SELECT LineNum, UnitCost, Profit, InDiscountBase, Amount, MktPrice, MaxDiscount FROM dbo.zf_fn_BillLineCost(@Items);
+
+    IF EXISTS (SELECT 1 FROM @Items WHERE Discount < 0 OR Discount > ROUND(Qty * UnitPrice, 2))
+        THROW 51016, 'Item discount cannot be negative or more than the line.', 1;
+    IF @InvType = 1
+    BEGIN
+        DECLARE @DiscItem NVARCHAR(200);
+        SELECT TOP 1 @DiscItem = ISNULL(i.Inv_Descrip, i.Descrip)
+        FROM @Items it
+        JOIN @Lines c ON c.LineNum = it.LineNum
+        LEFT JOIN dbo.zf_tb_Item i ON i.ItemId = it.ItemId
+        WHERE it.Discount > c.MaxDiscount;
+        IF @@ROWCOUNT > 0
+        BEGIN
+            DECLARE @DiscItemMsg NVARCHAR(400) = N'Item discount of ' + ISNULL(@DiscItem, N'an item')
+                                               + N' has changed. Remove the line and scan it again.';
+            THROW 51017, @DiscItemMsg, 1;
+        END
+    END
 
     IF @Discount < 0
         THROW 51013, 'Bill discount cannot be negative.', 1;
@@ -838,6 +893,9 @@ GO
 -- to 5 digits, same rule as the PLU in the scale export (05_BackOffice_Export.sql). Weight 00000 = not found.
 -- 2 result sets: the item (with the last known stock, for display; ScaleQty = the sticker weight in kg, else NULL),
 -- then its active price links (empty = sell at the normal / quantity price, no price choice).
+-- Item discount per unit (zf_fn_UnitDiscount, already cut to cost - the cost itself is not sent to the page):
+-- UnitDiscount at RetailPrice, UnitDiscount2/3/4 at PriceLevel2/3/4, and each price link's UnitDiscount at its
+-- RetailPrice. Wholesale / open price: the page gives no item discount.
 CREATE PROCEDURE dbo.zf_sp_FindItem
     @Code   NVARCHAR(50) = NULL,
     @ItemId INT = NULL
@@ -870,15 +928,23 @@ BEGIN
         END
     END
 
-    SELECT i.*, s.Qty AS StockQty, @ScaleQty AS ScaleQty
+    SELECT i.*, s.Qty AS StockQty, @ScaleQty AS ScaleQty,
+           dbo.zf_fn_UnitDiscount(i.RetailPrice, i.DiscountPercent, i.DiscountAmount, i.CostPrice) AS UnitDiscount,
+           dbo.zf_fn_UnitDiscount(i.PriceLevel2, i.DiscountPercent, i.DiscountAmount, i.CostPrice) AS UnitDiscount2,
+           dbo.zf_fn_UnitDiscount(i.PriceLevel3, i.DiscountPercent, i.DiscountAmount, i.CostPrice) AS UnitDiscount3,
+           dbo.zf_fn_UnitDiscount(i.PriceLevel4, i.DiscountPercent, i.DiscountAmount, i.CostPrice) AS UnitDiscount4
     FROM dbo.zf_tb_Item i
     LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
     WHERE i.ItemId = @ItemId;
 
-    SELECT PriceLinkId, RetailPrice, WholesalePrice, Remark
-    FROM dbo.zf_tb_ItemPriceLink
-    WHERE ItemId = @ItemId AND Status = 1
-    ORDER BY RetailPrice;
+    -- link cost: the link's own, else the item's (same as zf_fn_BillLineCost)
+    SELECT p.PriceLinkId, p.RetailPrice, p.WholesalePrice, p.Remark,
+           dbo.zf_fn_UnitDiscount(p.RetailPrice, i.DiscountPercent, i.DiscountAmount,
+                                  COALESCE(NULLIF(p.CostPrice, 0), NULLIF(i.CostPrice, 0))) AS UnitDiscount
+    FROM dbo.zf_tb_ItemPriceLink p
+    JOIN dbo.zf_tb_Item i ON i.ItemId = p.ItemId
+    WHERE p.ItemId = @ItemId AND p.Status = 1
+    ORDER BY p.RetailPrice;
 END
 GO
 
@@ -1028,6 +1094,11 @@ BEGIN
             ChequeAmount = ISNULL((SELECT SUM(CASE WHEN i.InvType = 2 THEN -p.Amount ELSE p.Amount END)
                                    FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoicePayment p ON p.InvoiceNo = i.InvoiceNo
                                    WHERE i.ZNo = @ZNo AND i.Status <> 9 AND p.PayType = 6), 0),
+            -- discounts given on sales (SalesAmount is after them)
+            ItemDiscount = ISNULL((SELECT SUM(it.Discount)
+                                   FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = i.InvoiceNo
+                                   WHERE i.ZNo = @ZNo AND i.Status <> 9 AND i.InvType = 1), 0),
+            BillDiscount = ISNULL((SELECT SUM(Discount) FROM dbo.zf_tb_Invoice WHERE ZNo = @ZNo AND Status <> 9 AND InvType = 1), 0),
             Status       = 1
         FROM dbo.zf_tb_ZReport z
         WHERE z.ZNo = @ZNo;
@@ -1081,9 +1152,13 @@ END
 GO
 
 -- Applies an item/price download. @ServerTime = serverTime from GET api/Sync/Items (next "since").
+-- @Full = 1: a full download (no "since" - every item of the back office, active or not). An active till item
+-- that is NOT in it was removed from the back office: it is set to Status 0 (kept for old bills, not sold again).
+-- An empty full download changes nothing (a back office answering with no items must not switch the till off).
 CREATE PROCEDURE dbo.zf_sp_UpsertItems
     @Items       dbo.zf_tt_Item READONLY,
-    @ServerTime  DATETIME
+    @ServerTime  DATETIME,
+    @Full        BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -1109,6 +1184,11 @@ BEGIN
                s.QtyLevel2, s.PriceLevel2, s.QtyLevel3, s.PriceLevel3, s.QtyLevel4, s.PriceLevel4, s.Status, s.UDate, s.CostPrice,
                s.UnitCode
         FROM @Items s WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Item t WHERE t.ItemId = s.ItemId);
+
+        IF @Full = 1 AND EXISTS (SELECT 1 FROM @Items)
+            UPDATE t SET Status = 0, UDate = @ServerTime
+            FROM dbo.zf_tb_Item t
+            WHERE t.Status <> 0 AND NOT EXISTS (SELECT 1 FROM @Items s WHERE s.ItemId = t.ItemId);
 
         UPDATE dbo.zf_tb_Config SET LastItemSyncAt = @ServerTime WHERE Id = 1;
     COMMIT;
@@ -1138,9 +1218,12 @@ GO
 
 -- Applies a price link download. @ServerTime = serverTime from GET api/Sync/PriceLinks.
 -- Deleted links arrive with Status 0 and stay as Status 0 (zf_sp_FindItem ignores them).
+-- @Full = 1: a full download (no "since" - every ACTIVE link of this location). An active till link that is NOT in it
+-- was deleted or removed in the back office: Status 0. An empty full download changes nothing.
 CREATE PROCEDURE dbo.zf_sp_UpsertPriceLinks
     @Rows        dbo.zf_tt_PriceLink READONLY,
-    @ServerTime  DATETIME
+    @ServerTime  DATETIME,
+    @Full        BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -1153,6 +1236,11 @@ BEGIN
         INSERT dbo.zf_tb_ItemPriceLink (PriceLinkId, ItemId, RetailPrice, WholesalePrice, Remark, Status, UDate, CostPrice)
         SELECT s.PriceLinkId, s.ItemId, s.RetailPrice, s.WholesalePrice, s.Remark, s.Status, s.UDate, s.CostPrice FROM @Rows s
         WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_ItemPriceLink t WHERE t.PriceLinkId = s.PriceLinkId);
+
+        IF @Full = 1 AND EXISTS (SELECT 1 FROM @Rows)
+            UPDATE t SET Status = 0, UDate = @ServerTime
+            FROM dbo.zf_tb_ItemPriceLink t
+            WHERE t.Status <> 0 AND NOT EXISTS (SELECT 1 FROM @Rows s WHERE s.PriceLinkId = t.PriceLinkId);
 
         UPDATE dbo.zf_tb_Config SET LastPriceLinkSyncAt = @ServerTime WHERE Id = 1;
     COMMIT;
@@ -1543,14 +1631,17 @@ BEGIN
            b.InvoiceCount, l.LineCount, l.TotalQty, b.SalesAmount, b.RefundAmount,
            b.SalesAmount - b.RefundAmount AS NetSales,
            p.CashAmount, p.CardAmount, p.OtherAmount, p.BankAmount, p.ChequeAmount, m.OpeningCash, m.PaidIn, m.PaidOut,
-           m.OpeningCash + p.CashAmount + m.PaidIn - m.PaidOut AS ExpectedCash, z.Status
+           m.OpeningCash + p.CashAmount + m.PaidIn - m.PaidOut AS ExpectedCash, z.Status,
+           l.ItemDiscount, b.BillDiscount
     FROM dbo.zf_tb_ZReport z
     CROSS APPLY (SELECT COUNT(*) AS InvoiceCount,
                         ISNULL(SUM(CASE WHEN Status <> 9 AND InvType = 1 THEN NetAmount END), 0) AS SalesAmount,
-                        ISNULL(SUM(CASE WHEN Status <> 9 AND InvType = 2 THEN NetAmount END), 0) AS RefundAmount
+                        ISNULL(SUM(CASE WHEN Status <> 9 AND InvType = 2 THEN NetAmount END), 0) AS RefundAmount,
+                        ISNULL(SUM(CASE WHEN Status <> 9 AND InvType = 1 THEN Discount END), 0) AS BillDiscount
                  FROM dbo.zf_tb_Invoice WHERE ZNo = z.ZNo) b
     CROSS APPLY (SELECT COUNT(*) AS LineCount,
-                        ISNULL(SUM(CASE WHEN i.InvType = 2 THEN -it.Qty ELSE it.Qty END), 0) AS TotalQty
+                        ISNULL(SUM(CASE WHEN i.InvType = 2 THEN -it.Qty ELSE it.Qty END), 0) AS TotalQty,
+                        ISNULL(SUM(CASE WHEN i.InvType = 1 THEN it.Discount END), 0) AS ItemDiscount
                  FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = i.InvoiceNo
                  WHERE i.ZNo = z.ZNo AND i.Status <> 9) l
     CROSS APPLY (SELECT ISNULL(SUM(CASE WHEN x.PayType = 1 THEN x.Amount END), 0) AS CashAmount,

@@ -3107,3 +3107,39 @@ src/pages/CashierBilling.tsx; add src/components/till/PrinterSettingsDialog.tsx.
 5) Every printError toast (bill, reprint, No Sale, cash movement, reports, Z / X) gets an action button
    "Printer settings" that opens the dialog. Keep the existing messages.
 ```
+
+---
+
+## Prompt 60 — Cashier billing: Search / Select item dialog stays fixed at the top (does not jump when results load)
+
+No backend change. Today the Search dialog (F1 / the Search button) opens in the middle of the screen; when the
+cashier types the 2nd letter the result rows load, the dialog gets taller and — because the shadcn DialogContent is
+centred (top-[50%] translate-y-[-50%]) — the whole dialog jumps up. The text box moves under the cashier's eyes and
+the focus "feels" lost. Same for the "Select item — '<text>'" list and the Price check list (Prompt 37).
+
+```
+Change the item Search dialog and the "Select item" dialog in src/pages/CashierBilling.tsx (or their own
+components under src/components/till/), and the Price check dialog's result list. Do NOT change
+src/components/ui/dialog.tsx (other dialogs stay centred).
+
+1) Anchor these dialogs to the top of the screen, not the centre. On their DialogContent add:
+     className="top-[4vh] translate-y-0 data-[state=open]:slide-in-from-top-2 data-[state=closed]:slide-out-to-top-2
+                max-w-3xl flex flex-col max-h-[92vh]"
+   (keep left-[50%] translate-x-[-50%] from the base, so it stays centred left/right).
+   The dialog opens at the top and its top edge never moves — not when rows load, not when the list is empty,
+   not when the "No item found" line shows, not when the ⌨ on-screen keyboard opens.
+
+2) Layout inside (top → bottom): title, text box + ⌨ button (always the first thing, fixed position), the
+   on-screen keyboard when open, then the result list. Only the list area changes: flex-1 min-h-0 overflow-y-auto.
+   Give the list area a fixed height while the dialog is open (h-[60vh], or less when the ⌨ keyboard is open —
+   e.g. h-[32vh]) so the dialog does not grow or shrink as the cashier types; empty / "Type at least 2 letters" /
+   "Searching…" / "No item found" are shown inside that same area.
+
+3) Focus: the text box keeps the focus and the caret position while typing; the result load must not re-mount the
+   input or the dialog (no key change, no conditional render of the input). ↑/↓ highlight scrolls the highlighted
+   row into view inside the list only (scrollIntoView({ block: "nearest" })), never the page.
+
+4) Check at 1366×768 and 1920×1080: F1 → dialog at the top. Type "s", "su", "sug", backspace to "s", "xyzq" (no
+   result) — the text box stays exactly in the same place every time. 5*sugar with several results → Select item
+   opens at the top the same way. Open ⌨ → the keyboard appears under the box, the box does not move.
+```

@@ -24,7 +24,10 @@
      Margins         = W_Margine / R_Margine (text) when they are numbers
      Quantity prices = SPQ/SPR → level 2, TPQ/TPR → level 3, FPQ/FPR → level 4, only when they pass the Item Entry
                        rules (qty > 1 and rising, price > 0, below retail and falling); otherwise left out (reported).
+     DiscountPercent = Tax2 (text) when it is a number > 0, DiscountAmount = Tax3 (text) when it is a number > 0
+                       (the old "discount %" / "discount amount" - used by the price labels; added 2026-10-21)
    Stock, price links (tb_PriceLink) and sales history are NOT copied here.
+   Items copied before 2026-10-21 got no discounts: z_sp_TransferOldItemDiscounts (end of this file) fills them.
 
    Re-running: items already copied (in z_tb_ItemOldCode) are skipped unless @UpdateExisting = 1, which refreshes them
    from the old tables (overwriting changes made in the new system — only while the new system is not in use yet).
@@ -77,13 +80,15 @@ BEGIN
         AverageCost DECIMAL(18,2), UnitId INT, WholesaleMargin DECIMAL(10,2), RetailMargin DECIMAL(10,2),
         IsSaleLocked BIT, NoDiscount BIT, ReorderLevel DECIMAL(18,2), ReorderQty DECIMAL(18,2),
         Q2 DECIMAL(18,2), P2 DECIMAL(18,2), Q3 DECIMAL(18,2), P3 DECIMAL(18,2), Q4 DECIMAL(18,2), P4 DECIMAL(18,2),
+        DiscountPercent DECIMAL(5,2), DiscountAmount DECIMAL(18,2),
         CDate DATETIME, ItemId INT NULL, Problem NVARCHAR(500) NULL, Note NVARCHAR(1000) NULL
     );
 
     INSERT #src (OldItemCode, OldRefCode, OldCatCode, OldSubCatCode, OldSuppCode, OldUnit,
                  RefCode, Barcode, Descrip, Inv_Descrip, SinhalaDescrip, UseExp, OpenPrice, MaxPrice,
                  RetailPrice, WholesalePrice, SpecialPrice, CostPrice, AverageCost, UnitId, WholesaleMargin, RetailMargin,
-                 IsSaleLocked, NoDiscount, ReorderLevel, ReorderQty, Q2, P2, Q3, P3, Q4, P4, CDate)
+                 IsSaleLocked, NoDiscount, ReorderLevel, ReorderQty, Q2, P2, Q3, P3, Q4, P4,
+                 DiscountPercent, DiscountAmount, CDate)
     SELECT i.Item_Code, NULLIF(LTRIM(RTRIM(i.Ref_Code)), ''), NULLIF(LTRIM(RTRIM(i.Cat_Code)), ''),
            NULLIF(LTRIM(RTRIM(i.SubCat_Code)), ''), NULLIF(LTRIM(RTRIM(i.Supp_Code)), ''), NULLIF(LTRIM(RTRIM(i.EUnit)), ''),
            CASE WHEN LTRIM(RTRIM(i.Ref_Code)) <> '' THEN LTRIM(RTRIM(i.Ref_Code)) ELSE LTRIM(RTRIM(i.Item_Code)) END,
@@ -109,6 +114,12 @@ BEGIN
            NULLIF(d.SPQ, 0), NULLIF(CAST(d.SPR AS DECIMAL(18,2)), 0),
            NULLIF(d.TPQ, 0), NULLIF(CAST(d.TPR AS DECIMAL(18,2)), 0),
            NULLIF(d.FPQ, 0), NULLIF(CAST(d.FPR AS DECIMAL(18,2)), 0),
+           -- Tax2 = discount %, Tax3 = discount amount (nchar(10) text); 0 or not a number → NULL; % over 100 → NULL
+           CASE WHEN LTRIM(RTRIM(i.Tax2)) LIKE '%[0-9]%' AND LTRIM(RTRIM(i.Tax2)) NOT LIKE '%[^0-9.]%'
+                THEN CASE WHEN CAST(LTRIM(RTRIM(i.Tax2)) AS DECIMAL(18,2)) BETWEEN 0.01 AND 100
+                          THEN CAST(LTRIM(RTRIM(i.Tax2)) AS DECIMAL(5,2)) END END,
+           CASE WHEN LTRIM(RTRIM(i.Tax3)) LIKE '%[0-9]%' AND LTRIM(RTRIM(i.Tax3)) NOT LIKE '%[^0-9.]%'
+                THEN NULLIF(CAST(LTRIM(RTRIM(i.Tax3)) AS DECIMAL(18,2)), 0) END,
            ISNULL(d.CDate, @Now)
     FROM dbo.tb_Item i
     JOIN dbo.tb_ItemDet d ON d.Item_Code = i.Item_Code AND d.Loca_Code = @LocaCode
@@ -166,10 +177,11 @@ BEGIN
 
         INSERT dbo.z_tb_ItemDet (ItemId, LocationId, RetailPrice, WholesalePrice, SpecialPrice, CostPrice, AverageCost, unitId,
                                  WholesaleMargin, RetailMargin, IsSaleLocked, NoDiscount, ReorderLevel, ReorderQty,
-                                 QtyLevel2, PriceLevel2, QtyLevel3, PriceLevel3, QtyLevel4, PriceLevel4, UserId, CDate, UDate)
+                                 QtyLevel2, PriceLevel2, QtyLevel3, PriceLevel3, QtyLevel4, PriceLevel4,
+                                 DiscountPercent, DiscountAmount, UserId, CDate, UDate)
         SELECT s.ItemId, @LocationId, s.RetailPrice, s.WholesalePrice, s.SpecialPrice, s.CostPrice, s.AverageCost, s.UnitId,
                s.WholesaleMargin, s.RetailMargin, s.IsSaleLocked, s.NoDiscount, s.ReorderLevel, s.ReorderQty,
-               s.Q2, s.P2, s.Q3, s.P3, s.Q4, s.P4, @UserId, s.CDate, @Now
+               s.Q2, s.P2, s.Q3, s.P3, s.Q4, s.P4, s.DiscountPercent, s.DiscountAmount, @UserId, s.CDate, @Now
         FROM #src s JOIN @new n ON n.OldItemCode = s.OldItemCode;
 
         INSERT dbo.z_tb_ItemOldCode (OldItemCode, ItemId, OldRefCode, OldCatCode, OldSubCatCode, OldSuppCode, OldUnit, TransferredAt)
@@ -191,6 +203,7 @@ BEGIN
                          WholesaleMargin = s.WholesaleMargin, RetailMargin = s.RetailMargin, IsSaleLocked = s.IsSaleLocked,
                          NoDiscount = s.NoDiscount, ReorderLevel = s.ReorderLevel, ReorderQty = s.ReorderQty,
                          QtyLevel2 = s.Q2, PriceLevel2 = s.P2, QtyLevel3 = s.Q3, PriceLevel3 = s.P3, QtyLevel4 = s.Q4, PriceLevel4 = s.P4,
+                         DiscountPercent = s.DiscountPercent, DiscountAmount = s.DiscountAmount,
                          UserId = @UserId, UDate = @Now
             FROM dbo.z_tb_ItemDet d JOIN #src s ON s.ItemId = d.ItemId AND d.LocationId = @LocationId
             WHERE s.Problem IS NULL AND NOT EXISTS (SELECT 1 FROM @new n WHERE n.OldItemCode = s.OldItemCode);
@@ -212,6 +225,8 @@ BEGIN
            (SELECT COUNT(*) FROM #src WHERE Problem IS NOT NULL)                         AS Skipped,
            (SELECT COUNT(*) FROM #src WHERE Problem IS NULL AND Note IS NOT NULL)        AS CopiedWithNote,
            (SELECT COUNT(*) FROM #src WHERE Problem IS NULL AND OldRefCode IS NOT NULL)  AS UsingScaleCode,
+           (SELECT COUNT(*) FROM #src WHERE Problem IS NULL
+                                        AND (DiscountPercent IS NOT NULL OR DiscountAmount IS NOT NULL)) AS WithDiscount,
            (SELECT COUNT(*) FROM dbo.tb_Item i WHERE NOT EXISTS
                (SELECT 1 FROM dbo.tb_ItemDet d WHERE d.Item_Code = i.Item_Code AND d.Loca_Code = @LocaCode)) AS OldItemsWithoutPrices;
 
@@ -219,5 +234,83 @@ BEGIN
            ISNULL(Problem, Note) AS Reason
     FROM #src WHERE Problem IS NOT NULL OR Note IS NOT NULL
     ORDER BY CASE WHEN Problem IS NOT NULL THEN 0 ELSE 1 END, OldItemCode;
+END
+GO
+
+/* -----------------------------------------------------------------------------
+   z_sp_TransferOldItemDiscounts (2026-10-21) - the old discount of items ALREADY copied (the transfer above did not
+   copy Tax2 / Tax3 before this date). Only z_tb_ItemDet.DiscountPercent / DiscountAmount change; UDate = now so the
+   tills download them. Re-runnable.
+       EXEC dbo.z_sp_TransferOldItemDiscounts @DryRun = 1;   -- report only, nothing saved
+       EXEC dbo.z_sp_TransferOldItemDiscounts @DryRun = 0;   -- the real one
+   Tax2 = discount % (0.01 - 100), Tax3 = discount amount (> 0); 0 / empty / not a number = no discount.
+   An item that already has a discount in the new system (set in Item Entry) is left as it is, unless @Overwrite = 1.
+   An amount not below the retail price is not copied (the price label refuses it) - reported.
+   Result sets: 1) counts, 2) every item with an old discount and what was done.
+   ----------------------------------------------------------------------------- */
+IF OBJECT_ID('dbo.z_sp_TransferOldItemDiscounts', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_TransferOldItemDiscounts;
+GO
+
+CREATE PROCEDURE dbo.z_sp_TransferOldItemDiscounts
+    @DryRun     BIT        = 1,
+    @Overwrite  BIT        = 0,
+    @LocationId INT        = 1
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @Now DATETIME = GETDATE();
+
+    CREATE TABLE #d (
+        ItemId INT PRIMARY KEY, OldItemCode VARCHAR(200), OldTax2 NVARCHAR(10), OldTax3 NVARCHAR(10),
+        Pct DECIMAL(5,2) NULL, Amt DECIMAL(18,2) NULL, Action VARCHAR(100) NULL
+    );
+
+    INSERT #d (ItemId, OldItemCode, OldTax2, OldTax3, Pct, Amt)
+    SELECT m.ItemId, m.OldItemCode, LTRIM(RTRIM(o.Tax2)), LTRIM(RTRIM(o.Tax3)),
+           CASE WHEN LTRIM(RTRIM(o.Tax2)) LIKE '%[0-9]%' AND LTRIM(RTRIM(o.Tax2)) NOT LIKE '%[^0-9.]%'
+                THEN CASE WHEN CAST(LTRIM(RTRIM(o.Tax2)) AS DECIMAL(18,2)) BETWEEN 0.01 AND 100
+                          THEN CAST(LTRIM(RTRIM(o.Tax2)) AS DECIMAL(5,2)) END END,
+           CASE WHEN LTRIM(RTRIM(o.Tax3)) LIKE '%[0-9]%' AND LTRIM(RTRIM(o.Tax3)) NOT LIKE '%[^0-9.]%'
+                THEN NULLIF(CAST(LTRIM(RTRIM(o.Tax3)) AS DECIMAL(18,2)), 0) END
+    FROM dbo.z_tb_ItemOldCode m
+    JOIN dbo.tb_Item o ON o.Item_Code = m.OldItemCode;
+
+    -- keep only items with an old discount, or an old value that is not a usable number (reported)
+    DELETE FROM #d WHERE Pct IS NULL AND Amt IS NULL
+                     AND ISNULL(OldTax2, '') IN ('', '0', '0.0', '0.00') AND ISNULL(OldTax3, '') IN ('', '0', '0.0', '0.00');
+
+    UPDATE x SET Action = CASE
+            WHEN d.ItemId IS NULL                                        THEN 'skipped - no price row at this location'
+            WHEN x.Pct IS NULL AND x.Amt IS NULL                         THEN 'skipped - Tax2 / Tax3 is not a usable number'
+            WHEN x.Amt IS NOT NULL AND x.Amt >= ISNULL(d.RetailPrice, 0) THEN 'skipped - amount is not below the retail price'
+            WHEN ISNULL(d.DiscountPercent, -1) = ISNULL(x.Pct, -1)
+             AND ISNULL(d.DiscountAmount, -1) = ISNULL(x.Amt, -1)        THEN 'same already'
+            WHEN @Overwrite = 0 AND (d.DiscountPercent IS NOT NULL OR d.DiscountAmount IS NOT NULL)
+                                                                         THEN 'kept - already has a discount in the new system'
+            ELSE 'set' END
+    FROM #d x
+    LEFT JOIN dbo.z_tb_ItemDet d ON d.ItemId = x.ItemId AND d.LocationId = @LocationId;
+
+    IF @DryRun = 0
+        UPDATE d SET DiscountPercent = x.Pct, DiscountAmount = x.Amt, UDate = @Now
+        FROM dbo.z_tb_ItemDet d JOIN #d x ON x.ItemId = d.ItemId AND d.LocationId = @LocationId
+        WHERE x.Action = 'set';
+
+    SELECT CASE WHEN @DryRun = 1 THEN 'DRY RUN - nothing saved' ELSE 'SAVED' END AS Result,
+           (SELECT COUNT(*) FROM #d WHERE Action = 'set')                          AS DiscountsSet,
+           (SELECT COUNT(*) FROM #d WHERE Action = 'set' AND Pct IS NOT NULL)      AS WithPercent,
+           (SELECT COUNT(*) FROM #d WHERE Action = 'set' AND Amt IS NOT NULL)      AS WithAmount,
+           (SELECT COUNT(*) FROM #d WHERE Action = 'same already')                 AS SameAlready,
+           (SELECT COUNT(*) FROM #d WHERE Action LIKE 'kept%')                     AS KeptNewSystemValue,
+           (SELECT COUNT(*) FROM #d WHERE Action LIKE 'skipped%')                  AS Skipped;
+
+    SELECT i.RefCode, i.Descrip, d.RetailPrice, x.OldItemCode, x.OldTax2 AS OldPercent, x.OldTax3 AS OldAmount,
+           x.Pct AS NewDiscountPercent, x.Amt AS NewDiscountAmount, x.Action
+    FROM #d x
+    JOIN dbo.z_tb_Item i ON i.ItemId = x.ItemId
+    LEFT JOIN dbo.z_tb_ItemDet d ON d.ItemId = x.ItemId AND d.LocationId = @LocationId
+    ORDER BY CASE WHEN x.Action LIKE 'skipped%' THEN 0 WHEN x.Action LIKE 'kept%' THEN 1 ELSE 2 END, i.RefCode;
 END
 GO

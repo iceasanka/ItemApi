@@ -180,7 +180,7 @@ namespace ItemApi.Data
     d.DiscountPercent
                 FROM z_tb_Item i
                 JOIN z_tb_ItemDet d ON i.ItemId = d.ItemId
-                WHERE d.LocationId = {1} AND " + CodeMatchSql("OR i.Descrip LIKE {0}");
+                WHERE d.LocationId = {1} AND " + CodeMatchSql("OR i.Descrip LIKE {0}", refCodeFirst: true);
 
             try
             {
@@ -193,20 +193,26 @@ namespace ItemApi.Data
             }
         }
 
-        // Item lookup by what was typed or scanned — same rule as the till scan box (zf_sp_FindItem):
+        // Item lookup by what was typed or scanned:
         //   1. exact Barcode → only that item   2. else exact RefCode → only that item
         //   3. else RefCode / Barcode containing the text (+ extra, e.g. the name), codes starting with it first.
+        // refCodeFirst swaps 1 and 2 — for typed codes (Item Entry and the other /Itemz/Search pages); scanned codes
+        // (GRN, Goods Return: /Itemz/SearchByCode) keep the barcode first, like the till scan box (zf_sp_FindItem).
         // ItemId is never searched: it is the internal row number and can be the same number as another item's
         // code (production: ItemId 10034 = DREAMRON, RefCode 10034 = white raw 1kg).
         // Parameters: {0} = %text%, {1} = location, {2} = text, {3} = text%.
-        private static string CodeMatchSql(string extra) => @"
-                  (   i.Barcode = {2}
-                   OR (i.RefCode = {2} AND NOT EXISTS (SELECT 1 FROM z_tb_Item x JOIN z_tb_ItemDet xd ON xd.ItemId = x.ItemId
-                                                       WHERE x.Barcode = {2} AND xd.LocationId = {1}))
+        private static string CodeMatchSql(string extra, bool refCodeFirst = false)
+        {
+            var (first, second) = refCodeFirst ? ("RefCode", "Barcode") : ("Barcode", "RefCode");
+            return $@"
+                  (   i.{first} = {{2}}
+                   OR (i.{second} = {{2}} AND NOT EXISTS (SELECT 1 FROM z_tb_Item x JOIN z_tb_ItemDet xd ON xd.ItemId = x.ItemId
+                                                          WHERE x.{first} = {{2}} AND xd.LocationId = {{1}}))
                    OR (    NOT EXISTS (SELECT 1 FROM z_tb_Item x JOIN z_tb_ItemDet xd ON xd.ItemId = x.ItemId
-                                       WHERE (x.Barcode = {2} OR x.RefCode = {2}) AND xd.LocationId = {1})
-                       AND (i.RefCode LIKE {0} OR i.Barcode LIKE {0} " + extra + @")))
-                ORDER BY CASE WHEN i.RefCode LIKE {3} OR i.Barcode LIKE {3} THEN 0 ELSE 1 END, i.Descrip";
+                                       WHERE (x.Barcode = {{2}} OR x.RefCode = {{2}}) AND xd.LocationId = {{1}})
+                       AND (i.RefCode LIKE {{0}} OR i.Barcode LIKE {{0}} {extra})))
+                ORDER BY CASE WHEN i.{first} LIKE {{3}} THEN 0 WHEN i.{second} LIKE {{3}} THEN 1 ELSE 2 END, i.Descrip";
+        }
 
         private async Task<List<ItemzWithDetails>> RunCodeSearchAsync(string sql, string query, int locationId)
         {

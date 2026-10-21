@@ -3173,3 +3173,35 @@ Change src/services/tillLocalApi.ts, src/pages/CashierBilling.tsx, src/component
    1003 → Select item list: 10030, 10034, 10037, 10038 … first. sugar → list as today. F1 Search "1003" → no rows
    (dialog unchanged).
 ```
+
+---
+
+## Prompt 62 — F1 Search finds item codes; Void line next to Void bill; Item Entry search never by ItemId
+
+Backend: TillService `GET /items/search?codes=true` (till db U011) — exact RefCode first, then exact Barcode, codes
+starting with the text, then names. ItemApi `/Itemz/Search` — exact RefCode → that item only, else exact Barcode →
+that item only, else codes / names containing the text. ItemId is NEVER a search key (ItemId 10034 is DREAMRON,
+RefCode 10034 is white raw 1kg).
+
+```
+Change src/pages/CashierBilling.tsx (Search dialog + function bar buttons) and src/pages/ItemEntry.tsx.
+
+1) F1 Search dialog (CashierBilling.tsx): call searchItems(text, true) (Prompt 61 added the parameter) instead of
+   searchItems(text). Everything else in the dialog stays: 300 ms debounce, 2+ characters, ↑/↓/Enter, ⌨ keyboard.
+   Show the Code column (refCode) in the rows as today; the exact code row comes first, so Enter picks it.
+   Test: F1, type 10034 → WHITE RAW 1KG first row; "white raw" → by name as today; 1003 → 10030, 10034 … first.
+
+2) Function bar (buttons array in CashierBilling.tsx): put "Void bill" right after "Void line", so the two
+   void buttons are side by side:
+     Qty · Price · W/R · Void line · Void bill · Wholesale · Other item · Discount % · Price check · Refund · …
+   Colours (FunctionBar.tsx TONE): Void line tone "amber" (one line), Void bill tone "red" (the whole bill),
+   both keep the Trash2 icon; Void bill uses Trash2 + a small "ALL" text under the label, or the XCircle icon,
+   so the two are told apart at a glance. Keys, disabled rules and the Void bill confirm dialog are unchanged.
+
+3) Item Entry search (ItemEntry.tsx, the search handler around "if (/^\d+$/.test(query.trim()))"):
+   REMOVE the getItemzByItemId(parseInt(query)) lookup — digits are an item code or barcode, never an ItemId.
+   Always call searchItemz(query). One result → load it at once (setFormData + editing, as handleSelectSearchResult);
+   several → show the list as today. In the result list show the columns Code (refCode), Barcode, Description,
+   Retail price — never itemId as "Code".
+   Test: 10034 → WHITE RAW 1KG loads directly (not DREAMRON). 30010883 → the same item. "dream" → DREAMRON in the list.
+```

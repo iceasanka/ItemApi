@@ -1,0 +1,42 @@
+Windows Registry Editor Version 5.00
+
+; Back office PC - Chrome: no notifications, no other bars over the pages. Unlike the till, Chrome still saves
+; passwords and asks where to save downloads. Allowed for the back office: print / PDF windows (Z report, stock take,
+; quotation / invoice), several CSV / Excel downloads in a row, and Copy barcode (GRN).
+; BEFORE running: change http://192.168.1.5 below (3 places) to the address the back office opens on in Chrome.
+;   No port = every port on that PC. Add more sites as "2", "3" ... in each list.
+; Run once on each back office PC as administrator (double-click, Yes), then close ALL Chrome windows and open it again.
+; Check: chrome://policy shows the lines below with status OK.
+; Applies to every Chrome user on this PC. To undo: delete the key below in regedit.
+; (Microsoft Edge instead of Chrome: use BackOffice-Edge-Policy.reg)
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]
+; passwords: Chrome offers "Save password?" and fills the saved one; no "password found in a data breach" warning
+"PasswordManagerEnabled"=dword:00000001
+"PasswordLeakDetectionEnabled"=dword:00000000
+; no address / card suggestions under the search and amount fields
+"AutofillAddressEnabled"=dword:00000000
+"AutofillCreditCardEnabled"=dword:00000000
+; notifications: 2 = block for every site, and never ask
+"DefaultNotificationsSetting"=dword:00000002
+; other bars that cover the screen
+"TranslateEnabled"=dword:00000000
+"DefaultBrowserSettingEnabled"=dword:00000000
+; no "Sign in to Chrome", welcome / what's new tabs, or ad privacy pop-up
+"BrowserSignin"=dword:00000000
+"PromotionalTabsEnabled"=dword:00000000
+"PrivacySandboxPromptEnabled"=dword:00000000
+; downloads ask where to save ("Save as" dialog)
+"PromptForDownloadLocation"=dword:00000001
+
+; print / PDF windows open without "Pop-up blocked"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\PopupsAllowedForUrls]
+"1"="http://192.168.1.5"
+
+; several exports one after another without "This site is trying to download multiple files"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\AutomaticDownloadsAllowedForUrls]
+"1"="http://192.168.1.5"
+
+; Copy barcode works without asking
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ClipboardAllowedForUrls]
+"1"="http://192.168.1.5"

@@ -45,6 +45,7 @@ namespace ItemApi.Data
             ConfigureExport(modelBuilder);
             ConfigureSalesDoc(modelBuilder);
             ConfigureUser(modelBuilder);
+            ConfigureLabel(modelBuilder);
         }
 
         // Implemented in the matching Data/AppDbContext.<Area>.cs file.
@@ -73,5 +74,6 @@ namespace ItemApi.Data
         partial void ConfigureExport(ModelBuilder modelBuilder);
         partial void ConfigureSalesDoc(ModelBuilder modelBuilder);
         partial void ConfigureUser(ModelBuilder modelBuilder);
+        partial void ConfigureLabel(ModelBuilder modelBuilder);
     }
 }

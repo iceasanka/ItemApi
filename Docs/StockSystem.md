@@ -53,6 +53,9 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `09_Clean_ItemData.sql` | back office db (Part A) + each till db (Part B) | **clean start before going live**: deletes all items and everything that points at them (stock, till uploads, Z reports, price links, quotations/invoices, GRNs, transfer links) and resets their ids. Report only unless `@Delete = 1`. **Run on easyway on 2026-10-09** (Part A only). |
 | `14_BackOffice_StockTake.sql` | back office db (`easyway`), after `01` | stock take (§6.18). Same content as `Updates/U006_BackOffice_StockTake.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-14.** |
 | `15_BackOffice_SupplierPayments.sql` | back office db (`easyway`) | supplier bills → cheques, payees merged into suppliers (§6.19). Same content as `Updates/U007_BackOffice_SupplierPayments.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-14.** |
+| `18_Till_ResetCopiedDb.sql` | a NEW till PC whose `z_pos_fnt_db` was restored from another till's backup (`-E`, `-d z_pos_fnt_db`) | makes the copy an empty new till: deletes the copied till's bills / payments / suspended bills / Z reports / drawer log / cash in-out (identities restart: Z 1, bill 1), sets the new terminal via `zf_sp_SetupTerminal` (same LocationId / ApiBaseUrl); keeps items, price links, stock, cashiers, sync times. Guards: `ThisPc` must be this computer's name, no other connection (stop TillService), refuses a db that already has bills of the new code; without `Confirm="YES"` only lists what it would delete. Tested on a restored copy of the dev till 2026-10-16. |
+| `17_Till_SqlLogin.sql` | each till's SQL Server (`-E`, as admin) | the SQL login TillService uses (`ice`): mixed mode on when needed (then restart SQL Server), login (no expiry), db_owner user in `z_pos_fnt_db`, fixes the orphaned user of a restored backup. Password given with `-v`, not in the file. Re-runnable. |
+| `16_BackOffice_LabelLayout.sql` | back office db (`easyway`) | label layouts for the new barcode labels (ZPL, §6.20) and price labels (§6.21). Same content as `Updates/U010_BackOffice_LabelLayout.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-16.** |
 | `07_BackOffice_Users.sql` | back office db (`easyway`), after `01` | users, roles, cashier download for tills (§6.12). Re-runnable. **Applied to easyway on 2026-10-09.** `02` got a "Cashier sign-in" section at the end — applied to `z_pos_fnt_db` the same day. |
 
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
@@ -317,8 +320,14 @@ profit view). TillService only — **no database change**, no update script. UI:
 
 **Cash drawer** — kick command `ESC p` through the printer (`Printer:DrawerPin` 0 = pin 2). Every opening is a row in
 `zf_tb_DrawerLog` (Kind 1 bill, 2 No Sale; `Opened 0` = the printer didn't take it). **No Sale**:
-`POST /drawer/nosale { pin, cashierId, reason }` — the supervisor PIN is checked **every time** (not the token),
-prints a small NO SALE slip (`Receipt:PrintNoSaleSlip`).
+`POST /drawer/nosale { cashierId, reason }` — **no PIN** (a `pin` sent is ignored); the cashier and reason are logged
+and a small NO SALE slip is printed (`Receipt:PrintNoSaleSlip`).
+
+**Till reports (Menu)** — `POST /cash/summary/print` (DRAWER SUMMARY slip of the open Z), `GET|POST /reports/suspended[/print]`
+(waiting + today's recalled / cancelled), `GET|POST /reports/refunds[/print]?zNo=` (refund bills of the open Z, else the
+last one). Day end always prints the CASH IN / OUT slip (opening cash, paid in, paid out) before the Z slip.
+`Receipt:PrintCashInDrawer` false = no CASH IN DRAWER on Z / X / drawer summary slips; the billing page shows it only
+after the supervisor PIN.
 
 **Profit view and bill discount %**
 - Cost prices now go to the tills: `z_sp_GetItemsForSync` → `CostPrice` (= `z_tb_ItemDet.CostPrice`),
@@ -748,6 +757,95 @@ U007 also replaces `z_Sp_GetSupplierLedger` / `z_sp_GetSupplierLedger_ByDate`: t
 the callers already catch), not every cheque route.
 
 **Deploy order**: `U007_BackOffice` on easyway → ItemApi → Prompt 50. Tills: nothing.
+
+### 6.20 Barcode labels straight to the Zebra — ZPL, label layouts (back office, 2026-10-16)
+UI: Lovable Prompt 52. SQL: `Updates/U010_BackOffice_LabelLayout.sql` (full script `16_BackOffice_LabelLayout.sql`).
+Code: `Controllers/LabelController.cs`, `Repositories/LabelRepository.cs`, `Service/ZplLabelBuilder.cs`,
+`Service/RawPrinter.cs` (same as TillService's).
+
+**The old barcode print is kept as it is**: BarcodePrint page → `POST api/Util/printbarcode` → LocalPrintAgent
+(localhost:9001) → BarTender `StickerExpireDatePrint.btw` on `AppSettings:PrinterZebra`. The new route needs neither
+BarTender nor LocalPrintAgent: ItemApi builds the label as ZPL and sends it RAW to the printer.
+
+**Label layouts** (`z_tb_LabelLayout`) — one row per sticker roll / sheet, picked on the page when printing:
+- `LabelWidthMm` × `LabelHeightMm` = ONE label; `LabelsAcross` (1-10) labels side by side; `RowsPerPage` (1-50) rows
+  in one print page; `GapXMm` between columns, `GapYMm` between rows; `MarginLeftMm` / `MarginTopMm`.
+  Page width = margin + across × width + (across − 1) × gap. Labels fill left → right, top → bottom.
+- **Roll with gaps (die-cut)**: `RowsPerPage` = 1 — the printer finds each row by the gap itself. More rows only for
+  sheets / continuous media.
+- `Dpi` 203 / 300 / 600 (the print head, e.g. "ZDesigner ZP888 **203DPI**"). `Darkness` 0-30 or NULL.
+- Printer: `PrinterName` (Windows printer **on the API server**) → else `PrinterAddress` (`ip:9100`) → else
+  `AppSettings:PrinterZebra`. ItemApi in IIS: the printer must be installed for all users on the server (the app pool
+  account opens it); a network Zebra by address avoids that.
+- What is printed: name (`Inv_Descrip`, else `Descrip` — the printer font has no Sinhala), barcode + its number,
+  item code (`RefCode`) and price, MFD / EXP. Font sizes follow the label height; a name that does not fit gets the
+  smaller font, then is cut. The price shrinks to fit next to the item code.
+- Barcode: `AUTO` = EAN-13 for a 13-digit barcode with a right check digit, else Code 128; `EAN13` on a barcode that
+  is not valid EAN-13 prints Code 128. No barcode on the item → its `RefCode` (the till finds items by RefCode too).
+  A barcode too wide for the label, or no room left for the barcode, is a 400 with what to change.
+- One default (`IsDefault`); deleting it (Status 0) makes the next one by name the default. A new install gets
+  "50 x 25 mm, 1 across".
+
+| Method | Route | |
+|---|---|---|
+| GET | `api/Label/Layouts?all=` | layouts, default first (`all=true` also deleted) |
+| GET/POST/PUT/DELETE | `api/Label/Layouts[/{id}]` | add / change / delete (Status 0) a layout |
+| POST | `api/Label/Layouts/{id}/Test` | one page with a frame round every label + sample text — check size / gaps / margins |
+| GET | `api/Label/Printers` | Windows printers on the API server |
+| POST | `api/Label/Print` | `{ labelLayoutId (null = default), skip, items: [{ itemId, qty, price, mfdDate, expDate }] }` → `{ labels, pages, printer, layoutName }`. `price` null = retail price at the location. `skip` = labels already used on the first sheet. Max 1000 per item, 5000 per print |
+| POST | `api/Label/Zpl` | same body, returns the ZPL text instead of printing |
+
+Pages that come out the same are sent once with `^PQ` (100 labels of one item on a 1-across roll = one page × 100).
+
+**Deploy order**: `U010_BackOffice` on easyway → ItemApi → Prompt 52. Tills: nothing.
+
+### 6.21 Price labels without BarTender — Sinhala, discounts, any printer (back office, 2026-10-16)
+UI: Lovable Prompt 53. SQL: same `U010` (layouts with `LabelKind = 2`). Code: `Service/PriceLabelRenderer.cs`,
+price part of `Repositories/LabelRepository.cs`, `api/Label/Price/*`.
+
+**The old price print is kept as it is** — PricePrint page → `api/Util/printprice` (`PricePrint.btw`),
+`printDiscountPrice` (`DiscountPrint.btw` when `tax3` amount, else `DiscountPercentagePrint.btw` when `tax2` %),
+`printitempricelandscape` (`LandScapePricePrint.btw`) → LocalPrintAgent → BarTender → `AppSettings:PrinterName`
+(PegasusPR8003, 80 mm receipt printer). What the old one does, from the code and the templates' own previews:
+- one item, one copy; reads the OLD item master (`Items/GetItemWithDetailsByBarcode`); the page may change every value
+  before printing (not saved).
+- label ≈ 72 × 25 mm: left item code / English name / price (Courier New bold), right the Sinhala name; discount:
+  right "Save <amount>" + now price (`price − tax3`); discount %: "Save <tax2>" (no % sign) and **no price**.
+- the "Sinhala" tick prints the Sinhala name and blanks the English one; without it the other way round — never both.
+- weak spots: Discount print on an item without a discount opens an empty template path (BarTender error box on the
+  server, the page still says "sent"); LocalPrintAgent's errors never reach the page (message boxes on the server).
+
+**New**: price layouts (`z_tb_LabelLayout.LabelKind = 2`, own default) with the same size / across / rows / gaps /
+margins as barcode labels, plus `Language` (1 English, 2 Sinhala, 3 both), `Rotate` (landscape: label turned 90°),
+`SinhalaFont` (NULL = Iskoola Pota), `EnglishFont` (NULL = Courier New, as the old labels), `FooterText` (line on
+labels without a discount). The server DRAWS the label (GDI+, Sinhala shaped by Windows) and prints it through the
+Windows printer driver — the Pegasus as before, or an A4 laser with sheets of shelf labels. Same drawing → PNG preview.
+- Layout of one label: wide (width ≥ 1.8 × height) = the old design — left code / English name (both) / price, right
+  the big name; narrow = the same parts one under the other. Each text is as big as its box allows.
+- Style per item: `AUTO` (discount label when there is a discount, else price), `PRICE`, `DISCOUNT` (400 when there is
+  no discount — the old empty-template case). Amount wins over % (as old). Amount → "Save Rs x" + "Now Rs y";
+  % → "Save x%" without price (as old). Discount more than the price → 400.
+- Values: item code `RefCode`, name `Inv_Descrip` (else `Descrip`), `SinhalaDescrip`, price / discount from
+  `z_tb_ItemDet` (`RetailPrice`, `DiscountAmount`, `DiscountPercent`) at the location — the page may send its own
+  (`price`, `discountAmount`, `discountPercent`, `name`, `sinhalaName`), only for that print.
+- Some items have English typed in `SinhalaDescrip`: the font follows the text, and "both" does not print the same
+  name twice. A font that is not on the server is a 400 (Windows would print Sinhala as boxes).
+- Printer: layout `PrinterName` → else `AppSettings:PrinterName`. Errors (printer not found …) come back as 400.
+  ItemApi in IIS: the printer must be installed for all users on the server.
+
+| Method | Route | |
+|---|---|---|
+| GET | `api/Label/Layouts?kind=2` | price layouts (kind 1 = barcode, none = both) |
+| POST/PUT | `api/Label/Layouts` | + `labelKind` (on add; never changes), `language`, `rotate`, `sinhalaFont`, `englishFont`, `footerText` |
+| GET | `api/Label/Layouts/{id}/Preview` | a price layout's test page as PNG (sample label, frames) — nothing printed |
+| POST | `api/Label/Layouts/{id}/Test` | prints that test page (both kinds) |
+| POST | `api/Label/Price/Print` | `{ labelLayoutId (null = default price layout), language (null = layout's), skip, items: [{ itemId, qty, style, price, discountAmount, discountPercent, name, sinhalaName }] }` → `{ labels, pages, printer, layoutName }`. Max 500 per item, 1000 per print |
+| POST | `api/Label/Price/Preview?page=0` | same body → that page as PNG with label frames |
+
+A barcode layout sent to a price route (or the other way round) is a 400. First install adds "Price 72 x 25 mm"
+(default) and "Price landscape 72 x 100 mm" (turned) — check both with Test print on the real printer.
+
+**Deploy order**: `U010_BackOffice` on easyway → ItemApi → Prompt 53 (after 52). Tills: nothing.
 
 ---
 

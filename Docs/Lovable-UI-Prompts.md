@@ -2164,6 +2164,15 @@ Chrome's password manager off for certain; the PC setting does.
    (`--kiosk` = full screen, Alt+F4 closes it; use `--app="<till url>/billing" --start-maximized` to keep the
    window frame.)
 
+**Back office PC, once per PC** (not Lovable): [BackOffice-Chrome-Policy.reg](BackOffice-Chrome-Policy.reg): like the till
+file, but Chrome still saves passwords and shows the "Save as" dialog, and it allows print / PDF pop-up windows,
+downloads and copy for the back office address. Change
+`http://192.168.1.5` in the file first, then run it the same way as the till file.
+
+**PCs with Microsoft Edge instead of Chrome:** [Till-Edge-Policy.reg](Till-Edge-Policy.reg) and
+[BackOffice-Edge-Policy.reg](BackOffice-Edge-Policy.reg), checked at `edge://policy`. Till shortcut:
+`"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --kiosk "<till url>/billing" --edge-kiosk-type=fullscreen --no-first-run`
+
 ```
 Change the cashier sign-in screen, the Supervisor PIN dialog and every other PIN / password field on /billing
 (No Sale, Opening cash / Paid In / Paid Out, Discount %, Price check "Show cost", Keys) — and src/components/till/*
@@ -2681,4 +2690,420 @@ Supplier Ledger page (/supplier-ledger, src/pages/SupplierLedger.tsx):
    "Showing all dates" when empty.
 
 6) Empty grid for the range → "No entries from <from> to <to>." with a link-button "Show all dates".
+```
+
+---
+
+## Prompt 52 — Barcode labels (new, straight to the Zebra) + Label layouts
+
+Backend: `api/Label` (ItemApi) + `DBScript/Updates/U010_BackOffice_LabelLayout.sql`. The server builds the label
+itself (ZPL) and sends it to the Zebra — no BarTender, no LocalPrintAgent. **The old "Barcode Printing System" page
+(BarcodePrint.tsx → api/Util/printbarcode) stays exactly as it is** — this is a second, new page.
+
+```
+Add two new back office pages and a menu entry "Barcode labels" (next to the old barcode page; keep the old one).
+New service file src/services/labelApi.ts using the existing api instance (base …/api/):
+
+  type LabelLayout = { labelLayoutId: number; labelKind: 1 | 2; name: string; printerName: string | null; printerAddress: string | null;
+    dpi: number; labelWidthMm: number; labelHeightMm: number; labelsAcross: number; rowsPerPage: number;
+    gapXMm: number; gapYMm: number; marginLeftMm: number; marginTopMm: number;
+    barcodeType: "AUTO" | "CODE128" | "EAN13"; barcodeHeightMm: number;
+    showName: boolean; showPrice: boolean; showItemCode: boolean; showDates: boolean;
+    darkness: number | null; isDefault: boolean; status: number };
+  GET    Label/Layouts?kind=1         → LabelLayout[] (barcode layouts, default first; kind=2 = price layouts, Prompt 53)
+  POST   Label/Layouts      body      → { message, data: LabelLayout }   (send labelKind: 1)
+  PUT    Label/Layouts/{id} body      → { message, data }
+  DELETE Label/Layouts/{id}           → { message }
+  POST   Label/Layouts/{id}/Test      → { message, data }   (prints one page with a frame round every label)
+  GET    Label/Printers               → string[]  (Windows printers on the server)
+  POST   Label/Print { labelLayoutId, skip, items: [{ itemId, qty, price, mfdDate, expDate }] }
+                                      → { message, data: { labels, pages, printer, layoutName } }
+  Errors: 400/404 { message } → toast.error(message).
+
+PAGE 1 — /label-layouts "Label layouts" (settings page; gear icon link from the Barcode labels page header)
+1) Table: Name (Default badge), Size "50 × 25 mm", Across, Rows, Printer (empty = "Server default"), DPI,
+   actions Edit, Test print, Delete (confirm). Button "New layout".
+2) Dialog (add / edit), sections:
+   - Name (required, max 50).
+   - Label size: Width mm, Height mm (of ONE label), Labels across (1-10), Rows per page (1-50; help text
+     "1 for a roll. More only for sheets that print several rows at once."),
+     Gap between columns mm, Gap between rows mm, Left margin mm, Top margin mm. Decimal inputs, step 0.5.
+   - Printer: select from GET Label/Printers plus "(Server default)" = null; OR Network address (ip:9100) —
+     typing an address clears the select. DPI select 203 / 300 / 600 (help: "in the printer's name, e.g. 203DPI").
+     Darkness 0-30, empty = printer's own.
+   - Barcode: type AUTO / CODE128 / EAN13 (help: "AUTO = EAN13 for 13 digit barcodes, else Code 128"),
+     Barcode height mm (0 = fit the label).
+   - Print on label: switches Name, Price, Item code, MFD / EXP dates.
+   - "Default layout" switch.
+3) Live preview in the dialog: an SVG drawn to scale (fit to the dialog width): one page = rows × across rectangles
+   with the gaps and margins, each with grey placeholder bars for the parts that are switched on (name line,
+   barcode block, price / code line, dates line). Under it the page size, e.g. "Page 104 × 25 mm".
+4) Test print (table row, and in the dialog after saving) → POST Test → toast.success(message).
+   Help text: "Prints a frame round every label. If the frames are not on the stickers, change the size, gaps or
+   margins."
+
+PAGE 2 — /barcode-labels "Barcode labels"
+1) Top bar: Layout select (GET Label/Layouts, default picked; show "50 × 25 mm · 3 across"), "Skip" number input
+   only when the layout has more than 1 label per page (0 … across × rows − 1, help: "labels already used on
+   the first sheet"), gear link to /label-layouts.
+2) Add items: one scan / search box (autofocus). Enter with a barcode → GET Itemz/GetByBarcode?barcode=…;
+   text → GET Itemz/Search?query=… and pick from the list. Added item → a row; adding the same item again adds 1
+   to its Qty. Focus goes back to the scan box.
+3) Rows table: Item code, Name, Price (select: the retail price + the item's price links from
+   GET Itemz/PriceLinks/{itemId}, "Rs 175.00"; also editable), Qty (labels, 1-1000), MFD date, EXP date (date
+   inputs; only shown when the layout prints dates), remove (X).
+   Footer: "<n> items · <total> labels · <pages> pages" where pages = ceil((skip + total) / (across × rows)).
+4) "Print labels" (primary, Printer icon, disabled with no rows or while printing) → POST Label/Print with
+   dates as plain "yyyy-MM-dd" strings → toast.success(message); keep the rows ("Clear list" button empties
+   them). On error keep everything and show the message.
+5) Ctrl+P = Print labels on this page.
+```
+
+---
+
+## Prompt 53 — Price labels (new, Sinhala, many items) + price layouts
+
+Backend: `api/Label/Price/*` + price layouts in `z_tb_LabelLayout` (`labelKind: 2`), same `U010`. The server draws the
+label and prints it through the Windows printer driver (Sinhala works, any printer). **The old "Price Label Print"
+page (PricePrint.tsx → api/Util/printprice / printDiscountPrice / printitempricelandscape) stays exactly as it is.**
+Do Prompt 52 first (it makes the Label layouts page).
+
+```
+1) src/services/labelApi.ts — add to LabelLayout: language: 1 | 2 | 3; rotate: boolean; sinhalaFont: string | null;
+   englishFont: string | null; footerText: string | null. Add:
+     GET  Label/Layouts?kind=2               → price layouts
+     GET  Label/Layouts/{id}/Preview         → PNG (blob) of the layout's test page
+     POST Label/Price/Print   { labelLayoutId, language, skip, items: PriceLine[] } → { message, data }
+     POST Label/Price/Preview?page=n  same body → PNG (blob)  (responseType "blob"; on 400 read the blob as JSON
+                                                             for { message })
+     type PriceLine = { itemId: number; qty: number; style: "AUTO" | "PRICE" | "DISCOUNT"; price?: number | null;
+       discountAmount?: number | null; discountPercent?: number | null; name?: string | null; sinhalaName?: string | null };
+
+2) Label layouts page (/label-layouts, Prompt 52): two tabs "Barcode labels" (kind 1, as now) and "Price labels"
+   (kind 2). "New layout" sends labelKind of the open tab; the kind is never changed on edit.
+   Price layout dialog: same Name / Label size / Printer select (NO network address, NO DPI / darkness / barcode
+   fields) and Print on label switches Name, Price, Item code (no dates). Extra:
+   - Language select: English / Sinhala / Both.
+   - "Landscape (turned 90°)" switch = rotate.
+   - Sinhala font (default "Iskoola Pota"), English font (default "Courier New") — text inputs, empty = default.
+   - Footer text (max 100; "printed on labels without a discount, e.g. the shop slogan").
+   - Preview: for a saved price layout show <img> of GET Layouts/{id}/Preview (refresh after Save) instead of the
+     SVG sketch.
+
+3) New page /price-labels "Price labels". Menu (src/components/Sidebar.tsx): add it to the "Labels" group between
+   "Barcode labels" and "Label layouts" (icon Tag). The old "Price Print" stays in the "Old system" group.
+   - Top bar: Layout select (kind 2, default picked, "72 × 25 mm · 1 across"), Language toggle
+     English / Sinhala / Both (starts at the layout's language), Skip (only when across × rows > 1), gear → /label-layouts.
+   - Scan / search box (autofocus) as on Barcode labels: barcode → GET Itemz/GetByBarcode, text → GET Itemz/Search.
+     Added item → row; same item again → Qty + 1. Fill the row from the item: name (inv_Descrip or descrip),
+     sinhalaDescrip, retailPrice, discountAmount, discountPercent.
+   - Rows table: Item code, Name (editable), Sinhala name (editable, font "Iskoola Pota"), Price (editable),
+     Discount Rs (editable), Discount % (editable), Style select Auto / Price / Discount, Qty (1-500), remove.
+     Send a field only when the user changed it (else null → the server uses the item's value).
+     Style "Discount" with no discount → red row hint "No discount on this item".
+   - Right side (or below on small screens): Preview card — POST Price/Preview with the current rows, debounced
+     500 ms after any change; show the PNG fit to the card width with a light border; "Page 1 of n" with ‹ › when
+     more pages (pages = ceil((skip + total qty) / (across × rows))). Preview error → show its message in the card.
+   - Footer: "<n> items · <total> labels · <pages> pages"; buttons "Print price labels" (primary, Printer icon,
+     disabled with no rows / while printing) → POST Price/Print → toast.success(message); "Clear list".
+   - Ctrl+P = Print price labels on this page.
+```
+
+---
+
+## Prompt 54 — Cashier billing: touch keyboard (sign-in, bank transfer / cheque), Menu button, layout rearranged
+
+No backend change. Fixes typing on a touch-only till (no physical keyboard) and moves buttons again. Changes the
+layout of Prompt 34 (function bar) and Prompt 32 (pay dialog keypad). Keep every function, rule, PIN check, dialog,
+shortcut key and API call exactly as it is — only the on-screen keyboard is new; the rest is WHERE the buttons are.
+
+```
+Change src/pages/CashierBilling.tsx, src/components/till/CashierSignIn.tsx, src/components/till/FunctionBar.tsx,
+src/components/till/PriceCheckDialog.tsx; add src/components/till/TouchKeyboard.tsx.
+
+1) New shared on-screen keyboard (TouchKeyboard.tsx) — the one PriceCheckDialog has inline today, made reusable:
+     props: onKey(k: string) where k is a character, " ", "⌫", "C" or "Enter"; enterLabel?; enterDisabled?
+   - Rows: 1 2 3 4 5 6 7 8 9 0 / Q W E R T Y U I O P / A S D F G H J K L - / Z X C V B N M . / # ,
+     then Space (wide) · ⌫ · Clear · Enter (primary). Upper case only.
+   - Keys h-12, text-lg font-semibold, grid-cols-10, gap 4 px. Every key onMouseDown preventDefault (the input
+     keeps focus, the Windows touch keyboard never pops up).
+   - PriceCheckDialog uses this component instead of its inline keys (same ⌨ toggle, same behaviour).
+
+2) Cashier sign-in (CashierSignIn.tsx) — the user name cannot be typed on the touch screen (the keypad is digits only):
+   - Add a ⌨ button (h-14 w-14, same style as Price check) at the right end of the User name box.
+   - When the User name field is active the right side shows the TouchKeyboard instead of the number pad;
+     when the Password field is active it shows the number pad as now. The ⌨ button switches between the two
+     by hand as well (for a letter password). Tapping a field switches to its pad.
+   - TouchKeyboard keys type into the active field with the same rules as press() (max 50, ⌫, C = clear);
+     Enter on User name → Password, Enter on Password → Sign in.
+   - Make the card wide enough for the keyboard: max-w-5xl, form 2/5, pad 3/5. Must fit 1366×768 without scroll.
+
+3) Pay by Bank transfer / Pay by Cheque dialog — the slip / cheque number and details cannot be typed by touch:
+   - For bank / cheque (payOther) the right side of the dialog shows the TouchKeyboard instead of the NumPad;
+     it types into "Transfer ref / slip no" / "Cheque no" (max 30, the database limit), Enter = Complete.
+   - Label hint under the field: bank → "Slip no and bank, e.g. 458812 BOC"; cheque → "Cheque no and bank,
+     e.g. 004512 HNB". Field font as tillInput, upper case.
+   - Card / Mixed: the "Card ref / approval no" field gets a small ⌨ button; while it is on, the TouchKeyboard
+     replaces the NumPad and types into the card ref. Cash / card amount fields keep the NumPad.
+   - Refund by bank / cheque: same as sale.
+
+4) Top toolbar → Search · Reload · Profit · Keys · Theme · [ Menu ▾ ] — then Cashier name / Sign out at the right.
+   - "Other item" and "Discount %" move OUT of the top toolbar into the bottom function bar (point 5).
+   - New "Menu" button (icon Menu / three lines, same size as Theme) directly right of the Theme toggle.
+     Tap → dropdown (Popover, h-12 rows, ↑/↓, Enter, Esc) with: Drawer summary · X report · Day end.
+     Each item calls runAction("drawerSummary" | "xReport" | "dayEnd") — same rules as today (disabled while
+     paying; Day end disabled while the bill has lines; Day end row in amber text). Shortcut keys (Alt+X, Ctrl+E …)
+     still work without opening the menu, and the key chip shows on each menu row.
+   - Drawer summary, X report and Day end are REMOVED from the bottom bar (only in the Menu afterwards).
+
+5) Bottom function bar — now sits ONLY under the bill lines (left column), NOT under the right panel.
+   Two rows of 9 equal buttons (grid-cols-9, gap 6 px, padding 6 px, h-14, icon above label, text-xs, labels may
+   wrap, min-w-0 — no label cut off). Order:
+     Row 1 (the bill):  Qty · Price · W/R · Void line · Wholesale · Other item · Discount % · Price check · Void bill
+     Row 2 (the drawer): Refund · Bill copy · Reprint · No Sale · Suspend · Recall · Paid In · Paid Out · Opening cash
+   - W/R, Void line, Wholesale move here from the right panel (same rules: W/R / Void line need a selected line,
+     Wholesale shows the "on" ring in wholesale mode, W/R the ring on a wholesale line).
+   - Other item, Discount % move here from the top toolbar (Discount % disabled in refund / with no lines).
+   - Colours as now: navy; Void bill red. The F12 cash popover still opens above Paid In and still lists
+     Paid In / Paid Out / Opening cash / Drawer summary.
+
+6) Right panel = its own full-height column (w-[26rem]) from below the top toolbar down to the status bar — the
+   function bar never runs under it. Top to bottom:
+     totals (as now) → keypad (flex-1, the 4×4 keys + Enter, as now) →
+     [ Cash ][ Card ][ Mixed ]            (one row of 3, tillPayBtn, as now)
+     [ Bank transfer ][ Cheque ]          (one row of 2, h-14, as now)
+   The pay buttons are at the BOTTOM of the right column, under the keypad, in line with the function bar.
+
+7) Page = h-screen flex column: top toolbar · main (flex-1 min-h-0: [left: scan box, banners, bill lines flex-1
+   scroll, function bar] | [right column]) · status bar (full width). No page scroll bar.
+   Check at 1366×768 and 1920×1080, touch: all 18 bottom buttons visible, no button under 56 px, at least 7 bill
+   lines visible at 1366×768, keypad keys not smaller than 48 px, sign-in and pay dialogs fit without scrolling.
+```
+
+---
+
+## Prompt 55 — Cashier billing: F1 never opens Chrome help; F1 in Search = clear and search again
+
+No backend change. Today the second F1 (pressed while the Search dialog is open) is not stopped, so Chrome opens its
+help page (support.google.com) and the till page is left. Cause: in the shortcut handler in CashierBilling.tsx,
+`if (dlgRef.current) { … return; }` only calls preventDefault for reprintLast / priceCheck / xReport.
+
+```
+Change src/pages/CashierBilling.tsx only.
+
+1) Browser keys never reach Chrome on the till page. In the capture-phase keydown listener that already blocks
+   F5 / Ctrl+R (the "Page-reload keys never reload the till" effect), also call e.preventDefault() — WITHOUT
+   stopPropagation, so the till's own shortcuts and dialog keys still get the key — for:
+     F1 … F12 (any modifiers), Ctrl+F, Ctrl+G, Ctrl+H, Ctrl+J, Ctrl+D, Ctrl+P, Ctrl+S, Ctrl+U, Ctrl+N, Ctrl+T,
+     Ctrl+W, Ctrl+Shift+N, Alt+Home, Alt+ArrowLeft, Alt+ArrowRight, BrowserBack / BrowserHome keys.
+   This listener works on every screen of the till page: the sign-in screen, the billing page and every dialog.
+
+2) F1 (the "search" action) while a dialog is open:
+   - Search dialog open → run the search action again: clear the text and the result rows, index back to 0,
+     on-screen keyboard closed, focus the search box (the same as a fresh F1). No second dialog, no flicker.
+   - Any other dialog open → do nothing (the key is already blocked by point 1).
+   In the shortcut handler change the dialog branch to:
+     if (dlgRef.current) {
+       e.preventDefault();
+       if (action === "search" && srch !== null && !e.repeat) { e.stopPropagation(); runRef.current("search"); }
+       return; // other dialogs keep their own keys
+     }
+   (use a ref for "the Search dialog is open" so the listener does not read a stale value.)
+   After the reset, put focus back in the search box (setTimeout 0).
+
+3) Test: F1 → Search opens. Type "sug", F1 → box empty, rows gone, still in Search, cursor in the box. F1 ten
+   times fast → still the till page, never the Google help page. F1 / F3 / F7 / Ctrl+F on the sign-in screen and
+   in the payment dialog → nothing happens in Chrome. All shortcut keys from the Keys dialog still work as before.
+```
+
+---
+
+## Prompt 56 — Cashier billing: No Sale without PIN, cash in drawer only with the PIN, reports in the Menu
+
+Backend: TillService only (no db update). `POST /drawer/nosale` no longer asks for a PIN; new report routes
+`POST /cash/summary/print`, `GET|POST /reports/suspended[/print]`, `GET|POST /reports/refunds[/print]?zNo=`.
+Day end now ALWAYS prints the CASH IN / OUT slip (opening cash, paid in, paid out) before the Z slip — nothing to do on
+the page. Do Prompt 54 first (it makes the Menu button).
+
+```
+Change src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts, src/pages/CashierBilling.tsx,
+src/components/till/XReportDialog.tsx; add src/components/till/SuspendedReportDialog.tsx and RefundReportDialog.tsx.
+
+1) No Sale — no PIN.
+   - tillLocalApi: noSale(cashierId: string, reason: string | null) → POST /drawer/nosale { cashierId, reason }.
+   - No Sale dialog: remove the PIN field and the NumPad. Keep the reason chips (Change · Cash count · Wrong change ·
+     Other) and the Reason box (TouchKeyboard from Prompt 54 under it while "Other" is picked). "Open drawer (Enter)"
+     is enabled as soon as there is a reason (Change is picked by default → one tap / Enter opens the drawer).
+   - Remove the "Wrong PIN" handling for No Sale.
+
+2) CASH IN DRAWER and over / short only after the supervisor PIN (blind cash-up).
+   Applies to the Drawer summary dialog, the X report dialog and the Z summary dialog after day end.
+   - Hide the "= Cash in drawer" / "CASH IN DRAWER" figure and the "Exact / short Rs … / over Rs …" line.
+     Opening cash, cash sales, paid in, paid out and the movement list stay visible.
+   - In their place a button "Show cash in drawer (PIN)" (outline, h-11, Eye icon). Tap → the supervisor PIN dialog
+     (new pinFor "showCash", title "Supervisor PIN — Show cash in drawer"; if hasSupervisorToken() is already true,
+     no dialog). After the PIN: the figure appears, and in the Z dialog the over / short line appears under
+     "Counted cash" as today. Hidden again when that dialog closes (each dialog opens hidden).
+   - Z summary: "Counted cash" stays (the cashier types the count without seeing the expected figure); with the
+     TouchKeyboard / NumPad as other number fields.
+
+3) Menu (Prompt 54) — reports, in this order:
+     Drawer summary · X report · Suspended bills · Refunds · ── · Day end
+   tillShortcuts.ts: add actions "suspendedReport" (label "Suspended bills") and "refundReport" (label "Refunds"),
+   no default key. runAction opens the dialogs below. Disabled while paying.
+
+4) Drawer summary dialog: add a "Print" button (Printer icon) in the footer next to Close →
+   POST /cash/summary/print (send X-Supervisor-Token when held — then the slip shows CASH IN DRAWER) →
+   printed ? toast.success("Drawer summary printed") : toast.error(printError). 400 → toast.info(message).
+
+5) Suspended bills report (SuspendedReportDialog.tsx), max-w-3xl:
+   GET /reports/suspended → { takenAt, waiting: Row[], closed: Row[] },
+     Row = { suspendId, label, cashierId, lineCount, netAmount, suspendedAt, status (1|2|9), closedAt, closedBy }.
+   - "Waiting (n)" table: #, Suspended at (dd/MM HH:mm), Cashier, Note (label), Lines, Amount (right). Total row.
+   - "Today — recalled / cancelled (n)" table: #, Status chip (Recalled = primary, Cancelled = destructive),
+     Closed at (HH:mm), By, Note, Amount.
+   - Empty → "No suspended bills". Footer: Print (POST /reports/suspended/print) · Close.
+
+6) Refunds report (RefundReportDialog.tsx), max-w-3xl:
+   GET /reports/refunds → { zNo, zOpen, takenAt, total, rows: [{ invoiceNo, invDate, cashierId, refInvoiceNo,
+     lineCount, netAmount, payType }] }. Title "Refunds — Z {zNo}" + "(not closed)" when zOpen.
+   - Table: Time (HH:mm), Refund bill, Sale bill (refInvoiceNo or "—"), Cashier, Lines, Paid back (payType name:
+     1 Cash, 2 Card, 3 Credit, 4 Voucher, 5 Bank transfer, 6 Cheque), Amount (right, destructive colour).
+   - Under it: total per pay type and "Total refunds (n)  Rs …" bold.
+   - Tap a row → the bill preview the Bill copy dialog already uses (getInvoice(invoiceNo)), with its Print copy.
+   - 400 → "No Z on this till yet". Footer: Print (POST /reports/refunds/print?zNo=) · Close.
+
+7) Both report dialogs: h-12 table rows (touch), scroll inside the dialog (max-h-[60vh]), Esc / Close → focusScan().
+   Printing never opens the drawer. All printing answers are { printed, printError } like the X report.
+```
+
+---
+
+## Prompt 57 — Cashier billing: ⌨ touch keyboard on every text box that takes letters
+
+No backend change. Prompt 54 added TouchKeyboard (src/components/till/TouchKeyboard.tsx) to sign-in, Price check,
+No Sale and bank / cheque pay. These text boxes still have NO way to type letters on a touch-only till:
+
+  1. Suspend bill — "Note / customer name"                       (CashierBilling.tsx, Suspend dialog)
+  2. Paid In / Paid Out — "Reason"                                (CashierBilling.tsx, cash dialog)
+  3. Other item — "Description"                                   (CashierBilling.tsx, Other item dialog)
+  4. Refund against bill — "Scan / enter bill number" (T01-00000123) (RefundBillDialog.tsx, scan box)
+  5. Refund against bill — "Card ref / Transfer ref / Cheque no"   (RefundBillDialog.tsx, pay back)
+  6. Bill copy — "Invoice no (last digits)"                       (CashierBilling.tsx, Bill copy dialog)
+
+```
+Change src/pages/CashierBilling.tsx and src/components/till/RefundBillDialog.tsx. Use the existing TouchKeyboard and
+touchValue(value, key, max, clear) — no second keyboard component.
+
+The same rule for every box in the list:
+- A ⌨ button (h-12 w-12, outline; "default" variant while on; onMouseDown preventDefault) at the right end of the
+  box, in one flex row with it — the same look as the ⌨ in Price check.
+- Tap ⌨ → the TouchKeyboard shows inside the dialog (where the NumPad is, the NumPad is hidden while the keyboard is
+  on; dialogs without a NumPad show it under the box). Tap ⌨ again → back to the NumPad.
+- Keys type into that box with touchValue and the box's own max length (Suspend note 50, Reason 100, Other item
+  description 50, bill number 30, ref 30, invoice filter 30); the box keeps focus (no Windows keyboard pops up).
+- TouchKeyboard Enter = the dialog's main action, the same as the Enter key in that box today
+  (Suspend → Suspend; Paid In/Out → Save; Other item → Add; refund scan → look up the bill; refund ref → Refund;
+  Bill copy → open the first match).
+- Each dialog opens with the keyboard OFF, except the Suspend dialog: it opens with the keyboard ON (the note is the
+  only field). Closing a dialog turns its keyboard off.
+- Tapping a number box in the same dialog (Amount, Price, Qty, PIN) turns the keyboard off and goes back to the
+  NumPad typing into that box, as today.
+- Dialog widths grow so the keyboard fits without scrolling at 1366×768: Suspend max-w-2xl, Paid In / Out max-w-2xl,
+  Other item max-w-2xl. Keys never smaller than h-12.
+
+Test on the touch screen with no physical keyboard: suspend a bill with note "MR PERERA", paid out with reason
+"TEA 2 CUPS", other item "PLASTIC BAG", refund by typing T01-00000030, refund by cheque with "004512 HNB", bill copy
+filter "30" — all without the Windows keyboard ever opening.
+```
+
+---
+
+## Prompt 58 — Refund against the bill: "No bill — refund without a receipt" looks like a button
+
+No backend change. In RefundBillDialog.tsx the button is variant="ghost" (no border, no fill), so on the till it
+reads as plain text and cashiers do not see that it can be tapped.
+
+```
+Change src/components/till/RefundBillDialog.tsx, footer only.
+- "No bill — refund without a receipt": variant="outline" (not ghost), border-2 border-warning, icon ReceiptText
+  (lucide) before the label, h-12, text-lg font-semibold — the same size as the other footer buttons.
+- Put it at the LEFT of the footer (mr-auto), apart from Another bill · Close (Esc) · Refund Rs … on the right,
+  so it is not mistaken for the main action.
+- Same click as now (onNoReceipt → the old refund mode). Label may wrap to two lines on a narrow screen; never cut off.
+- Check at 1366×768: all four footer buttons visible in one row, none smaller than h-12.
+```
+
+---
+
+## Prompt 59 — Till: Printer settings in the Menu (Windows printer / COM port / network), printer status dot
+
+Backend: TillService only (no db update). New routes `GET|PUT /printer/settings`, `GET /printer/devices`,
+`GET /printer/status`, `POST /printer/test`. Saving needs the supervisor token; the settings are kept on the till in
+printer.json and used from the next print (no restart). Print errors are now real: a job the printer did not take is
+cancelled and `printError` says why ("Printer 'POS' is not printing … The job was cancelled.").
+
+```
+Change src/services/tillLocalApi.ts, src/lib/tillShortcuts.ts, src/components/till/TillMenu.tsx,
+src/pages/CashierBilling.tsx; add src/components/till/PrinterSettingsDialog.tsx.
+
+1) tillLocalApi.ts:
+   type PrinterSettings = { mode: 1 | 2 | 3; name: string | null; port: string | null; baudRate: number;
+     handshake: "None" | "RequestToSend" | "XOnXOff"; address: string | null; charsPerLine: number; drawerPin: 0 | 1;
+     cut: boolean; feedLines: number; timeoutSeconds: number; jobTimeoutSeconds: number; checkStatus: boolean };
+   type WindowsPrinter = { name: string; port: string | null; driver: string | null; jobs: number;
+     problem: string | null; blocked: boolean };
+   type PrinterStatus = { ok: boolean; mode: number; target: string; answered: boolean; paperNearEnd: boolean;
+     jobs: number; problem: string | null; checkedAt: string };
+   getPrinterSettings()  → GET /printer/settings  → { settings: PrinterSettings; savedInFile: boolean }
+   savePrinterSettings(s) → PUT /printer/settings (X-Supervisor-Token as other token calls) → same shape; 401 → PIN
+   getPrinterDevices()   → GET /printer/devices   → { windowsPrinters: WindowsPrinter[]; comPorts: string[] }
+   getPrinterStatus()    → GET /printer/status    → PrinterStatus
+   testPrinter(settings: PrinterSettings | null, openDrawer: boolean) → POST /printer/test
+                         → { printed, drawerOpened, printError, status: PrinterStatus }   (timeout 15 s for this call)
+
+2) Menu (TillMenu.tsx): add "Printer settings" (icon Printer) after Refunds, before the Day end separator.
+   tillShortcuts.ts: action "printerSettings", label "Printer settings", no default key. Disabled while paying.
+
+3) PrinterSettingsDialog.tsx — max-w-3xl, opens with getPrinterSettings() + getPrinterDevices().
+   Top: "How is the printer connected?" — three big toggle buttons (h-16, icon + two lines), one is selected:
+     [1  Windows printer   USB, through Windows]  [2  COM port   Epson virtual port / serial]  [3  Network   IP address]
+   Under it only the fields of the picked mode:
+   - 1 Windows printer: a Select (h-12, text-lg) of devices.windowsPrinters by name; each option shows the name and,
+     muted, the port (USB001) and driver; a printer with problem shows it in red after the name ("set to 'Use printer
+     offline' in Windows"), with jobs > 0 "· 5 jobs waiting". Refresh button (RefreshCw) reloads the list.
+     If the saved name is not in the list, show it as the first option with "(not found on this PC)".
+     Help text: "Tip: rename the printer in Windows to a short name like POS, and keep the USB cable in the same port."
+     Advanced (collapsed): "Wait for Windows queue (seconds)" 2–30, default 4.
+   - 2 COM port: Select of devices.comPorts (COM3 …) + Refresh; Baud rate Select 9600 / 19200 / 38400 / 57600 /
+     115200 (default 38400); Handshake Select None / RTS/CTS (value "RequestToSend") / XON/XOFF (value "XOnXOff").
+     Help text: "Epson: install the EPSON TM Virtual Port Driver, assign the printer to a COM port, then pick it here.
+     Baud rate and handshake only matter on a real serial cable." Empty list → "No COM ports on this PC."
+   - 3 Network: Address input "192.168.1.50:9100" (TouchKeyboard ⌨ as Prompt 57; the box accepts digits, dots,
+     letters, ':'), Timeout (seconds) 1–30, default 5.
+   - Modes 2 and 3: switch "Check printer status before printing (paper, cover, power)" = checkStatus, default on;
+     hint "Turn off only if this printer does not answer status requests."
+   Common (all modes), in a compact 2-column grid:
+     Paper width: Select "80 mm — 48 chars" (48) / "80 mm — 42 chars" (42) / "58 mm — 32 chars" (32);
+     Drawer pin: "Pin 2 (most drawers)" (0) / "Pin 5" (1); Cut paper (switch); Feed lines before cut 0–10 (NumPad).
+   Status box (right or below): getPrinterStatus() of the SAVED settings on open (nothing printed):
+     green "Ready — <target>" / red "<problem>" / amber "Paper nearly finished" (paperNearEnd). Re-check button.
+   Footer buttons (h-12):
+     [Test print] → testPrinter(current form, false): printed ? toast.success("Test slip printed — check the
+       ruler line fits on one line") : toast.error(printError). Also refreshes the status box from result.status.
+     [Test drawer] → testPrinter(current form, true) (prints the slip AND opens the drawer).
+     [Cancel]  [Save] (primary) → savePrinterSettings(form); 401 → the supervisor PIN dialog (pinFor "printer",
+       title "Supervisor PIN — Printer settings"), then save again. Saved → toast.success("Printer settings saved"),
+       close, refresh the status dot. 400 → toast.error(message) and keep the dialog open.
+   Saving does NOT need a test first, but if the last Test print of these exact settings failed, Save asks
+   "The test print failed. Save anyway?" (Save anyway / Back).
+   savedInFile false → small muted line "Using the settings from appsettings.json (not saved here yet)."
+
+4) Printer status dot in the status bar (next to Online / Offline): getPrinterStatus() on page load, every 60 s,
+   and right after any print answer with printError. Green dot + "Printer" when ok; red dot + "Printer: <problem>"
+   (truncate, full text in title) when not; amber when paperNearEnd. Tap → opens Printer settings.
+   Never poll while a print request is running (the till prints one job at a time).
+
+5) Every printError toast (bill, reprint, No Sale, cash movement, reports, Z / X) gets an action button
+   "Printer settings" that opens the dialog. Keep the existing messages.
 ```

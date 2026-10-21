@@ -4,7 +4,7 @@ Windows Registry Editor Version 5.00
 ; Run once on each till PC as administrator (double-click, Yes), then close ALL Chrome windows and open it again.
 ; Check: chrome://policy shows the lines below with status OK.
 ; Applies to every Chrome user on this PC. To undo: delete the key below in regedit.
-; (Microsoft Edge instead of Chrome: same values under HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge)
+; (Microsoft Edge instead of Chrome: use Till-Edge-Policy.reg)
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]
 ; passwords: never offer to save, never fill a saved one, no "password found in a data breach" warning

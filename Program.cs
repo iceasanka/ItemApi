@@ -130,6 +130,7 @@ builder.Services.AddScoped<ISalaryPayslipRepository, SalaryPayslipRepository>();
 builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>();
 builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
 builder.Services.AddScoped<IExportRepository, ExportRepository>();
+builder.Services.AddScoped<ILabelRepository, LabelRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<ISalesDocRepository, SalesDocRepository>();
 builder.Services.AddSingleton<SalesDocPdfService>();

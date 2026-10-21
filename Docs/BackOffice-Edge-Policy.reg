@@ -1,0 +1,47 @@
+Windows Registry Editor Version 5.00
+
+; Back office PC - Microsoft Edge: no notifications, no other bars over the pages. Chrome version:
+; BackOffice-Chrome-Policy.reg. Edge still saves passwords and asks where to save downloads. Allowed for the
+; back office: print / PDF windows (Z report, stock take, quotation / invoice), several CSV / Excel downloads in a
+; row, and Copy barcode (GRN).
+; BEFORE running: change http://192.168.1.5 below (3 places) to the address the back office opens on in Edge.
+;   No port = every port on that PC. Add more sites as "2", "3" ... in each list.
+; Run once on each back office PC as administrator (double-click, Yes), then go to edge://restart (or end every
+; Microsoft Edge in Task Manager) and open it again.
+; Check: edge://policy shows the lines below with status OK.
+; Applies to every Edge user on this PC. To undo: delete the key below in regedit.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge]
+; passwords: Edge offers "Save password?" and fills the saved one; no "password found in a data breach" warning
+"PasswordManagerEnabled"=dword:00000001
+"PasswordMonitorAllowed"=dword:00000000
+; no address / card suggestions under the search and amount fields
+"AutofillAddressEnabled"=dword:00000000
+"AutofillCreditCardEnabled"=dword:00000000
+; notifications: 2 = block for every site, and never ask
+"DefaultNotificationsSetting"=dword:00000002
+; other bars that cover the screen
+"TranslateEnabled"=dword:00000000
+"DefaultBrowserSettingEnabled"=dword:00000000
+; Edge's own pop-ups: first run screens, sign-in, tips / recommendations, shopping, Rewards, sidebar / Copilot
+"HideFirstRunExperience"=dword:00000001
+"BrowserSignin"=dword:00000000
+"PromotionalTabsEnabled"=dword:00000000
+"ShowRecommendationsEnabled"=dword:00000000
+"EdgeShoppingAssistantEnabled"=dword:00000000
+"ShowMicrosoftRewards"=dword:00000000
+"HubsSidebarEnabled"=dword:00000000
+; downloads ask where to save ("Save as" dialog)
+"PromptForDownloadLocation"=dword:00000001
+
+; print / PDF windows open without "Pop-up blocked"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\PopupsAllowedForUrls]
+"1"="http://192.168.1.5"
+
+; several exports one after another without "This site is trying to download multiple files"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\AutomaticDownloadsAllowedForUrls]
+"1"="http://192.168.1.5"
+
+; Copy barcode works without asking
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\ClipboardAllowedForUrls]
+"1"="http://192.168.1.5"

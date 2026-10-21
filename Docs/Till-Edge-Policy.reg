@@ -1,0 +1,29 @@
+Windows Registry Editor Version 5.00
+
+; Till PC - Microsoft Edge: no "Save password?" offer, no notifications, no other pop-ups over the billing screen.
+; Same as Till-Chrome-Policy.reg, for tills that use Edge instead of Chrome.
+; Run once on each till PC as administrator (double-click, Yes), then go to edge://restart (or end every
+; Microsoft Edge in Task Manager) and open it again.
+; Check: edge://policy shows the lines below with status OK.
+; Applies to every Edge user on this PC. To undo: delete the key below in regedit.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge]
+; passwords: never offer to save, never fill a saved one, no "password found in a data breach" warning
+"PasswordManagerEnabled"=dword:00000000
+"PasswordMonitorAllowed"=dword:00000000
+; no address / card suggestions under the scan box and the amount fields
+"AutofillAddressEnabled"=dword:00000000
+"AutofillCreditCardEnabled"=dword:00000000
+; notifications: 2 = block for every site, and never ask
+"DefaultNotificationsSetting"=dword:00000002
+; other bars that cover the screen
+"TranslateEnabled"=dword:00000000
+"DefaultBrowserSettingEnabled"=dword:00000000
+; Edge's own pop-ups: first run screens, sign-in, tips / recommendations, shopping, Rewards, sidebar / Copilot
+"HideFirstRunExperience"=dword:00000001
+"BrowserSignin"=dword:00000000
+"PromotionalTabsEnabled"=dword:00000000
+"ShowRecommendationsEnabled"=dword:00000000
+"EdgeShoppingAssistantEnabled"=dword:00000000
+"ShowMicrosoftRewards"=dword:00000000
+"HubsSidebarEnabled"=dword:00000000

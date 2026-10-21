@@ -884,11 +884,14 @@ GO
 
 -- Cashier search by name: every word typed must appear in Descrip or Inv_Descrip (any order, any case),
 -- e.g. 'sugar 1kg' finds 'SUGAR WHITE 1KG'. Active items only, names starting with the text first.
+-- @Codes = 1 (scan box, after zf_sp_FindItem found no exact barcode / RefCode): RefCode or Barcode containing the
+-- text match too, codes starting with it first ('1003' → 10030, 10034 …). Never ItemId. The Search dialog sends 0.
 -- Pick a row, then zf_sp_FindItem @ItemId for the full item and its price links.
 -- Works on SQL Server 2008 R2 (tills still on 2008): the words are split with a loop, not STRING_SPLIT.
 CREATE PROCEDURE dbo.zf_sp_SearchItems
-    @Text NVARCHAR(100),
-    @Top  INT = 50
+    @Text  NVARCHAR(100),
+    @Top   INT = 50,
+    @Codes BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -920,10 +923,12 @@ BEGIN
     FROM dbo.zf_tb_Item i
     LEFT JOIN dbo.zf_tb_StockBalance s ON s.ItemId = i.ItemId
     WHERE i.Status = 1
-      AND NOT EXISTS (SELECT 1 FROM @words w
-                      WHERE ISNULL(i.Descrip, N'') NOT LIKE N'%' + w.Word + N'%'
-                        AND ISNULL(i.Inv_Descrip, N'') NOT LIKE N'%' + w.Word + N'%')
-    ORDER BY CASE WHEN i.Descrip LIKE @t + N'%' OR i.Inv_Descrip LIKE @t + N'%' THEN 0 ELSE 1 END, i.Descrip;
+      AND (   NOT EXISTS (SELECT 1 FROM @words w
+                          WHERE ISNULL(i.Descrip, N'') NOT LIKE N'%' + w.Word + N'%'
+                            AND ISNULL(i.Inv_Descrip, N'') NOT LIKE N'%' + w.Word + N'%')
+           OR (@Codes = 1 AND (i.RefCode LIKE N'%' + @t + N'%' OR i.Barcode LIKE N'%' + @t + N'%')))
+    ORDER BY CASE WHEN @Codes = 1 AND (i.RefCode LIKE @t + N'%' OR i.Barcode LIKE @t + N'%') THEN 0
+                  WHEN i.Descrip LIKE @t + N'%' OR i.Inv_Descrip LIKE @t + N'%' THEN 1 ELSE 2 END, i.Descrip;
 END
 GO
 

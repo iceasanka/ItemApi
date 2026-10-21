@@ -15,6 +15,9 @@ namespace ItemApi.Models
         public string? Inv_Descrip { get; set; }
         public decimal? MaxPrice { get; set; }
         public bool OpenPrice { get; set; }
+        // 1 active, 0 inactive. Item Entry shows it and sends it back on save — without it here the page showed
+        // every item as Active and a save sent no status, so the item was saved as 0 (inactive).
+        public int Status { get; set; }
 
         // From z_tb_ItemDet
         public int ItemDetId { get; set; }

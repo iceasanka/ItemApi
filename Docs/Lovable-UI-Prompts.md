@@ -3143,3 +3143,33 @@ src/components/ui/dialog.tsx (other dialogs stay centred).
    result) — the text box stays exactly in the same place every time. 5*sugar with several results → Select item
    opens at the top the same way. Open ⌨ → the keyboard appears under the box, the box does not move.
 ```
+
+---
+
+## Prompt 61 — Cashier billing: scan box finds an item by part of its code
+
+Backend: TillService + till db update U011 (`zf_sp_SearchItems @Codes`). Rule of the scan box (and Price check):
+1. exact Barcode → that item only, 2. else exact RefCode → that item only (both `GET /items/find`, unchanged),
+3. else `GET /items/search?text=…&codes=true` — RefCode or Barcode containing the text, plus the name; codes
+starting with the text first. ItemId is never searched. The Search dialog (F1) is NOT changed.
+
+```
+Change src/services/tillLocalApi.ts, src/pages/CashierBilling.tsx, src/components/till/PriceCheckDialog.tsx.
+
+1) tillLocalApi.ts: searchItems(text: string, codes = false) → GET /items/search?text=...&codes=true when codes
+   (leave the parameter out when false). The Search dialog keeps calling searchItems(text).
+
+2) CashierBilling.tsx, addItem — after findItem(text) answers 404:
+   - today: digits only → "Item '<text>' not found"; with letters → searchItems(text).
+   - now: ALWAYS searchItems(text, true) (digits too, when text is 2+ characters):
+       0 rows → red toast "No item found for '<text>'" (clear the box, focus stays as today)
+       1 row  → add it (getItem(rows[0].itemId)), same as today
+       2+     → the "Select item — '<text>'" dialog as today (qty from "5*" kept)
+   - findItem (exact barcode, then exact item code, scale sticker) stays first and unchanged.
+
+3) PriceCheckDialog.tsx: the same — after a 404 call searchItems(text, true) instead of only for text with letters.
+
+4) Test: 10034 → white raw 1kg added at once (exact code). 30010883 (its barcode) → same item at once.
+   1003 → Select item list: 10030, 10034, 10037, 10038 … first. sugar → list as today. F1 Search "1003" → no rows
+   (dialog unchanged).
+```

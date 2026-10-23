@@ -3362,3 +3362,71 @@ Change src/lib/tillMessages.ts, src/lib/tillShortcuts.ts, src/pages/CashierBilli
    Enter (after 0.4 s) → qty 2. Scan again, Esc → still 2, "Not added". 3*sugar → "Add 3 more?". Scale sticker of the
    same item twice → two lines, no popup. Switch the setting off → no popup, adds as before.
 ```
+
+## Prompt 67 — Day end: no "Close the day?" popup — count the cash first, Close day prints and closes
+
+```
+Billing page (CashierBilling.tsx) + tillLocalApi.ts. TillService: POST /z/close now takes an optional body
+{ countedCash } and prints it on the Z slip (COUNTED CASH, and SHORT / OVER when the slip shows CASH IN DRAWER).
+
+Today: Day end key -> "Close the day?" popup -> Close day -> the Z is closed and printed -> Z Report dialog where the
+cashier types the counted cash -> Close -> sign out. The counted cash was never printed or used.
+
+New flow - ONE dialog, nothing is closed until the cashier presses Close day:
+
+1) tillLocalApi.ts:
+     export async function closeZ(countedCash?: number): Promise<ZSummary> {
+       return normalizeZSummary((await local.post("/z/close", countedCash == null ? undefined : { countedCash })).data);
+     }
+
+2) Remove the "Close the day?" dialog (dayEndOpen dialog) completely.
+   Day end action (case "dayEnd"): keep "Finish or void the bill first" when the bill has lines. Then
+     getXReport() -> open the day end dialog with those figures (new state dayEnd: ZSummary | null; replaces dayEndOpen
+     in anyDialog). getXReport 400 "No Z is open - nothing to report yet." -> toast.info that message, no dialog.
+   Clear countedCash and showCashZ when it opens.
+
+3) The day end dialog = the existing Z Report dialog content (bills, sales / discounts, net sales, cash, card, bank,
+   cheque, credit / voucher, Cash block with opening cash / cash sales / paid in / paid out, Show cash in drawer (PIN),
+   cheques to hand over, Counted cash input + NumPad, short / over line) but showing the dayEnd figures:
+     Title "Day end - Z <zNo>"   small text under it: "Count the cash in the drawer, then Close day."
+     Counted cash is REQUIRED (0 is allowed): Close day stays disabled until a number is typed. This replaces the old
+     confirm popup as the guard against pressing Day end by mistake.
+     NumPad enterLabel "Close day" (Enter = Close day, same rule).
+     Footer (h-14, text-lg): [Cancel  Esc]   [Close day & print  Enter]  (destructive colour)
+   Cancel / Esc / clicking outside -> dialog closes, NOTHING is closed, focus back to the scan box.
+
+4) Close day & print:
+     busy on (buttons disabled, "Closing...") -> const z = await closeZ(Number(countedCash))
+     -> the till prints the CASH IN / OUT list (opening cash, paid in, paid out) and then the Z slip with the counted cash
+     -> z.printed === false: toast.warning("Z slip not printed: " + (z.printError || "printer error"), 10 s)
+     -> toast.success(`Day closed - Z ${z.zNo}`), setZNo(z.zNo), close the dialog, doSignOut(true) (as the old Close did).
+     Error -> toast.error(localError(e, "Day end failed")), dialog stays open (nothing closed).
+
+5) Remove the old after-close Z Report dialog (zSummary state) - its content moved into the day end dialog.
+   The X report (XReportDialog) is not changed.
+
+6) Test: Day end with a bill on screen -> "Finish or void the bill first". Empty bill -> Day end dialog with today's
+   figures, no popup before it. Esc -> nothing closed (X report still shows the open Z). Day end again, Close day is
+   disabled until a counted cash is typed; type 15000, Enter -> CASH IN / OUT slip + Z slip with "COUNTED CASH 15,000.00"
+   and SHORT / OVER, signed out. Day end again right after -> "No Z is open - nothing to report yet."
+```
+
+## Prompt 68 — Day end has one Close day button (ALREADY DONE in the code 2026-10-22 — do not paste)
+
+```
+Made directly in the web code, not through Lovable. Kept here as the record of the change.
+Opening cash keeps the supervisor PIN (no change).
+
+Day end: one Close day button, not two.
+   Today the NumPad's own Enter key says "Close day" and the footer has "Close day & print (Enter)" - both do the same.
+   - NumPad.tsx: new optional prop hideEnter?: boolean - true = no Enter row (the digits, dot and backspace / clear
+     stay as they are). Other screens are not changed.
+   - Day end dialog: <NumPad small hideEnter ... /> (onKey only types into countedCash).
+   - The only action is the footer button "Close day & print (Enter)" (destructive, h-14). Enter on the keyboard in the
+     Counted cash box still does the same (onKeyDown Enter -> doDayEnd when canCloseDay). Cancel (Esc) unchanged.
+
+   - doDayEnd also returns when busy (a second Enter while closing does nothing).
+
+Test: Day end: number pad has no Enter / Close day key, one red "Close day & print" button; typing the counted cash and
+pressing Enter on the keyboard closes the day.
+```

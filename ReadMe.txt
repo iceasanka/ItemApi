@@ -41,3 +41,8 @@ Type is 2
 ------------------------
 each bill submit  from the tills(bill out ) the home page update the dayly sale for today and the profit ,with other details (data push to the server . if function enable).( if tills are online , and the auto update function enable ,
 other wise refresh and update the data ). i want analize daily sales details and the profit details from date range select .(with graph)
+
+--------------------
+1. Set Windows to Extend: DisplaySwitch.exe /extend or Win + P.
+2. Press Ctrl+Shift+D in the till and click Allow when Chrome asks to manage windows (only the first time).
+ 3 Just press F11 full screen

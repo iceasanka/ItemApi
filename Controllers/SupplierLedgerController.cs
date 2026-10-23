@@ -74,6 +74,16 @@ namespace ItemApi.Controllers
         public Task<IActionResult> GetPaymentsDue([FromQuery] DateTime? toDate, [FromQuery] int? suppId) =>
             Run(async () => Ok(await _repository.GetPaymentsDueAsync(toDate, suppId)));
 
+        // GET: api/SupplierLedger/overview — every supplier with ledger entries: totals, balance, aging of the open bills (U015)
+        [HttpGet("overview")]
+        public Task<IActionResult> GetOverview() =>
+            Run(async () => Ok(await _repository.GetOverviewAsync()));
+
+        // GET: api/SupplierLedger/monthly?suppId=&months=12 — purchases / payments / returns per month (U015)
+        [HttpGet("monthly")]
+        public Task<IActionResult> GetMonthly([FromQuery] int? suppId, [FromQuery] int months = 12) =>
+            Run(async () => Ok(await _repository.GetMonthlyAsync(suppId, months)));
+
         // POST: api/SupplierLedger — referenceId empty → SUP001-00001; a bill's dueDate empty → txnDate + cheque period.
         // A payment / return may say which bills it pays: allocations [{ ledgerId, amount }]
         [HttpPost]

@@ -12,5 +12,7 @@ namespace ItemApi.Interface
         Task<SupplierLedgerSummary?> GetSupplierSummaryAsync(int suppId);
         Task<List<SupplierInvoiceRow>> GetInvoicesAsync(int suppId, bool includePaid);
         Task<List<SupplierPaymentDueRow>> GetPaymentsDueAsync(DateTime? toDate, int? suppId);
+        Task<List<SupplierLedgerOverviewRow>> GetOverviewAsync();
+        Task<List<SupplierLedgerMonthRow>> GetMonthlyAsync(int? suppId, int months);
     }
 }

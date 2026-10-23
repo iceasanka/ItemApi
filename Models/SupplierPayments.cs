@@ -107,6 +107,48 @@ namespace ItemApi.Models
         public decimal OpenAmount { get; set; }
     }
 
+    // z_sp_GetSupplierLedgerOverview (U015): one supplier on the Supplier Ledger overview
+    public class SupplierLedgerOverviewRow
+    {
+        public int SuppId { get; set; }
+        public string? SuppCode { get; set; }
+        public string? SuppName { get; set; }
+        public int? CreditDays { get; set; }
+        public decimal Purchases { get; set; }
+        public decimal Payments { get; set; }
+        public decimal Returns { get; set; }
+        public decimal Balance { get; set; }
+        public int OpenBills { get; set; }
+        public decimal OpenAmount { get; set; }
+        // open bills not past their due date (or with no due date)
+        public decimal NotDue { get; set; }
+        public decimal Overdue { get; set; }
+        // open bills due today .. today + 7
+        public decimal DueIn7 { get; set; }
+        // overdue by 1-30 / 31-60 / 61-90 / over 90 days
+        public decimal Over1To30 { get; set; }
+        public decimal Over31To60 { get; set; }
+        public decimal Over61To90 { get; set; }
+        public decimal Over90 { get; set; }
+        public DateTime? OldestDueDate { get; set; }
+        // payments + returns not set against a bill (Balance = OpenAmount - Unallocated)
+        public decimal Unallocated { get; set; }
+        // days from bill to payment, weighted by the amount paid
+        public decimal? AvgDaysToPay { get; set; }
+        public int Entries { get; set; }
+        public DateTime? LastPurchaseDate { get; set; }
+        public DateTime? LastPaymentDate { get; set; }
+    }
+
+    // z_sp_GetSupplierLedgerMonthly (U015)
+    public class SupplierLedgerMonthRow
+    {
+        public DateTime MonthStart { get; set; }
+        public decimal Purchases { get; set; }
+        public decimal Payments { get; set; }
+        public decimal Returns { get; set; }
+    }
+
     // GET api/ChequeCreate/{id}/bills: what a cheque paid
     public class ChequeBillRow
     {

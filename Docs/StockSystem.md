@@ -758,6 +758,24 @@ the callers already catch), not every cheque route.
 
 **Deploy order**: `U007_BackOffice` on easyway → ItemApi → Prompt 50. Tills: nothing.
 
+**Supplier Ledger overview (U015, 2026-10-23).** With no supplier picked, the Supplier Ledger page shows every
+supplier with ledger entries: what we owe, overdue, due in the next 7 days, open bills, purchases / payments this
+month, open bills by days late (not due, 1-30, 31-60, 61-90, over 90 — days past `DueDate`; a bill with no due date
+is "not due"), purchases / payments / returns per month for 12 months, the biggest balances, and a sortable list
+(filters: we owe / overdue / due in 7 days / paid in advance / settled; CSV export). Click a supplier to open its
+ledger (all dates). A supplier's ledger also shows its aging, monthly chart, average days to pay (days from bill to
+payment, weighted by the amount — compared with the cheque period), payments / returns not set against a bill
+(`Balance = OpenAmount − Unallocated`), quick date ranges, opening / closing balance of the dates shown, filters by
+type / open bills / text, and CSV export. Read-only procedures, no table change.
+
+| | Route | |
+|---|---|---|
+| GET | `api/SupplierLedger/overview` | `z_sp_GetSupplierLedgerOverview`: per supplier `purchases, payments, returns, balance, openBills, openAmount, notDue, overdue, dueIn7, over1To30, over31To60, over61To90, over90, oldestDueDate, unallocated, avgDaysToPay, lastPurchaseDate, lastPaymentDate` |
+| GET | `api/SupplierLedger/monthly?suppId=&months=12` | `z_sp_GetSupplierLedgerMonthly`: `monthStart, purchases, payments, returns` (months with entries only; max 60) |
+
+**Deploy order**: `U015_BackOffice` on easyway → ItemApi → back office UI. The old UI keeps working with the new
+ItemApi; the new UI needs the new ItemApi (without it the overview shows "Failed to load the supplier overview").
+
 ### 6.20 Barcode labels straight to the Zebra — ZPL, label layouts (back office, 2026-10-16)
 UI: Lovable Prompt 52. SQL: `Updates/U010_BackOffice_LabelLayout.sql` (full script `16_BackOffice_LabelLayout.sql`).
 Code: `Controllers/LabelController.cs`, `Repositories/LabelRepository.cs`, `Service/ZplLabelBuilder.cs`,

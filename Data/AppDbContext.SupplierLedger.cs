@@ -91,6 +91,21 @@ namespace ItemApi.Data
                 new SqlParameter("@SuppId", SqlDbType.Int) { Value = Db(suppId is > 0 ? suppId : null) }).ToListAsync();
         }
 
+        // Every supplier with ledger entries: totals, balance, aging of the open bills (U015)
+        public async Task<List<SupplierLedgerOverviewRow>> GetSupplierLedgerOverviewAsync()
+        {
+            return await Database.SqlQueryRaw<SupplierLedgerOverviewRow>("EXEC dbo.z_sp_GetSupplierLedgerOverview").ToListAsync();
+        }
+
+        // Purchases / payments / returns per month, all suppliers (suppId null) or one (U015)
+        public async Task<List<SupplierLedgerMonthRow>> GetSupplierLedgerMonthlyAsync(int? suppId, int months)
+        {
+            return await Database.SqlQueryRaw<SupplierLedgerMonthRow>(
+                "EXEC dbo.z_sp_GetSupplierLedgerMonthly @SuppId = @SuppId, @Months = @Months",
+                new SqlParameter("@SuppId", SqlDbType.Int) { Value = Db(suppId is > 0 ? suppId : null) },
+                new SqlParameter("@Months", months)).ToListAsync();
+        }
+
         // A cheque just written for a supplier → ONE payment row in the ledger, paying the given bills.
         // Run inside the transaction that inserted the cheque.
         public async Task<SupplierLedgerSaveResult> LinkWrittenChequeAsync(int chequeId, int suppId, int? userId, List<SupplierAllocation>? allocations)

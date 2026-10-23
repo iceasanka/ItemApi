@@ -259,6 +259,27 @@ namespace ItemApi.Controllers
             }
         }
 
+        // POST: api/Itemz/UpdateRetailPrice { itemId, retailPrice, userId? } — the item's normal price only
+        [HttpPost("UpdateRetailPrice")]
+        public async Task<IActionResult> UpdateRetailPrice([FromBody] UpdateRetailPriceRequest request)
+        {
+            if (request == null || request.ItemId <= 0)
+                return BadRequest(new { message = "ItemId is required." });
+
+            try
+            {
+                var error = await _repository.UpdateRetailPriceAsync(request);
+                if (error != null)
+                    return BadRequest(new { message = error });
+                return Ok(new { message = "Retail price saved." });
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex}");
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // DELETE: api/Itemz/PriceLink/12?userId=3 — marks it deleted (Status 0); tills drop it on their next download
         [HttpDelete("PriceLink/{priceLinkId}")]
         public async Task<IActionResult> DeletePriceLink(int priceLinkId, [FromQuery] int? userId)

@@ -120,6 +120,8 @@ builder.Services.AddScoped<IStockTakeRepository, StockTakeRepository>();
 builder.Services.AddScoped<ISyncRepository, SyncRepository>();
 builder.Services.AddScoped<ISystemRepository, SystemRepository>();
 builder.Services.AddScoped<ISupplierLedgerRepository, SupplierLedgerRepository>();
+builder.Services.AddScoped<IReturnListRepository, ReturnListRepository>();
+builder.Services.AddScoped<IMobileGrnRepository, MobileGrnRepository>();
 
 builder.Services.AddScoped<ISalaryConfigRepository, SalaryConfigRepository>();
 builder.Services.AddScoped<ISalaryEmployeeRepository, SalaryEmployeeRepository>();

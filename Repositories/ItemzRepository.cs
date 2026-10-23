@@ -1,6 +1,7 @@
 using ItemApi.Data;
 using ItemApi.Interface;
 using ItemApi.Models;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace ItemApi.Repositories
@@ -98,6 +99,39 @@ namespace ItemApi.Repositories
         public async Task DeletePriceLinkAsync(int priceLinkId, int? userId)
         {
             await _context.DeletePriceLinkAsync(priceLinkId, userId);
+        }
+
+        // Changes only the retail price, with the same checks as Item Entry: not above the MRP, the quantity
+        // prices stay below it, and not the price of an active price link (the till would list it twice).
+        public async Task<string?> UpdateRetailPriceAsync(UpdateRetailPriceRequest request)
+        {
+            var price = Math.Round(request.RetailPrice, 2);
+            if (price <= 0)
+                return "Retail price must be more than 0.";
+
+            var det = await _context.ItemzDets.FirstOrDefaultAsync(d => d.ItemId == request.ItemId && d.LocationId == _locationId);
+            if (det == null)
+                return "Item not found.";
+            if (det.RetailPrice == price)
+                return null;
+
+            var maxPrice = await _context.Itemzs.Where(i => i.ItemId == request.ItemId).Select(i => i.MaxPrice).FirstOrDefaultAsync();
+            if (maxPrice != null && maxPrice > 0 && price > maxPrice)
+                return $"Retail price cannot be more than the MRP ({maxPrice:0.00}).";
+
+            var links = await _context.GetPriceLinksAsync(request.ItemId, _locationId);
+            if (links.Any(l => l.RetailPrice == price))
+                return "A price link already has this price - delete the link first.";
+
+            det.RetailPrice = price;
+            var levelError = ValidatePriceLevels(det);
+            if (levelError != null)
+                return levelError;
+
+            det.UDate = DateTime.Now;   // tills pick the new price up on the next item sync
+            if (request.UserId != null) det.UserId = request.UserId;
+            await _context.SaveChangesAsync();
+            return null;
         }
 
         // Quantity prices (QtyLevel2..4 / PriceLevel2..4): "buy at least MinQty → pay Price each".

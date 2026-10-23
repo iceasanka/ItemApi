@@ -56,6 +56,8 @@ Nothing is edited by both sides, so there are no sync conflicts to merge.
 | `18_Till_ResetCopiedDb.sql` | a NEW till PC whose `z_pos_fnt_db` was restored from another till's backup (`-E`, `-d z_pos_fnt_db`) | makes the copy an empty new till: deletes the copied till's bills / payments / suspended bills / Z reports / drawer log / cash in-out (identities restart: Z 1, bill 1), sets the new terminal via `zf_sp_SetupTerminal` (same LocationId / ApiBaseUrl); keeps items, price links, stock, cashiers, sync times. Guards: `ThisPc` must be this computer's name, no other connection (stop TillService), refuses a db that already has bills of the new code; without `Confirm="YES"` only lists what it would delete. Tested on a restored copy of the dev till 2026-10-16. |
 | `17_Till_SqlLogin.sql` | each till's SQL Server (`-E`, as admin) | the SQL login TillService uses (`ice`): mixed mode on when needed (then restart SQL Server), login (no expiry), db_owner user in `z_pos_fnt_db`, fixes the orphaned user of a restored backup. Password given with `-v`, not in the file. Re-runnable. |
 | `16_BackOffice_LabelLayout.sql` | back office db (`easyway`) | label layouts for the new barcode labels (ZPL, §6.20) and price labels (§6.21). Same content as `Updates/U010_BackOffice_LabelLayout.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-16.** |
+| `19_BackOffice_ReturnList.sql` | back office db (`easyway`) | Return Items list → PRN, mobile app scanning (§6.22). Same content as `Updates/U016_BackOffice_ReturnList.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-23.** |
+| `20_BackOffice_MobileGrn.sql` | back office db (`easyway`) | mobile app GRN drafts (suspended GRN per supplier, §6.23). Same content as `Updates/U017_BackOffice_MobileGrn.sql`. Re-runnable. **Applied to the dev easyway (PRASADA1) on 2026-10-23.** |
 | `07_BackOffice_Users.sql` | back office db (`easyway`), after `01` | users, roles, cashier download for tills (§6.12). Re-runnable. **Applied to easyway on 2026-10-09.** `02` got a "Cashier sign-in" section at the end — applied to `z_pos_fnt_db` the same day. |
 
 `01` and `03` re-applied to easyway on 2026-10-06 (`CostPrice` in the till downloads, §6.7); `02` applied to `z_pos_fnt_db`.
@@ -175,6 +177,7 @@ while offline — the central `z_tb_System` counters can't be used offline.
 | GET | `api/Itemz/PriceLinks/{itemId}` | active links, lowest price first |
 | POST | `api/Itemz/AddPriceLink` | `{ itemId, retailPrice, wholesalePrice?, costPrice?, remark?, userId? }` → `{ message, data }`. 400 on duplicate / normal price / ≤ 0 |
 | DELETE | `api/Itemz/PriceLink/{priceLinkId}?userId=` | `Status = 0` |
+| POST | `api/Itemz/UpdateRetailPrice` | `{ itemId, retailPrice, userId? }` → changes only `z_tb_ItemDet.RetailPrice` (+ `UDate`, so tills pick it up). 400 when ≤ 0, above the MRP, equal to an active link, or the quantity prices would no longer be below it. Used by the mobile app Price Link page |
 
 `api/Itemz/AddItemDet` and `UpdateItemDet` now refuse bad quantity prices with 400 `{ message }` (§6.5).
 | POST | `api/Sync/Invoices` | till | `{ terminalId, invoices:[…] }` → `[{ invoiceNo, result: Inserted/Duplicate }]`. **Empty list = heartbeat** |
@@ -864,6 +867,85 @@ A barcode layout sent to a price route (or the other way round) is a 400. First 
 (default) and "Price landscape 72 x 100 mm" (turned) — check both with Test print on the real printer.
 
 **Deploy order**: `U010_BackOffice` on easyway → ItemApi → Prompt 53 (after 52). Tills: nothing.
+
+### 6.22 Return Items list — mobile scan → PRN (back office + mobile app, 2026-10-23)
+
+Items going back to a supplier (damaged, expired, not selling …) are collected in one list, on the **new** system.
+The old list (`z_tb_ReturnItem`, old item / supplier codes, `api/Return`, processed into the old `tb_Purchase`) is
+not used any more — the table and `api/Return` are left as they were so an old app build keeps working until it is
+updated.
+
+1. **Scan** — mobile app *Return Stock* (or the back office *Purchasing › Return Items* page): pick the supplier, scan
+   the item (camera, typed code or name), qty, reason, **Add**. Scanning the same item again on the phone adds 1. The
+   same item for the same supplier that is still *Added* gets the qty added (one row).
+2. **Ready** — when the items are checked / packed for the supplier's rep, select them and press **Ready**
+   (back: *Not ready* / *Back to Added*).
+3. **Process** — the Ready rows of **one** supplier become one PRN: `z_tb_TempPurchaseSummary` (Type 2, Status 1,
+   number `PRN` + `z_tb_System.PRNO`, the same counter as Goods Return) + `z_tb_TempPurchase` lines (same item twice →
+   one line, cost / sell price from when it was added). With *take them off stock now* (default, always on the phone)
+   it is posted at once (`z_sp_PostPrn`, stock −qty, Status 2). Unticked: open the PRN on Goods Return and *Commit
+   to stock* there. The rows keep their `PrnNo` (Status 3) and show under *PRN made* for 90 days.
+4. **Print** — the return slip on the receipt printer (old `PrinterService` layout, PRN number on the first line).
+
+`z_tb_ReturnList`: `ReturnId, LocationId, ItemId, SuppId, Qty, CostPrice, SellPrice, Reason, Remark, Status (1 Added,
+2 Ready, 3 PRN made), PrnNo, Source (1 mobile app, 2 back office), UserId, CDate, UDate`. Items have no supplier yet
+(`z_tb_Item.SupId` is empty), so the supplier is picked on the screen; when an item has one, the page uses it.
+A PRN does not touch the supplier ledger (same as Goods Return).
+
+| | Route | |
+|---|---|---|
+| GET | `api/ReturnList?suppId=&status=&days=90` | open rows (Added + Ready) when `status` is empty; `3` = PRN made in the last `days` days. With `descrip, barcode, suppName, stockQty, amount` |
+| GET | `api/ReturnList/Lookup?code=` | scanned / typed code (exact barcode, then ref code, then codes containing it) → `itemId, descrip, costPrice, retailPrice, stockQty, suppId` |
+| POST | `api/ReturnList` | `{ itemId, suppId, qty, reason?, remark?, source (1 mobile / 2 back office), userId? }` → the row |
+| PUT | `api/ReturnList/{id}` | `{ qty, suppId, reason?, remark? }` (not after the PRN) |
+| POST | `api/ReturnList/status` | `{ ids, status: 2 Ready / 1 Added }` → `{ changed }` |
+| POST | `api/ReturnList/delete` | `{ ids }` → `{ deleted }` (rows with a PRN stay) |
+| POST | `api/ReturnList/process` | `{ ids, post = true, refNo?, remark?, print? }` → `{ prnNo, lines, qty, amount, posted, printed, printError }`. 400: not Ready / more than one supplier |
+| POST | `api/ReturnList/print` | `{ ids }` → the slip on the receipt printer |
+
+Procs: `z_sp_GetReturnList`, `z_sp_AddReturnListItem`, `z_sp_UpdateReturnListItem`, `z_sp_SetReturnListStatus`,
+`z_sp_DeleteReturnListItems`, `z_sp_ReturnListToPrn` (type `z_tt_IdList`). Like the other mobile routes they are not
+`[AllowAnonymous]`: with `Auth:Enforce = true` the app would need a sign-in.
+
+**Deploy order**: `U016_BackOffice` on easyway → ItemApi → back office UI → mobile app (new build). Tills: nothing.
+
+### 6.23 Mobile app on the new system — Stock, GRN, Price Link (mobile app, 2026-10-23)
+SQL: `Updates/U017_BackOffice_MobileGrn.sql` (full script `20_BackOffice_MobileGrn.sql`). Code: `MobileGrnController`,
+`MobileGrnRepository`, `Data/AppDbContext.MobileGrn.cs`, `Models/MobileGrn.cs`; `ItemzController.UpdateRetailPrice`.
+Every app page now uses the new tables; the old routes the app used (`api/Items` price link / price, `api/Stocks`,
+`api/PosStock`, `api/PosCountedStock`, `api/GrnTemp`, `api/Return`) are left for old app builds only.
+
+**Stock page** — no new API: `Itemz/SearchByCode`, `StockLedger/Balance/{id}` + `ItemCard` (last 30 days),
+`Itemz/PriceLinks/{id}`, `Sync/Terminals`, `StockAdjustment/Reasons` + `Save` (one line, user `mobile`, remark
+"Mobile app"). Set = count mode (`countedQty`), Add / Remove = quantity mode (`adjQty` ±). The old POS stock, "with /
+without POS stock" and Flush data / Flush item are gone: till bills are uploaded about every minute and posted to the
+ledger by `api/Sync/Invoices`, so the balance is already after the sales. What is left: a bill made before the count but
+still on the till (offline, or in the last minute) is taken off again when it arrives, so a count-mode Set can come out
+too low by those bills. The page shows each till's last upload and warns on Set when a till `isStale` (§6.2).
+Quantity-mode Add / Remove is safe any time.
+
+**GRN page** — the phone fills a **suspended GRN** of the supplier (`z_tb_TempPurchaseSummary` Type 1, Status 0,
+UserId `mobile`, Remark "Mobile GRN"), one open draft per supplier, number `GRN` + `z_tb_System.PNO` taken in one
+statement. Same item + cost + selling price again → the qty is added to that line. Nothing moves stock. The back office
+opens the draft on **GRN Entry** (search → load), checks it, adds the supplier's invoice no (RefNo), saves and commits.
+Once it is saved there (Status 1) or its user changes, the phone starts a new draft for the next delivery. Deleting the
+last line deletes the empty draft. The line's selling price is only recorded (posting does not change the item price) —
+the app points to Price Link when it differs. The old app's "Item Ref" running number has no column in the new tables
+and was dropped.
+⚠ GRN Entry shows the next number (`PNO`) when it opens and takes it only when it saves: if the phone makes a draft in
+between, the office save fails on the duplicate number (unique `GrnNo`) — clear the page to get the next number.
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/MobileGrn?suppId=` | the supplier's open draft lines, newest first (with item cost / price now and stock); `[]` = no draft |
+| POST | `api/MobileGrn/line` | `{ suppId, itemId, qty, costPrice, sellPrice }` → `{ grnNo, idx }`. 400: qty ≤ 0, price < 0, unknown item / supplier |
+| PUT | `api/MobileGrn/line/{idx}` | `{ qty, costPrice, sellPrice }`. 400 when the draft was taken over by the back office |
+| DELETE | `api/MobileGrn/line/{idx}` | → `{ grnNo, linesLeft }` (0 = the draft was deleted too) |
+
+**Price Link page** — `Itemz/PriceLinks`, `AddPriceLink`, `PriceLink/{id}` (delete) and the new
+`Itemz/UpdateRetailPrice` (§5, Price links).
+
+**Deploy order**: `U017_BackOffice` on easyway → ItemApi → mobile app (new build). Back office UI and tills: nothing.
 
 ---
 

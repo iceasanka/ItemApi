@@ -28,5 +28,8 @@ namespace ItemApi.Interface
         Task<List<ItemzPriceLink>> GetPriceLinksAsync(int itemId);
         Task<ItemzPriceLink> AddPriceLinkAsync(AddPriceLinkRequest request);
         Task DeletePriceLinkAsync(int priceLinkId, int? userId);
+
+        // Retail price only; returns an error message, or null when saved
+        Task<string?> UpdateRetailPriceAsync(UpdateRetailPriceRequest request);
     }
 }

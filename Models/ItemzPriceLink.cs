@@ -37,4 +37,14 @@ namespace ItemApi.Models
 
         public int? UserId { get; set; }
     }
+
+    // POST api/Itemz/UpdateRetailPrice — changes only z_tb_ItemDet.RetailPrice (mobile Price Link page)
+    public class UpdateRetailPriceRequest
+    {
+        public int ItemId { get; set; }
+
+        public decimal RetailPrice { get; set; }
+
+        public int? UserId { get; set; }
+    }
 }

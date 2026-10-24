@@ -876,7 +876,7 @@ not used any more — the table and `api/Return` are left as they were so an old
 updated.
 
 1. **Scan** — mobile app *Return Stock* (or the back office *Purchasing › Return Items* page): pick the supplier, scan
-   the item (camera, typed code or name), qty, reason, **Add**. Scanning the same item again on the phone adds 1. The
+   the item (camera, typed code or name), qty, reason, **Add**. Scanning the same item again on the phone asks before adding 1. The
    same item for the same supplier that is still *Added* gets the qty added (one row).
 2. **Ready** — when the items are checked / packed for the supplier's rep, select them and press **Ready**
    (back: *Not ready* / *Back to Added*).
@@ -946,6 +946,24 @@ between, the office save fails on the duplicate number (unique `GrnNo`) — clea
 `Itemz/UpdateRetailPrice` (§5, Price links).
 
 **Deploy order**: `U017_BackOffice` on easyway → ItemApi → mobile app (new build). Back office UI and tills: nothing.
+
+### 6.24 Mobile app downloads (back office Tools → Mobile App, 2026-10-23)
+
+The app files are copied by hand into the server folder **MobileApp** (next to `ItemApi.dll`; `MobileApp:Folder` in
+appsettings for another place — use one outside the site if a publish deletes extra files). The API makes the folders.
+
+- Android: `MobileApp\*.apk` or `MobileApp\Android\*.apk` — the newest file is offered, older ones are listed.
+- iPhone (later): `MobileApp\iOS\link.txt` — one line, the App Store / TestFlight link (an iPhone can't install a
+  downloaded file); an `.ipa` in `MobileApp\iOS` is listed for download.
+
+The page shows a QR code a phone scans to download. It uses the host the back office was opened from, so open the
+back office with the server's IP (not `localhost`) to get a QR code a phone can use. No DB change.
+
+| Method | Route | Notes (all open — a phone's browser has no token) |
+|---|---|---|
+| GET | `api/MobileApp` | `{ android: [{ fileName, sizeBytes, modified }], ios: [...], iosLink }`, newest first |
+| GET | `api/MobileApp/{android\|ios}/Latest` | the newest file (404 when none); Android is always saved as `IRM.apk` |
+| GET | `api/MobileApp/{android\|ios}/Download/{fileName}` | that file — a plain name in the folder only |
 
 ---
 

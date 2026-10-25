@@ -131,6 +131,7 @@ builder.Services.AddScoped<ISalaryAdvanceRepository, SalaryAdvanceRepository>();
 builder.Services.AddScoped<ISalaryPayslipRepository, SalaryPayslipRepository>();
 builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>();
 builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
+builder.Services.AddScoped<IDayReportRepository, DayReportRepository>();
 builder.Services.AddScoped<IExportRepository, ExportRepository>();
 builder.Services.AddScoped<ILabelRepository, LabelRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();

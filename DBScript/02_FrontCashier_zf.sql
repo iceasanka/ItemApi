@@ -301,6 +301,36 @@ CREATE TABLE dbo.zf_tb_DrawerLog (
     Opened       BIT           NOT NULL   -- 0 = the printer did not take the command (offline, no paper …)
 );
 GO
+-- sent to the back office (2026-10-25, zf_sp_GetUnsyncedDrawerLog → POST api/Sync/TillLog)
+IF COL_LENGTH('dbo.zf_tb_DrawerLog', 'Synced') IS NULL
+    ALTER TABLE dbo.zf_tb_DrawerLog ADD Synced   BIT      NOT NULL CONSTRAINT DF_zf_tb_DrawerLog_Synced DEFAULT (0),
+                                        SyncedAt DATETIME NULL;
+GO
+
+-- Lines taken off a bill before it was paid (2026-10-25, back office Voids & No Sale report). Kind 1 void line,
+-- 2 void bill (every line, same GroupNo), 3 qty made smaller (Qty = what was taken off). ZNo = the open Z at that
+-- time (NULL = none open yet). Rows are never changed; sent up by zf_sp_GetUnsyncedVoidLog → POST api/Sync/TillLog.
+IF OBJECT_ID('dbo.zf_tb_VoidLog', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_VoidLog (
+        VoidId     INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_zf_tb_VoidLog PRIMARY KEY,
+        GroupNo    INT           NOT NULL,   -- VoidId of the first line of the same void
+        LoggedAt   DATETIME      NOT NULL CONSTRAINT DF_zf_tb_VoidLog_LoggedAt DEFAULT (GETDATE()),
+        Kind       INT           NOT NULL,
+        ZNo        INT           NULL,
+        CashierId  VARCHAR(20)   NULL,
+        Refund     BIT           NOT NULL CONSTRAINT DF_zf_tb_VoidLog_Refund DEFAULT (0),   -- a line of a refund bill
+        ItemId     INT           NOT NULL,   -- 0 = other item
+        Descrip    NVARCHAR(100) NULL,
+        Qty        DECIMAL(18,3) NOT NULL,
+        UnitPrice  DECIMAL(18,2) NOT NULL,
+        Amount     DECIMAL(18,2) NOT NULL,
+        Synced     BIT           NOT NULL CONSTRAINT DF_zf_tb_VoidLog_Synced DEFAULT (0),
+        SyncedAt   DATETIME      NULL
+    );
+    CREATE INDEX IX_zf_tb_VoidLog_Synced ON dbo.zf_tb_VoidLog (Synced, VoidId);
+END
+GO
 
 -- Cash put into / taken out of the drawer without a sale, per Z (shift). Added 2026-10-06.
 --   Kind 1 opening cash (the float given to the till before it opens; one per Z),
@@ -322,6 +352,12 @@ BEGIN
     );
     CREATE INDEX IX_zf_tb_CashMovement_Z ON dbo.zf_tb_CashMovement (ZNo, Status);
 END
+GO
+-- sent to the back office (2026-10-25, zf_sp_GetUnsyncedCashMovements → POST api/Sync/CashMovements). A row whose
+-- Status changes (opening cash replaced) is set back to 0 and goes again.
+IF COL_LENGTH('dbo.zf_tb_CashMovement', 'Synced') IS NULL
+    ALTER TABLE dbo.zf_tb_CashMovement ADD Synced   BIT      NOT NULL CONSTRAINT DF_zf_tb_CashMovement_Synced DEFAULT (0),
+                                           SyncedAt DATETIME NULL;
 GO
 
 -- Z cash totals (filled by zf_sp_CloseZ)
@@ -389,6 +425,13 @@ IF OBJECT_ID('dbo.zf_sp_GetInvoiceForPrint', 'P')   IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_LogDrawer', 'P')            IS NOT NULL DROP PROCEDURE dbo.zf_sp_LogDrawer;
 IF OBJECT_ID('dbo.zf_sp_AddCashMovement', 'P')      IS NOT NULL DROP PROCEDURE dbo.zf_sp_AddCashMovement;
 IF OBJECT_ID('dbo.zf_sp_GetCashSummary', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetCashSummary;
+IF OBJECT_ID('dbo.zf_sp_GetUnsyncedCashMovements', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedCashMovements;
+IF OBJECT_ID('dbo.zf_sp_MarkCashMovementsSynced', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkCashMovementsSynced;
+IF OBJECT_ID('dbo.zf_sp_LogVoid', 'P')              IS NOT NULL DROP PROCEDURE dbo.zf_sp_LogVoid;
+IF OBJECT_ID('dbo.zf_sp_GetUnsyncedVoidLog', 'P')   IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedVoidLog;
+IF OBJECT_ID('dbo.zf_sp_MarkVoidLogSynced', 'P')    IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkVoidLogSynced;
+IF OBJECT_ID('dbo.zf_sp_GetUnsyncedDrawerLog', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedDrawerLog;
+IF OBJECT_ID('dbo.zf_sp_MarkDrawerLogSynced', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkDrawerLogSynced;
 IF OBJECT_ID('dbo.zf_sp_GetXReport', 'P')           IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetXReport;
 IF OBJECT_ID('dbo.zf_sp_GetInvoiceForRefund', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetInvoiceForRefund;
 IF OBJECT_ID('dbo.zf_sp_SaveBillRefund', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveBillRefund;
@@ -403,6 +446,9 @@ IF TYPE_ID('dbo.zf_tt_SuspendedItem')  IS NOT NULL DROP TYPE dbo.zf_tt_Suspended
 IF TYPE_ID('dbo.zf_tt_Item')           IS NOT NULL DROP TYPE dbo.zf_tt_Item;
 IF TYPE_ID('dbo.zf_tt_StockBalance')   IS NOT NULL DROP TYPE dbo.zf_tt_StockBalance;
 IF TYPE_ID('dbo.zf_tt_PriceLink')      IS NOT NULL DROP TYPE dbo.zf_tt_PriceLink;
+IF TYPE_ID('dbo.zf_tt_CashMoveSent')   IS NOT NULL DROP TYPE dbo.zf_tt_CashMoveSent;
+IF TYPE_ID('dbo.zf_tt_VoidLine')       IS NOT NULL DROP TYPE dbo.zf_tt_VoidLine;
+IF TYPE_ID('dbo.zf_tt_LogId')          IS NOT NULL DROP TYPE dbo.zf_tt_LogId;
 GO
 
 /* ---------------------------------------------------------------------------
@@ -430,6 +476,27 @@ CREATE TYPE dbo.zf_tt_InvoicePayment AS TABLE (
 GO
 CREATE TYPE dbo.zf_tt_InvoiceNo AS TABLE (
     InvoiceNo VARCHAR(30) NOT NULL PRIMARY KEY
+);
+GO
+-- cash movements the back office answered for, with the Status that was sent (zf_sp_MarkCashMovementsSynced)
+CREATE TYPE dbo.zf_tt_CashMoveSent AS TABLE (
+    MoveId INT NOT NULL PRIMARY KEY,
+    Status INT NOT NULL
+);
+GO
+-- the lines of one void (zf_sp_LogVoid)
+CREATE TYPE dbo.zf_tt_VoidLine AS TABLE (
+    LineNum    INT           NOT NULL PRIMARY KEY,
+    ItemId     INT           NOT NULL,
+    Descrip    NVARCHAR(100) NULL,
+    Qty        DECIMAL(18,3) NOT NULL,
+    UnitPrice  DECIMAL(18,2) NOT NULL,
+    Amount     DECIMAL(18,2) NOT NULL
+);
+GO
+-- log rows the back office has (zf_sp_MarkVoidLogSynced / zf_sp_MarkDrawerLogSynced)
+CREATE TYPE dbo.zf_tt_LogId AS TABLE (
+    Id INT NOT NULL PRIMARY KEY
 );
 GO
 -- lines picked on the refund screen (zf_sp_SaveBillRefund): the till works out price and amount itself
@@ -1565,7 +1632,7 @@ BEGIN
                 SET @Msg = N'Opening cash for Z ' + CAST(@ZNo AS NVARCHAR(10)) + N' is already entered and bills are made. Use Paid In or Paid Out.';
                 THROW 51051, @Msg, 1;
             END
-            UPDATE dbo.zf_tb_CashMovement SET Status = 9 WHERE ZNo = @ZNo AND Kind = 1 AND Status = 1;
+            UPDATE dbo.zf_tb_CashMovement SET Status = 9, Synced = 0 WHERE ZNo = @ZNo AND Kind = 1 AND Status = 1;
         END
 
         IF @Kind = 3
@@ -1589,6 +1656,123 @@ BEGIN
     COMMIT;
 
     SELECT MoveId, ZNo, Kind, Amount, Reason, CashierId, CreatedAt FROM dbo.zf_tb_CashMovement WHERE MoveId = @MoveId;
+END
+GO
+
+-- Oldest cash movements (opening cash, paid in, paid out) not sent yet - the body of POST api/Sync/CashMovements.
+CREATE PROCEDURE dbo.zf_sp_GetUnsyncedCashMovements
+    @Top INT = 100
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT TOP (@Top) MoveId, ZNo, Kind, Amount, Reason, CashierId, CreatedAt, Status
+    FROM dbo.zf_tb_CashMovement WHERE Synced = 0 ORDER BY MoveId;
+END
+GO
+
+-- A row whose Status changed while it was on its way (opening cash replaced) stays unsent and goes again.
+CREATE PROCEDURE dbo.zf_sp_MarkCashMovementsSynced
+    @Rows dbo.zf_tt_CashMoveSent READONLY
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE m SET Synced = 1, SyncedAt = GETDATE()
+    FROM dbo.zf_tb_CashMovement m JOIN @Rows r ON r.MoveId = m.MoveId AND r.Status = m.Status;
+END
+GO
+
+-- Records lines taken off a bill before payment (zf_tb_VoidLog). Returns one row: GroupNo, Lines.
+CREATE PROCEDURE dbo.zf_sp_LogVoid
+    @Kind      INT,
+    @CashierId VARCHAR(20) = NULL,
+    @Refund    BIT = 0,
+    @Lines     dbo.zf_tt_VoidLine READONLY
+AS
+BEGIN
+    DECLARE @z_tc INT; SET @z_tc = @@TRANCOUNT;   -- SQL 2008 R2 error handling (RAISERROR in TRY/CATCH)
+    BEGIN TRY
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @ZNo INT, @GroupNo INT, @Now DATETIME;
+    DECLARE @Ids TABLE (VoidId INT NOT NULL);
+    IF @Kind NOT IN (1, 2, 3)
+        RAISERROR(N'%s', 16, 1, N'Void Kind must be 1 (line), 2 (bill) or 3 (qty made smaller).');
+    IF NOT EXISTS (SELECT 1 FROM @Lines)
+        RAISERROR(N'%s', 16, 1, N'No lines to log.');
+    IF EXISTS (SELECT 1 FROM @Lines WHERE Qty <= 0)
+        RAISERROR(N'%s', 16, 1, N'Void qty must be above 0.');
+
+    SET @Now = GETDATE();
+    SELECT @ZNo = ZNo FROM dbo.zf_tb_ZReport WHERE Status = 0;
+
+    BEGIN TRAN;
+        INSERT dbo.zf_tb_VoidLog (GroupNo, LoggedAt, Kind, ZNo, CashierId, Refund, ItemId, Descrip, Qty, UnitPrice, Amount)
+        OUTPUT inserted.VoidId INTO @Ids (VoidId)
+        SELECT 0, @Now, @Kind, @ZNo, @CashierId, ISNULL(@Refund, 0), ItemId, LEFT(Descrip, 100), Qty, UnitPrice, Amount
+        FROM @Lines ORDER BY LineNum;
+
+        SELECT @GroupNo = MIN(VoidId) FROM @Ids;
+        UPDATE v SET GroupNo = @GroupNo FROM dbo.zf_tb_VoidLog v JOIN @Ids i ON i.VoidId = v.VoidId;
+    COMMIT;
+
+    SELECT @GroupNo AS GroupNo, (SELECT COUNT(*) FROM @Ids) AS Lines;
+    END TRY
+    BEGIN CATCH
+        DECLARE @z_msg NVARCHAR(2048); SET @z_msg = ERROR_MESSAGE();
+        IF @z_tc = 0
+        BEGIN
+            IF XACT_STATE() <> 0 ROLLBACK;
+        END
+        ELSE
+        BEGIN
+            WHILE @@TRANCOUNT > @z_tc AND XACT_STATE() = 1 COMMIT;
+        END
+        RAISERROR(N'%s', 16, 1, @z_msg);
+        RETURN 1;
+    END CATCH
+END
+GO
+
+-- Oldest void lines not sent yet (POST api/Sync/TillLog).
+CREATE PROCEDURE dbo.zf_sp_GetUnsyncedVoidLog
+    @Top INT = 100
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT TOP (@Top) VoidId, GroupNo, LoggedAt, Kind, ZNo, CashierId, Refund, ItemId, Descrip, Qty, UnitPrice, Amount
+    FROM dbo.zf_tb_VoidLog WHERE Synced = 0 ORDER BY VoidId;
+END
+GO
+
+CREATE PROCEDURE dbo.zf_sp_MarkVoidLogSynced
+    @Ids dbo.zf_tt_LogId READONLY
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE v SET Synced = 1, SyncedAt = GETDATE()
+    FROM dbo.zf_tb_VoidLog v JOIN @Ids i ON i.Id = v.VoidId;
+END
+GO
+
+-- Oldest drawer openings not sent yet (POST api/Sync/TillLog).
+CREATE PROCEDURE dbo.zf_sp_GetUnsyncedDrawerLog
+    @Top INT = 100
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT TOP (@Top) DrawerLogId, OpenedAt, Kind, InvoiceNo, CashierId, Reason, Opened
+    FROM dbo.zf_tb_DrawerLog WHERE Synced = 0 ORDER BY DrawerLogId;
+END
+GO
+
+CREATE PROCEDURE dbo.zf_sp_MarkDrawerLogSynced
+    @Ids dbo.zf_tt_LogId READONLY
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE d SET Synced = 1, SyncedAt = GETDATE()
+    FROM dbo.zf_tb_DrawerLog d JOIN @Ids i ON i.Id = d.DrawerLogId;
 END
 GO
 

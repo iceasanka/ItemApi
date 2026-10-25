@@ -158,6 +158,36 @@ namespace ItemApi.Repositories
             }
         }
 
+        public async Task<SyncCashMovementResult> UploadCashMovementsAsync(SyncCashMovementBatch batch)
+        {
+            try
+            {
+                if (batch.Movements.Count == 0)
+                    return new SyncCashMovementResult();
+                return await _context.SyncCashMovementsAsync(batch.TerminalId, batch.Movements);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<SyncTillLogResult> UploadTillLogAsync(SyncTillLogBatch batch)
+        {
+            try
+            {
+                if (batch.Voids.Count == 0 && batch.Drawer.Count == 0)
+                    return new SyncTillLogResult();
+                return await _context.SyncTillLogAsync(batch.TerminalId, batch.Voids, batch.Drawer);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<ZReportSubmitResponse> SubmitZReportAsync(ZReportSubmit z)
         {
             try

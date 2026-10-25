@@ -324,7 +324,7 @@ profit view). TillService only — **no database change**, no update script. UI:
 **Cash drawer** — kick command `ESC p` through the printer (`Printer:DrawerPin` 0 = pin 2). Every opening is a row in
 `zf_tb_DrawerLog` (Kind 1 bill, 2 No Sale; `Opened 0` = the printer didn't take it). **No Sale**:
 `POST /drawer/nosale { cashierId, reason }` — **no PIN** (a `pin` sent is ignored); the cashier and reason are logged
-and a small NO SALE slip is printed (`Receipt:PrintNoSaleSlip`).
+and the drawer opens with no slip (2026-10-25; `Receipt:PrintNoSaleSlip` true = print a small NO SALE slip).
 
 **Till reports (Menu)** — `POST /cash/summary/print` (DRAWER SUMMARY slip of the open Z), `GET|POST /reports/suspended[/print]`
 (waiting + today's recalled / cancelled), `GET|POST /reports/refunds[/print]?zNo=` (refund bills of the open Z, else the
@@ -371,7 +371,8 @@ Cash put into / taken out of the drawer without a sale, per Z, in `zf_tb_CashMov
   which are the Z slip's "+ Paid in" / "− Paid out". Opening cash is not listed (it is on the Z slip). No movements →
   only the Z slip. Follows `Receipt:PrintZReport`; day file either way. If the list fails to print the Z slip still
   prints and `printError` says so. TillService only — no database change, no page change.
-- Not uploaded to the back office yet (the Z upload is unchanged; `CashAmount` still means cash sales only).
+- Uploaded to the back office since 2026-10-25 (U018, §6.25 Day Reports); the Z upload is unchanged (`CashAmount`
+  still means cash sales only).
 - **X report** (2026-10-12) — a reading in the middle of the shift, nothing is closed. `zf_sp_GetXReport` works out the
   open Z's totals with the **same rules as `zf_sp_CloseZ`** (change both together) but writes nothing; `GET /x` returns
   them in the `/z/close` shape (`closedAt` null, `status` 0), `POST /x/print` also prints an "X REPORT — Z n NOT
@@ -964,6 +965,73 @@ back office with the server's IP (not `localhost`) to get a QR code a phone can 
 | GET | `api/MobileApp` | `{ android: [{ fileName, sizeBytes, modified }], ios: [...], iosLink }`, newest first |
 | GET | `api/MobileApp/{android\|ios}/Latest` | the newest file (404 when none); Android is always saved as `IRM.apk` |
 | GET | `api/MobileApp/{android\|ios}/Download/{fileName}` | that file — a plain name in the folder only |
+
+### 6.25 Day Reports — any day, any time (back office Sales → Day reports, 2026-10-25)
+SQL: `Updates/U018_BackOffice_DayReports.sql` (full script `21_BackOffice_DayReports.sql`) and
+`Updates/U018_Till_CashMovementUpload.sql` (full script `02_FrontCashier_zf.sql`). Code: `DayReportController`,
+`DayReportRepository`, `Data/AppDbContext.DayReport.cs`, `Models/DayReportModels.cs`; TillService `SyncWorker`
+(`UploadCashMovementsAsync`); back office `pages/DayReports.tsx`, `services/dayReportApi.ts`.
+
+**Opening cash / paid in / paid out now go up to the back office.** `zf_tb_CashMovement` has `Synced` / `SyncedAt`
+like the bills; every sync run (straight after the bills) sends the unsent rows to `POST api/Sync/CashMovements`
+(`z_sp_SyncCashMovements` → `z_tb_CashMovement`, key TerminalId + the till's MoveId, a resend replaces the row) and
+marks them (`zf_sp_MarkCashMovementsSynced`, only rows still at the Status sent). An opening cash typed again (old row
+Status 9) is sent again. The first run after the update sends the whole history. A till db without U018, or an older
+ItemApi (404), is skipped with one log line — bills and the Z still go up. The Z upload itself is unchanged.
+
+**The page** — pick a day (and a till, or all): **Summary** (sales before discounts, item / bill discounts, refunds,
+net sales; cash / card / bank / cheque / credit; drawer: opening + cash − refunds + paid in − paid out = expected cash;
+per till; print 80mm / A4), **Day end (Z)** (the Zs of that business date with their cash in / out, link to the Z
+detail), **Paid in / out** (each one: time, till, Z, reason, cashier; print), **Items** (every item: sold, refunded,
+net qty, price, bills, discount, amount; other items one row per typed name; print A4), **Bills** (every bill incl.
+refunds and voided) → **Bill copy** (lines, discounts, payments; print 80mm / A4 marked COPY). The bill number box at
+the top opens any bill, any day. Rules as the till Z and the dashboard: voided bills left out of the sums, refunds
+negative. Bills and cash movements count by their own date (till clock); the Zs by their business date. Item amounts
+are after the item discount and before the bill discount (that is on the bill only).
+
+| Method | Route | |
+|---|---|---|
+| GET | `api/DayReport?date=&terminalId=` | `{ date, terminalId, tills: [...], zReports: [...], cashMovements: [...] }` (no date = today) |
+| GET | `api/DayReport/Items?date=&terminalId=` | `z_sp_DayReportItems` |
+| GET | `api/DayReport/Bills?date=&terminalId=` | `z_sp_DayReportBills` (voided too, Status 9) |
+| GET | `api/DayReport/Bill/{invoiceNo}` | header + `lines` + `payments`; 404 when the back office does not have it |
+| POST | `api/Sync/CashMovements` | till → `{ terminalId, movements: [{ moveId, zNo, kind, amount, reason, cashierId, createdAt, status }] }` → `{ received }` |
+
+**Deploy order**: `U018_BackOffice` on easyway → ItemApi → back office UI → on each till `U018_Till` → TillService.
+The till script first is fine too (the old TillService ignores the new columns). No billing page change.
+
+### 6.26 Voids & No Sale — for stopping cash loss (back office Day reports → Voids & No Sale, 2026-10-25)
+SQL: `Updates/U019_BackOffice_VoidReport.sql` (full script `22_BackOffice_VoidReport.sql`) and
+`Updates/U019_Till_VoidLog.sql` (full script `02_FrontCashier_zf.sql`). Code: `DayReportController` (`Loss`),
+`SyncController` (`TillLog`), `Data/AppDbContext.DayReport.cs`; TillService `POST /void-log`, `SyncWorker`
+(`UploadTillLogAsync`); billing page `CashierBilling.tsx` (`logVoids`); back office `pages/DayReports.tsx`.
+
+**The till logs every line taken off a bill before payment** in `zf_tb_VoidLog` (`zf_sp_LogVoid`, via
+`POST /void-log`): **Void line** (Kind 1), **Void bill** (Kind 2, every line, same GroupNo) and a **qty made smaller**
+with the Qty key (Kind 3, the qty taken off, at the old price). Cashier, open Z, item, qty, price, amount; `Refund` = a
+line of a refund bill. The log never blocks the cashier: a till db without U019 answers `{ logged: false }`, a
+TillService error is ignored. Saved bills are not voided here — that is the existing bill void (Status 9) / refund.
+
+**Up to the back office**: every sync run (after the cash movements) sends unsent rows of `zf_tb_VoidLog` and
+`zf_tb_DrawerLog` (every drawer opening: bill, No Sale, opening cash, paid in, paid out — `Synced` / `SyncedAt` added,
+the old history goes up once) to `POST api/Sync/TillLog` → `z_tb_TillVoidLog`, `z_tb_TillDrawerLog` (keys TerminalId +
+the till's id; rows never change, a resend is skipped). A till db without U019 or an older ItemApi (404) is skipped
+with one log line.
+
+**The tab** (one day, a till or all): totals (voids total, void lines, void bills, qty cuts, No Sale, refunds);
+**per cashier** — bills, sales, void lines / void bills / qty cuts (count · Rs), voids total, **void %** = voids ÷
+(sales + voids), No Sale (and how many did not open the drawer), refunds, voided saved bills; a row is red when void %
+is over 3 or No Sale over 5; **void lines** (time, till, cashier, kind, item, qty, price, amount; refund-bill lines
+faded and left out of the sums); **No Sale** (time, till, cashier, reason); **refunds and voided bills** (from the
+Bills list, click = bill copy). Print A4.
+
+| Method | Route | |
+|---|---|---|
+| GET | `api/DayReport/Loss?date=&terminalId=` | `{ date, terminalId, cashiers: [...], voids: [...], noSales: [...] }` |
+| POST | `api/Sync/TillLog` | till → `{ terminalId, voids: [...], drawer: [...] }` → `{ voids, drawer }` |
+
+**Deploy order**: `U019_BackOffice` on easyway → ItemApi → back office UI → on each till `U019_Till` → TillService →
+billing page. Until a till has all of them its refunds show but no voids / No Sale.
 
 ---
 

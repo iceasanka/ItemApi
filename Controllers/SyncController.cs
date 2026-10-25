@@ -194,6 +194,52 @@ namespace ItemApi.Controllers
             }
         }
 
+        // POST: api/Sync/CashMovements — opening cash / paid in / paid out of a till (new rows, and an opening cash that
+        // was replaced). A resend replaces the row. → { received }
+        [AllowAnonymous]
+        [HttpPost("CashMovements")]
+        public async Task<IActionResult> CashMovements([FromBody] SyncCashMovementBatch batch)
+        {
+            if (batch == null || batch.TerminalId <= 0)
+                return BadRequest(new { message = "TerminalId is required." });
+
+            try
+            {
+                return Ok(await _repository.UploadCashMovementsAsync(batch));
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/Sync/TillLog — void lines (taken off a bill before payment) and cash drawer openings of a till.
+        // A resend is skipped. → { voids, drawer }
+        [AllowAnonymous]
+        [HttpPost("TillLog")]
+        public async Task<IActionResult> TillLog([FromBody] SyncTillLogBatch batch)
+        {
+            if (batch == null || batch.TerminalId <= 0)
+                return BadRequest(new { message = "TerminalId is required." });
+
+            try
+            {
+                return Ok(await _repository.UploadTillLogAsync(batch));
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // POST: api/Sync/ZReport — Status 3 reconciled; 4 mismatch → resend MissingInvoiceNos, then submit again
         [AllowAnonymous]
         [HttpPost("ZReport")]

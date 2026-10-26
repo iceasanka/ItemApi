@@ -111,6 +111,10 @@ namespace ItemApi.Models
         public int Bills { get; set; }
         public decimal MinPrice { get; set; }
         public decimal MaxPrice { get; set; }
+        // after the bill discount share, lines with a cost only (NULL = none has one); UncostedQty = net qty left out
+        public decimal? Cost { get; set; }
+        public decimal? Profit { get; set; }
+        public decimal UncostedQty { get; set; }
     }
 
     // z_sp_DayReportBills / z_sp_DayReportBill
@@ -135,6 +139,10 @@ namespace ItemApi.Models
         public decimal Cash { get; set; }
         public decimal Card { get; set; }
         public decimal OtherPay { get; set; }
+        // refunds negative, NULL on a voided bill or when no line has a cost; UncostedLines = lines left out
+        public decimal? Cost { get; set; }
+        public decimal? Profit { get; set; }
+        public int UncostedLines { get; set; }
     }
 
     // GET api/DayReport/Bill/{invoiceNo} — everything a bill copy shows

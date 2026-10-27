@@ -144,6 +144,9 @@ namespace ItemApi.Repositories
             return new SyncDownload<SyncCashier> { ServerTime = serverTime, Rows = rows };
         }
 
+        // general settings + users' own values for a till (z_sp_GetSettingsForSync)
+        public Task<List<SyncSetting>> GetSettingsAsync() => _context.GetSettingsForSyncAsync();
+
         public async Task<List<SyncInvoiceResult>> UploadInvoicesAsync(SyncInvoiceBatch batch)
         {
             try
@@ -180,6 +183,21 @@ namespace ItemApi.Repositories
                 if (batch.Voids.Count == 0 && batch.Drawer.Count == 0)
                     return new SyncTillLogResult();
                 return await _context.SyncTillLogAsync(batch.TerminalId, batch.Voids, batch.Drawer);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        public async Task<SyncAbandonedResult> UploadAbandonedBillsAsync(SyncAbandonedBatch batch)
+        {
+            try
+            {
+                if (batch.Bills.Count == 0)
+                    return new SyncAbandonedResult();
+                return await _context.SyncAbandonedBillsAsync(batch.TerminalId, batch.Bills, batch.Lines);
             }
             catch (Exception ex)
             {

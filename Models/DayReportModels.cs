@@ -331,4 +331,105 @@ namespace ItemApi.Models
         public int Voids { get; set; }
         public int Drawer { get; set; }
     }
+
+    // ─── Abandoned bills (api/DayReport/Abandoned, DBScript/23_BackOffice_AbandonedBills.sql) ─────────
+
+    public class DayAbandoned
+    {
+        public DateTime Date { get; set; }
+        public int? TerminalId { get; set; }
+        public List<DayAbandonedBill> Bills { get; set; } = new();
+        public List<DayAbandonedLine> Lines { get; set; } = new();
+    }
+
+    // z_sp_DayReportAbandoned — Outcome 1 taken back, 2 thrown away; FinalStatus 1 paid, 2 suspended, 3 cleared,
+    // 8 thrown away, null = still open. DownMinutes = last change → till back.
+    public class DayAbandonedBill
+    {
+        public int TerminalId { get; set; }
+        public string TerminalCode { get; set; } = "";
+        public int AbandonId { get; set; }
+        public int? ZNo { get; set; }
+        public string? CashierId { get; set; }
+        public string? CashierName { get; set; }
+        public int InvType { get; set; }
+        public int LineCount { get; set; }
+        public decimal NetAmount { get; set; }
+        public DateTime StartedAt { get; set; }
+        public DateTime LastSavedAt { get; set; }
+        public DateTime FoundAt { get; set; }
+        public string? FoundBy { get; set; }
+        public string? FoundByName { get; set; }
+        public int DownMinutes { get; set; }
+        public int Outcome { get; set; }
+        public string? Reason { get; set; }
+        public int? FinalStatus { get; set; }
+        public DateTime? FinalAt { get; set; }
+        public string? InvoiceNo { get; set; }
+        public int? SuspendId { get; set; }
+    }
+
+    // z_sp_DayReportAbandonedLines — the lines when the till stopped
+    public class DayAbandonedLine
+    {
+        public int TerminalId { get; set; }
+        public int AbandonId { get; set; }
+        public int LineNum { get; set; }
+        public int ItemId { get; set; }
+        public string? RefCode { get; set; }
+        public string? Name { get; set; }
+        public decimal Qty { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal Discount { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+    // ─── upload from the tills (POST api/Sync/AbandonedBills) ───────────────────
+
+    public class SyncAbandonedBatch
+    {
+        public int TerminalId { get; set; }
+        public List<SyncAbandonedBill> Bills { get; set; } = new();
+        public List<SyncAbandonedLine> Lines { get; set; } = new();
+    }
+
+    // zf_tb_AbandonedBill row of the till
+    public class SyncAbandonedBill
+    {
+        public int AbandonId { get; set; }
+        public Guid DraftKey { get; set; }
+        public int? ZNo { get; set; }
+        public string? CashierId { get; set; }
+        public int InvType { get; set; }
+        public int LineCount { get; set; }
+        public decimal NetAmount { get; set; }
+        public DateTime StartedAt { get; set; }
+        public DateTime LastSavedAt { get; set; }
+        public DateTime FoundAt { get; set; }
+        public string? FoundBy { get; set; }
+        public int Outcome { get; set; }
+        public string? Reason { get; set; }
+        public int? FinalStatus { get; set; }
+        public DateTime? FinalAt { get; set; }
+        public string? InvoiceNo { get; set; }
+        public int? SuspendId { get; set; }
+    }
+
+    // zf_tb_AbandonedBillItem row of the till
+    public class SyncAbandonedLine
+    {
+        public int AbandonId { get; set; }
+        public int LineNum { get; set; }
+        public int ItemId { get; set; }
+        public string? Descrip { get; set; }
+        public decimal Qty { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal Discount { get; set; }
+        public decimal Amount { get; set; }
+    }
+
+    public class SyncAbandonedResult
+    {
+        public int Bills { get; set; }
+    }
 }

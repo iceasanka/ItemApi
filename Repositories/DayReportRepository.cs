@@ -86,6 +86,26 @@ namespace ItemApi.Repositories
             }
         }
 
+        // bills found still open after a restart; only tills with U022 (zf_tb_AbandonedBill) and the new TillService send them
+        public async Task<DayAbandoned> GetAbandonedAsync(DateTime date, int? terminalId)
+        {
+            try
+            {
+                return new DayAbandoned
+                {
+                    Date = date.Date,
+                    TerminalId = terminalId,
+                    Bills = await _context.GetDayAbandonedAsync(date, _locationId, terminalId),
+                    Lines = await _context.GetDayAbandonedLinesAsync(date, _locationId, terminalId)
+                };
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<DayBillDetail?> GetBillAsync(string invoiceNo)
         {
             try

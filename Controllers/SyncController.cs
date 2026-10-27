@@ -154,6 +154,22 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/Sync/Settings?terminalId=1 — general settings and users' own values (§6.28), the whole list every
+        // time (a few rows); the till replaces its copy. No secrets in it, so no terminal key.
+        [AllowAnonymous]
+        [HttpGet("Settings")]
+        public async Task<IActionResult> Settings([FromQuery] int terminalId)
+        {
+            try
+            {
+                return Ok(await _repository.GetSettingsAsync());
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // ─── Upload (till) ───────────────────────────────────────────────────────
 
         // POST: api/Sync/Invoices — send up to ~50 at a time; an empty list is a heartbeat
@@ -229,6 +245,29 @@ namespace ItemApi.Controllers
             try
             {
                 return Ok(await _repository.UploadTillLogAsync(batch));
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/Sync/AbandonedBills — bills a till found still open after a restart (power cut, crash), with their
+        // lines. A resend updates how the bill ended. → { bills }
+        [AllowAnonymous]
+        [HttpPost("AbandonedBills")]
+        public async Task<IActionResult> AbandonedBills([FromBody] SyncAbandonedBatch batch)
+        {
+            if (batch == null || batch.TerminalId <= 0)
+                return BadRequest(new { message = "TerminalId is required." });
+
+            try
+            {
+                return Ok(await _repository.UploadAbandonedBillsAsync(batch));
             }
             catch (SqlException ex) when (ex.Number >= 50000)
             {

@@ -110,6 +110,61 @@ namespace ItemApi.Data
             return result.FirstOrDefault() ?? new SyncTillLogResult();
         }
 
+        public Task<List<DayAbandonedBill>> GetDayAbandonedAsync(DateTime date, int locationId, int? terminalId) =>
+            DayQuery<DayAbandonedBill>("z_sp_DayReportAbandoned", date, locationId, terminalId);
+
+        public Task<List<DayAbandonedLine>> GetDayAbandonedLinesAsync(DateTime date, int locationId, int? terminalId) =>
+            DayQuery<DayAbandonedLine>("z_sp_DayReportAbandonedLines", date, locationId, terminalId);
+
+        // bills a till found still open after a restart (DBScript/23_BackOffice_AbandonedBills.sql)
+        public async Task<SyncAbandonedResult> SyncAbandonedBillsAsync(int terminalId, List<SyncAbandonedBill> bills, List<SyncAbandonedLine> lines)
+        {
+            // column order = dbo.z_tt_TillAbandonedBill
+            var b = new DataTable();
+            b.Columns.Add("AbandonId", typeof(int));
+            b.Columns.Add("DraftKey", typeof(Guid));
+            b.Columns.Add("ZNo", typeof(int));
+            b.Columns.Add("CashierId", typeof(string));
+            b.Columns.Add("InvType", typeof(int));
+            b.Columns.Add("LineCount", typeof(int));
+            b.Columns.Add("NetAmount", typeof(decimal));
+            b.Columns.Add("StartedAt", typeof(DateTime));
+            b.Columns.Add("LastSavedAt", typeof(DateTime));
+            b.Columns.Add("FoundAt", typeof(DateTime));
+            b.Columns.Add("FoundBy", typeof(string));
+            b.Columns.Add("Outcome", typeof(int));
+            b.Columns.Add("Reason", typeof(string));
+            b.Columns.Add("FinalStatus", typeof(int));
+            b.Columns.Add("FinalAt", typeof(DateTime));
+            b.Columns.Add("InvoiceNo", typeof(string));
+            b.Columns.Add("SuspendId", typeof(int));
+            foreach (var r in bills.GroupBy(r => r.AbandonId).Select(g => g.Last()))
+                b.Rows.Add(r.AbandonId, r.DraftKey, (object?)r.ZNo ?? DBNull.Value, (object?)r.CashierId ?? DBNull.Value, r.InvType,
+                           r.LineCount, r.NetAmount, r.StartedAt, r.LastSavedAt, r.FoundAt, (object?)r.FoundBy ?? DBNull.Value,
+                           r.Outcome, (object?)r.Reason ?? DBNull.Value, (object?)r.FinalStatus ?? DBNull.Value,
+                           (object?)r.FinalAt ?? DBNull.Value, (object?)r.InvoiceNo ?? DBNull.Value, (object?)r.SuspendId ?? DBNull.Value);
+
+            // column order = dbo.z_tt_TillAbandonedLine
+            var l = new DataTable();
+            l.Columns.Add("AbandonId", typeof(int));
+            l.Columns.Add("LineNum", typeof(int));
+            l.Columns.Add("ItemId", typeof(int));
+            l.Columns.Add("Descrip", typeof(string));
+            l.Columns.Add("Qty", typeof(decimal));
+            l.Columns.Add("UnitPrice", typeof(decimal));
+            l.Columns.Add("Discount", typeof(decimal));
+            l.Columns.Add("Amount", typeof(decimal));
+            foreach (var r in lines.GroupBy(r => (r.AbandonId, r.LineNum)).Select(g => g.Last()))
+                l.Rows.Add(r.AbandonId, r.LineNum, r.ItemId, (object?)r.Descrip ?? DBNull.Value, r.Qty, r.UnitPrice, r.Discount, r.Amount);
+
+            var result = await Database.SqlQueryRaw<SyncAbandonedResult>(
+                "EXEC dbo.z_sp_SyncAbandonedBills @TerminalId = @TerminalId, @Bills = @Bills, @Lines = @Lines",
+                new SqlParameter("@TerminalId", terminalId),
+                new SqlParameter("@Bills", SqlDbType.Structured) { TypeName = "dbo.z_tt_TillAbandonedBill", Value = b },
+                new SqlParameter("@Lines", SqlDbType.Structured) { TypeName = "dbo.z_tt_TillAbandonedLine", Value = l }).ToListAsync();
+            return result.FirstOrDefault() ?? new SyncAbandonedResult();
+        }
+
         private async Task<List<T>> DayQuery<T>(string proc, DateTime date, int locationId, int? terminalId)
         {
             return await Database.SqlQueryRaw<T>(

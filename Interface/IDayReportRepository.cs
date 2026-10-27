@@ -9,5 +9,6 @@ namespace ItemApi.Interface
         Task<List<DayBill>> GetBillsAsync(DateTime date, int? terminalId);
         Task<DayBillDetail?> GetBillAsync(string invoiceNo);
         Task<DayLoss> GetLossAsync(DateTime date, int? terminalId);
+        Task<DayAbandoned> GetAbandonedAsync(DateTime date, int? terminalId);
     }
 }

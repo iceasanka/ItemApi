@@ -1033,6 +1033,156 @@ Bills list, click = bill copy). Print A4.
 **Deploy order**: `U019_BackOffice` on easyway → ItemApi → back office UI → on each till `U019_Till` → TillService →
 billing page. Until a till has all of them its refunds show but no voids / No Sale.
 
+### 6.27 Bill recovery after a power cut + Abandoned bills (billing page / Day reports → Abandoned bills, 2026-10-26)
+SQL: `Updates/U022_Till_DraftBill.sql` (full script `02_FrontCashier_zf.sql`) and
+`Updates/U022_BackOffice_AbandonedBills.sql` (full script `23_BackOffice_AbandonedBills.sql`). Code: TillService
+`POST /draft` and `/draft/*` routes, `TillDb` (draft methods, `SaveInvoiceAsync` / `SuspendBillAsync`), `SyncWorker`
+(`UploadAbandonedBillsAsync`); billing page `CashierBilling.tsx` + `lib/billDraft.ts`; ItemApi `SyncController`
+(`AbandonedBills`), `DayReportController` (`Abandoned`); back office `pages/DayReports.tsx`.
+
+Before this the bill on the screen lived only in the browser: a power cut, a crash or a closed browser lost it and left
+no trace.
+
+**Saved as it changes**: a moment (0.3 s) after each change the page sends the WHOLE bill to `POST /draft` →
+`zf_tb_DraftBill` + `zf_tb_DraftBillItem` (key `DraftKey`, a GUID the page makes on the first line). The whole bill,
+not only the change: it is a few KB to the till's own service and takes ~3 ms, and a lost or late change can never
+leave the till with a different bill than the screen. One save at a time; changes made meanwhile go in the next;
+`SaveSeq` goes up with each save and an older one arriving late is ignored. The cashier never waits for it.
+Status bar: "Bill saved 10:42:05" (green), "slow … ms" (≥ 500 ms, yellow), "Bill NOT saved" (red, the till service
+does not answer - retried every 3 s), "Auto-save OFF". TillService logs `POST /draft` only when it fails or is slow.
+
+**Closed with the bill**: Pay and Suspend send `draftKey`; TillService saves the bill / suspend AND closes the draft
+(`zf_sp_CloseDraftBill`, Status 1 paid / 2 suspended) in ONE transaction - a power cut can never leave a paid bill
+that is offered again. Void bill or the last line voided → `POST /draft/{key}/close` (Status 3). A closed draft keeps
+its header 7 days so a save still on its way can't open it again.
+
+**After a restart**: when a cashier signs in, the page asks `GET /draft/open`. Each bill left open shows "Unfinished bill
+found" (cashier, lines, total, last change) - no Esc / click outside, the cashier must choose:
+- **Take bill back** → `POST /draft/{key}/recover`: lines come back like a recalled suspended bill (item as it is now;
+  a price change is noted), the bill goes on under the same key. An exchange held for the bill comes back; its
+  supervisor approval is asked again at Pay.
+- **Throw away** → reason + supervisor PIN → `POST /draft/{key}/discard`.
+Both are logged in `zf_tb_AbandonedBill` (+ items): the lines as they were, who found it, when, and later how the bill
+ended (`FinalStatus` 1 paid, 2 suspended, 3 voided, 8 thrown away).
+
+**Option**: Menu → "Auto-save bill: ON / OFF" (per till, `localStorage till.autoSaveBill`, default ON). Changed only with
+no bill on the screen; OFF needs the supervisor PIN. A till db without U022 shows "till database needs update U022".
+
+**Up to the back office**: every sync run sends unsent abandoned bills to `POST api/Sync/AbandonedBills` →
+`z_tb_TillAbandonedBill` + `z_tb_TillAbandonedBillItem` (key TerminalId + AbandonId). A bill whose end changes later is
+sent again and its end updated. A till db without U022 or an older ItemApi (404) is skipped with one log line.
+
+**The tab** (one day by the last change, a till or all): abandoned bills (count · Rs), thrown away, taken back then
+voided, taken back and paid, tills that stopped; each bill: last change, till / Z, cashier, lines, amount, when the
+till was back, **off for** (last change → back: how long the till was off / stuck), what happened, by whom; click a row
+for its items. Red rows = thrown away, or taken back then voided. Print A4.
+
+| Method | Route | |
+|---|---|---|
+| POST | `/draft` (TillService) | `{ draftKey, saveSeq, cashierId, invType, priceType, discount, discountPercent, pageState, items }` → `{ saved, status, enabled, ms }` |
+| POST | `/draft/{key}/close` | `{ status: 3 }` → `{ ok }` |
+| GET | `/draft/open` | open drafts, newest first |
+| POST | `/draft/{key}/recover?cashierId=` | the bill with its lines (like a recall) |
+| POST | `/draft/{key}/discard` | **token** `{ cashierId, reason }` → `{ ok }` |
+| GET | `api/DayReport/Abandoned?date=&terminalId=` | `{ date, terminalId, bills: [...], lines: [...] }` |
+| POST | `api/Sync/AbandonedBills` | till → `{ terminalId, bills: [...], lines: [...] }` → `{ bills }` |
+
+**Deploy order**: `U022_BackOffice` on easyway → ItemApi → back office UI → on each till `U022_Till` → TillService →
+billing page. The old TillService / page keep working after the till script; the new page on a till without U022
+simply does not save.
+
+### 6.28 Settings — general and per user (back office Settings → System settings, 2026-10-27)
+SQL: `Updates/U023_BackOffice_Settings.sql` (full script `24_BackOffice_Settings.sql`) and
+`Updates/U023_Till_Settings.sql` (full script `02_FrontCashier_zf.sql`). Code: ItemApi `SettingsController`,
+`SettingRepository`, `AppDbContext.Setting.cs`, `SyncController` (`Settings`); TillService `GET /settings`,
+`POST /bill/profit`, `SyncWorker.DownloadSettingsAsync`; back office `pages/SystemSettings.tsx` +
+`services/settingsApi.ts`; billing page `CashierBilling.tsx`.
+
+**One list, two levels**: `z_tb_Setting` holds every setting (key, group, label, help text, type `bool` / `choice`,
+choices, default) and its **general** value (NULL = the default). Scope 1 = general only; scope 2 = a user can also
+have their **own** value (`z_tb_UserSetting`, no row = the general value). A value for a user: own value → general
+value → default. The list belongs to the scripts: a new setting is one more row in `24_` (and in an update script),
+no table change. Admins change values on the Settings page (General tab: one control per setting, "Back to the
+default"; Per user tab: a table of users × per-user settings, "Default (…)" = the general value).
+
+**To the tills**: every download run (≤ 5 min, or Reload) TillService gets the WHOLE list from `GET api/Sync/Settings`
+(general values with `loginName` null, then users' own values by login name - a few rows, no secrets, no terminal key)
+and `zf_sp_SaveSettings` replaces `zf_tb_Setting` / `zf_tb_UserSetting` - so a value reset on the back office is gone
+from the till too. A till keeps working with the copy it has while offline. `GET /settings` gives the signed-in
+cashier's values; the page reads them at sign-in, after Reload and every 2 minutes. No copy (older till db, older
+ItemApi) = the old behaviour.
+
+**Settings now**:
+| Key | Scope | Default | What |
+|---|---|---|---|
+| `Till.BillDiscSkipItemDisc` | general | 0 (off) | on: the bill discount % is worked out only on lines WITHOUT an item discount (like NoDiscount items). Example: Rs 1000 no discount + Rs 450 (500 less 10 %) + Rs 200 → 10 % bill discount of 1200 = Rs 120, not of 1650 |
+| `Till.ProfitView` | per user | 1 | the Profit button on the till: 0 hidden, 1 shown - supervisor PIN, 2 shown - no PIN (owners / supervisors) |
+
+**Bill discount rule** lives in the till db: `zf_fn_BillLineCost.InDiscountBase` = 0 for NoDiscount items and, with
+the setting on, lines with an item discount (line `Discount` > 0). The page's base (`POST /bill/profit` →
+`discountBase`, `leftOutLines`) and the check in `zf_sp_SaveInvoice` use the same function, so they never differ. The
+discount dialog and the bill show "% of Rs …" when lines are left out. Each sale line keeps it
+(`zf_tb_InvoiceItem.InDiscBase`); a refund (`zf_sp_SaveBillRefund`) or an exchange gives back the bill discount in
+proportion to the lines it was taken off only - a refunded item-discount line gives back none of it (before: every
+line shared it, NoDiscount items too). Bills saved before U023 (NULL) and a bill whose discount was typed as an
+amount with no line in the base: every line shares it, as before. The cap (max discount = bill profit) is unchanged.
+Not sent to the back office: the Sales dashboard / Day report profit still spread the bill discount over every line.
+
+**Profit without the PIN**: `POST /bill/profit` answers a signed-in cashier whose `Till.ProfitView` is "2" without
+`X-Supervisor-Token` (checked by TillService against the till's copy, not by the page). A bill discount still needs
+the PIN. "0" hides the button (and closes the view if it was open).
+
+| Method | Route | |
+|---|---|---|
+| GET | `api/Settings` | **admin** - every setting with its general value, `userValues` |
+| PUT | `api/Settings/{key}` | **admin** `{ value }` (null = the default) |
+| GET | `api/Settings/Users` | **admin** - `{ settings (per user), users: [{ userId, loginName, userName, roleId, status, values }] }` |
+| PUT | `api/Settings/User/{userId}/{key}` | **admin** `{ value }` (null = the general value) |
+| GET | `api/Sync/Settings?terminalId=` | till ← `[{ loginName, settingKey, value }]` |
+| GET | `/settings` (TillService) | `{ enabled, loginName, values: { key: value } }` |
+
+**Deploy order**: `U023_BackOffice` on easyway → ItemApi → back office UI → on each till `U023_Till` → TillService →
+billing page. Old TillService / page keep working after the till script (no settings come down until the new
+TillService; the rule stays off).
+
+### 6.29 Card machine — PAX A910 (ECR) on the till (billing page Menu → Card machine, 2026-10-27)
+SQL: `Updates/U024_Till_CardMachine.sql` (full script `02_FrontCashier_zf.sql`). Code: TillService `PaxA910Ecr/` (the
+C# rewrite of the old Java POS card code `edc.ecr` + `PAX-A910_JAVA.dll`, copied from
+`C:\Users\prasada\Desktop\ECR\PaxA910Ecr_CSharp`), `Ecr/` (`EcrSettingsStore` → `ecr.json`, `CardMachine`,
+`SimulatedPaxTransport`), `/ecr/*` routes, `POST /invoices`; billing page `CashierBilling.tsx`,
+`components/till/EcrSettingsDialog.tsx`. Details and routes: TillService README "Card machine".
+
+**Per till, on / off** (Menu → Card machine, supervisor PIN to save): ON = Card and the card part of Mixed go straight
+to the machine — no PIN, no typed card reference ("Continue on the card machine", Rs on the screen, nothing else can be
+done until it answers); the till refuses a typed card line on a sale. OFF = typed by hand as before. The same window:
+USB port (Auto finds the PAX port) or network address, the machine's own slip, **Check** (machine connected, ECR app
+open), **Last transaction**, and the card payments to check.
+
+**Flow** (the old POS's, `CardPaymentService.Pay`): machine ready → its last transaction (this EcrRef already approved
+→ used) → card → charge (amount in cents, EcrRef) → no answer → last transaction again. Approved only for exactly the
+amount asked; a decline shows the bank's reason and the cashier can try again or pay another way.
+
+**Never lost, never charged twice**: `zf_tb_CardPayment` gets the charge BEFORE the machine is asked, under the bill's
+key (its draft key, §6.27). EcrRef = 3-digit terminal + 9-digit row id. Pay again for the same bill — the bill save
+failed (price changed, …), or a power cut and the bill taken back — and the approved charge is used, not made again;
+a retry after a decline / no answer sends the same EcrRef, so the machine's last transaction shows a payment the
+customer made after all. Another amount while one is approved for the bill → refused (pay that amount, or void it on
+the machine). The bill and its card payment are saved in ONE transaction (`zf_sp_UseCardPayments`); the card payment
+line's `RefNo` = last 4 digits + approval code + the machine's invoice number (on the receipt and the back office).
+
+**To check**: approved but on no bill (customer charged, no bill), approved for another amount, no answer → red
+"N card payments to check" on the status bar → Menu → Card machine: **Ask the machine** (its last transaction) or
+**Voided on machine** (supervisor PIN + reason, Status 5).
+
+**Not done (on purpose, first step)**: voids and refunds to a card on the machine (done on the machine by hand, as
+before; the refund bill's card line is typed); card details are not sent to the back office (only the payment line's
+RefNo goes up with the bill).
+
+**Test without the machine**: TillService `Ecr:Simulator` true (pretend machine: cents .13 declined, .44 no answer,
+.77 answer lost but paid). First real test: Rs 1.00 on the A910 — it must show Rs 1.00 (amount sent in cents).
+
+**Deploy order**: on each till `U024_Till` → TillService → billing page → Menu → Card machine: Check, then switch ON.
+
 ---
 
 ## 7. Status values

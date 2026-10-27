@@ -74,6 +74,21 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/DayReport/Abandoned?date=2026-10-22&terminalId=   bills found still open after a till restart
+        // (power cut, crash) → { date, terminalId, bills: [...], lines: [...] }
+        [HttpGet("Abandoned")]
+        public async Task<IActionResult> Abandoned([FromQuery] DateTime? date, [FromQuery] int? terminalId)
+        {
+            try
+            {
+                return Ok(await _repository.GetAbandonedAsync((date ?? DateTime.Today).Date, terminalId));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // GET: api/DayReport/Bill/T01-00000038 → the bill with its lines and payments (bill copy)
         [HttpGet("Bill/{invoiceNo}")]
         public async Task<IActionResult> Bill(string invoiceNo)

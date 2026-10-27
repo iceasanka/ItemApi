@@ -138,6 +138,7 @@ builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<ISalesDocRepository, SalesDocRepository>();
 builder.Services.AddSingleton<SalesDocPdfService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<ISettingRepository, SettingRepository>();
 
 // Register the service
 builder.Services.AddControllers();

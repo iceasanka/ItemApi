@@ -332,6 +332,100 @@ BEGIN
 END
 GO
 
+-- Bill recovery after a power cut (2026-10-26, back office Day reports > Abandoned bills).
+-- The bill on the billing screen, saved by the page as it changes (one row per bill, DraftKey made by the page).
+-- Status 0 open (on the screen - or left there by a power cut / crash / closed browser), 1 paid, 2 suspended,
+-- 3 cleared (void bill / every line taken off), 8 thrown away after a restart. A closed row loses its lines and is
+-- deleted after 7 days; until then a save that arrives late can't open it again. SaveSeq: an older save is ignored.
+IF OBJECT_ID(N'dbo.zf_tb_DraftBill', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_DraftBill (
+        DraftKey         UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_zf_tb_DraftBill PRIMARY KEY,
+        SaveSeq          INT           NOT NULL,
+        Status           INT           NOT NULL,
+        CashierId        VARCHAR(20)   NULL,
+        InvType          INT           NOT NULL,   -- 1 sale, 2 refund
+        PriceType        INT           NOT NULL,   -- the page's default for new lines (1 retail, 2 wholesale)
+        Discount         DECIMAL(18,2) NOT NULL,   -- bill discount
+        DiscountPercent  DECIMAL(5,2)  NULL,
+        LineCount        INT           NOT NULL,
+        NetAmount        DECIMAL(18,2) NOT NULL,   -- SUM(line Amount) - Discount
+        PageState        NVARCHAR(MAX) NULL,       -- the page's own extras (an exchange held for the bill), JSON
+        StartedAt        DATETIME      NOT NULL,
+        SavedAt          DATETIME      NOT NULL,
+        ClosedAt         DATETIME      NULL,
+        InvoiceNo        VARCHAR(30)   NULL,       -- Status 1
+        SuspendId        INT           NULL,       -- Status 2
+        Recovered        INT           NOT NULL CONSTRAINT DF_zf_tb_DraftBill_Recovered DEFAULT (0)   -- taken back after a restart
+    );
+    CREATE INDEX IX_zf_tb_DraftBill_Status ON dbo.zf_tb_DraftBill (Status, SavedAt);
+END
+GO
+IF OBJECT_ID(N'dbo.zf_tb_DraftBillItem', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_DraftBillItem (
+        DraftKey    UNIQUEIDENTIFIER NOT NULL,
+        LineNum     INT           NOT NULL,
+        ItemId      INT           NOT NULL,   -- 0 = other item
+        PriceLinkId INT           NULL,
+        PriceType   INT           NOT NULL,   -- 1 retail, 2 wholesale
+        Qty         DECIMAL(18,3) NOT NULL,
+        UnitPrice   DECIMAL(18,2) NOT NULL,
+        Discount    DECIMAL(18,2) NOT NULL,
+        Amount      DECIMAL(18,2) NOT NULL,
+        LineDescrip NVARCHAR(50)  NULL,       -- other item only
+        Name        NVARCHAR(100) NULL,       -- as on the screen (the abandoned bills report keeps it)
+        CONSTRAINT PK_zf_tb_DraftBillItem PRIMARY KEY (DraftKey, LineNum)
+    );
+END
+GO
+-- A bill found open after a restart: what was on it at that moment (LineCount / NetAmount / the lines), taken back
+-- (Outcome 1) or thrown away (Outcome 2, supervisor PIN, Reason), and how the bill ended: FinalStatus as
+-- zf_tb_DraftBill.Status (NULL = still open). ZNo = the open Z when it was found. A row whose FinalStatus changes
+-- is set back to Synced 0 and goes to the back office again.
+IF OBJECT_ID(N'dbo.zf_tb_AbandonedBill', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_AbandonedBill (
+        AbandonId    INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_zf_tb_AbandonedBill PRIMARY KEY,
+        DraftKey     UNIQUEIDENTIFIER NOT NULL,
+        ZNo          INT           NULL,
+        CashierId    VARCHAR(20)   NULL,       -- who was billing
+        InvType      INT           NOT NULL,
+        LineCount    INT           NOT NULL,
+        NetAmount    DECIMAL(18,2) NOT NULL,
+        StartedAt    DATETIME      NOT NULL,   -- first line of the bill
+        LastSavedAt  DATETIME      NOT NULL,   -- last change saved before it stopped
+        FoundAt      DATETIME      NOT NULL,
+        FoundBy      VARCHAR(20)   NULL,       -- cashier signed in when it was found
+        Outcome      INT           NOT NULL,   -- 1 taken back, 2 thrown away
+        Reason       NVARCHAR(100) NULL,
+        FinalStatus  INT           NULL,       -- 1 paid, 2 suspended, 3 cleared, 8 thrown away
+        FinalAt      DATETIME      NULL,
+        InvoiceNo    VARCHAR(30)   NULL,
+        SuspendId    INT           NULL,
+        Synced       BIT           NOT NULL CONSTRAINT DF_zf_tb_AbandonedBill_Synced DEFAULT (0),
+        SyncedAt     DATETIME      NULL
+    );
+    CREATE INDEX IX_zf_tb_AbandonedBill_Synced ON dbo.zf_tb_AbandonedBill (Synced, AbandonId);
+    CREATE INDEX IX_zf_tb_AbandonedBill_Draft ON dbo.zf_tb_AbandonedBill (DraftKey);
+END
+GO
+IF OBJECT_ID(N'dbo.zf_tb_AbandonedBillItem', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.zf_tb_AbandonedBillItem (
+        AbandonId  INT           NOT NULL,
+        LineNum    INT           NOT NULL,
+        ItemId     INT           NOT NULL,   -- 0 = other item
+        Descrip    NVARCHAR(100) NULL,
+        Qty        DECIMAL(18,3) NOT NULL,
+        UnitPrice  DECIMAL(18,2) NOT NULL,
+        Discount   DECIMAL(18,2) NOT NULL,
+        Amount     DECIMAL(18,2) NOT NULL,
+        CONSTRAINT PK_zf_tb_AbandonedBillItem PRIMARY KEY (AbandonId, LineNum)
+    );
+END
+GO
+
 -- Cash put into / taken out of the drawer without a sale, per Z (shift). Added 2026-10-06.
 --   Kind 1 opening cash (the float given to the till before it opens; one per Z),
 --        2 paid in (money added), 3 paid out (money removed, e.g. paying a supplier — reason required).
@@ -404,6 +498,31 @@ IF COL_LENGTH('dbo.zf_tb_ZReport', 'ItemDiscount') IS NULL
                                       BillDiscount DECIMAL(18,2) NULL;
 GO
 
+-- Settings (2026-10-27, Docs/StockSystem.md 6.28): a copy of the back office z_tb_Setting / z_tb_UserSetting, the
+-- whole list replaced on every download (zf_sp_SaveSettings). zf_tb_Setting.Value = the general value (its default
+-- when none is set); zf_tb_UserSetting = a user's own value, used instead of the general one (zf_sp_GetSettings).
+IF OBJECT_ID('dbo.zf_tb_Setting', 'U') IS NULL
+CREATE TABLE dbo.zf_tb_Setting (
+    SettingKey VARCHAR(50)   NOT NULL CONSTRAINT PK_zf_tb_Setting PRIMARY KEY,
+    Value      NVARCHAR(200) NULL,
+    SyncedAt   DATETIME      NOT NULL CONSTRAINT DF_zf_tb_Setting_SyncedAt DEFAULT (GETDATE())
+);
+GO
+IF OBJECT_ID('dbo.zf_tb_UserSetting', 'U') IS NULL
+CREATE TABLE dbo.zf_tb_UserSetting (
+    LoginName  VARCHAR(50)   NOT NULL,
+    SettingKey VARCHAR(50)   NOT NULL,
+    Value      NVARCHAR(200) NOT NULL,
+    CONSTRAINT PK_zf_tb_UserSetting PRIMARY KEY (LoginName, SettingKey)
+);
+GO
+-- Sale lines (2026-10-27): 1 = the bill discount was taken off this line, 0 = it was not (NoDiscount item, or an item
+-- discount while Till.BillDiscSkipItemDisc is on). A refund / exchange gives back the bill discount of the 1 lines
+-- only. NULL = saved before this change (counts as 1) or a minus line.
+IF COL_LENGTH('dbo.zf_tb_InvoiceItem', 'InDiscBase') IS NULL
+    ALTER TABLE dbo.zf_tb_InvoiceItem ADD InDiscBase BIT NULL;
+GO
+
 /* ---------------------------------------------------------------------------
    2. Drop procs, then types
    --------------------------------------------------------------------------- */
@@ -440,6 +559,14 @@ IF OBJECT_ID('dbo.zf_sp_GetUnsyncedVoidLog', 'P')   IS NOT NULL DROP PROCEDURE d
 IF OBJECT_ID('dbo.zf_sp_MarkVoidLogSynced', 'P')    IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkVoidLogSynced;
 IF OBJECT_ID('dbo.zf_sp_GetUnsyncedDrawerLog', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedDrawerLog;
 IF OBJECT_ID('dbo.zf_sp_MarkDrawerLogSynced', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkDrawerLogSynced;
+IF OBJECT_ID('dbo.zf_sp_SaveDraftBill', 'P')        IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveDraftBill;
+IF OBJECT_ID('dbo.zf_sp_CloseDraftBill', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_CloseDraftBill;
+IF OBJECT_ID('dbo.zf_sp_GetOpenDraftBills', 'P')    IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetOpenDraftBills;
+IF OBJECT_ID('dbo.zf_sp_LogAbandonedBill', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_LogAbandonedBill;
+IF OBJECT_ID('dbo.zf_sp_RecoverDraftBill', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_RecoverDraftBill;
+IF OBJECT_ID('dbo.zf_sp_DiscardDraftBill', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_DiscardDraftBill;
+IF OBJECT_ID('dbo.zf_sp_GetUnsyncedAbandonedBills', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetUnsyncedAbandonedBills;
+IF OBJECT_ID('dbo.zf_sp_MarkAbandonedBillsSynced', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_MarkAbandonedBillsSynced;
 IF OBJECT_ID('dbo.zf_sp_GetXReport', 'P')           IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetXReport;
 IF OBJECT_ID('dbo.zf_sp_GetInvoiceForRefund', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetInvoiceForRefund;
 IF OBJECT_ID('dbo.zf_sp_SaveBillRefund', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveBillRefund;
@@ -459,6 +586,8 @@ IF TYPE_ID('dbo.zf_tt_PriceLink')      IS NOT NULL DROP TYPE dbo.zf_tt_PriceLink
 IF TYPE_ID('dbo.zf_tt_CashMoveSent')   IS NOT NULL DROP TYPE dbo.zf_tt_CashMoveSent;
 IF TYPE_ID('dbo.zf_tt_VoidLine')       IS NOT NULL DROP TYPE dbo.zf_tt_VoidLine;
 IF TYPE_ID('dbo.zf_tt_LogId')          IS NOT NULL DROP TYPE dbo.zf_tt_LogId;
+IF TYPE_ID('dbo.zf_tt_DraftItem')      IS NOT NULL DROP TYPE dbo.zf_tt_DraftItem;
+IF TYPE_ID('dbo.zf_tt_AbandonSent')    IS NOT NULL DROP TYPE dbo.zf_tt_AbandonSent;
 GO
 
 /* ---------------------------------------------------------------------------
@@ -507,6 +636,26 @@ GO
 -- log rows the back office has (zf_sp_MarkVoidLogSynced / zf_sp_MarkDrawerLogSynced)
 CREATE TYPE dbo.zf_tt_LogId AS TABLE (
     Id INT NOT NULL PRIMARY KEY
+);
+GO
+-- the lines of the bill on the screen (zf_sp_SaveDraftBill)
+CREATE TYPE dbo.zf_tt_DraftItem AS TABLE (
+    LineNum     INT           NOT NULL PRIMARY KEY,
+    ItemId      INT           NOT NULL,
+    PriceLinkId INT           NULL,
+    PriceType   INT           NULL,      -- NULL â†’ the bill's @PriceType
+    Qty         DECIMAL(18,3) NOT NULL,
+    UnitPrice   DECIMAL(18,2) NOT NULL,
+    Discount    DECIMAL(18,2) NOT NULL,
+    Amount      DECIMAL(18,2) NOT NULL,
+    LineDescrip NVARCHAR(50)  NULL,      -- only for ItemId 0 ("other item")
+    Name        NVARCHAR(100) NULL
+);
+GO
+-- abandoned bills the back office answered for, with the FinalStatus that was sent (zf_sp_MarkAbandonedBillsSynced)
+CREATE TYPE dbo.zf_tt_AbandonSent AS TABLE (
+    AbandonId   INT NOT NULL PRIMARY KEY,
+    FinalStatus INT NULL
 );
 GO
 -- lines picked on the refund screen (zf_sp_SaveBillRefund): the till works out price and amount itself
@@ -603,7 +752,8 @@ GO
 --   Profit = Amount - ROUND(Qty * UnitCost, 2); NULL when the cost is unknown (other items, items without a cost).
 --   Amount is after the item discount, so the profit (and the bill discount cap) already counts it.
 --   Unknown-cost lines add nothing to the bill profit, so they never allow a bigger discount.
---   InDiscountBase 0 = a NoDiscount item: a bill discount % is not taken off its amount.
+--   InDiscountBase 0 = the bill discount is not taken off this line: a NoDiscount item, or (setting
+--   Till.BillDiscSkipItemDisc = 1) a line that already has an item discount.
 --   MaxDiscount: the most item discount the line may have (zf_fn_UnitDiscount; 0 for wholesale / open price /
 --   other items). A line without PriceType counts as retail.
 CREATE FUNCTION dbo.zf_fn_BillLineCost (@Items dbo.zf_tt_InvoiceItem READONLY)
@@ -612,7 +762,10 @@ AS RETURN
     SELECT l.LineNum, l.ItemId, l.Qty, l.Amount, uc.UnitCost,
            CAST(ROUND(l.Qty * uc.UnitCost, 2) AS DECIMAL(18,2))            AS Cost,
            CAST(l.Amount - ROUND(l.Qty * uc.UnitCost, 2) AS DECIMAL(18,2)) AS Profit,
-           CAST(CASE WHEN ISNULL(i.NoDiscount, 0) = 1 THEN 0 ELSE 1 END AS BIT) AS InDiscountBase,
+           CAST(CASE WHEN ISNULL(i.NoDiscount, 0) = 1 THEN 0
+                     WHEN l.Discount > 0 AND EXISTS (SELECT 1 FROM dbo.zf_tb_Setting s
+                                                     WHERE s.SettingKey = 'Till.BillDiscSkipItemDisc' AND s.Value = N'1') THEN 0
+                     ELSE 1 END AS BIT)                                     AS InDiscountBase,
            CASE WHEN i.MaxPrice > 0 THEN i.MaxPrice END                     AS MktPrice,
            CAST(CASE WHEN l.ItemId = 0 OR ISNULL(i.OpenPrice, 0) = 1 OR ISNULL(l.PriceType, 1) = 2 THEN 0
                      ELSE ROUND(l.Qty * dbo.zf_fn_UnitDiscount(l.UnitPrice, i.DiscountPercent, i.DiscountAmount, uc.UnitCost), 2)
@@ -713,7 +866,9 @@ GO
 --   zf_fn_BillLineCost.MaxDiscount (51017). Less is fine (an older page sends 0). Refunds give back what was charged.
 -- Bill discount (sales): never more than the bill's profit (zf_fn_BillLineCost) — 51012. Given as a % →
 --   @DiscountPercent is stored for the receipt and @Discount must be ROUND(base * % / 100, 2), base = the lines
---   that are not NoDiscount items. The billing page uses the SAME rule (GET the cap from POST /bill/profit).
+--   with InDiscountBase 1 (not NoDiscount items; with Till.BillDiscSkipItemDisc on, no item discount either).
+--   The billing page uses the SAME rule (GET the cap from POST /bill/profit). Each sale line keeps it (InDiscBase),
+--   so a later refund / exchange gives back the bill discount of those lines only.
 CREATE PROCEDURE dbo.zf_sp_SaveInvoice
     @InvType      INT = 1,            -- 1 sale, 2 refund
     @PriceType    INT = 1,            -- default for lines that don't send their own PriceType (1 retail, 2 wholesale)
@@ -740,9 +895,10 @@ BEGIN
     -- exchange lines (positive here, saved as minus lines)
     DECLARE @X TABLE (Seq INT PRIMARY KEY, RefLineNum INT NOT NULL, ItemId INT, Qty DECIMAL(18,3), UnitPrice DECIMAL(18,2),
                       LineDisc DECIMAL(18,2), Amount DECIMAL(18,2), BillShare DECIMAL(18,2) NOT NULL DEFAULT (0),
-                      LineDescrip NVARCHAR(50), PriceType INT, PriceLinkId INT, UnitCost DECIMAL(18,2), MktPrice DECIMAL(18,2));
+                      LineDescrip NVARCHAR(50), PriceType INT, PriceLinkId INT, UnitCost DECIMAL(18,2), MktPrice DECIMAL(18,2),
+                      InBase BIT NOT NULL DEFAULT (1));
     DECLARE @RefType INT, @RefStatus INT, @RefDiscount DECIMAL(18,2), @RefLines DECIMAL(18,2), @RefBack DECIMAL(18,2),
-            @XSub DECIMAL(18,2), @XBill DECIMAL(18,2), @XAllBack BIT, @XMsg NVARCHAR(400), @LastLine INT;
+            @XSub DECIMAL(18,2), @XBase DECIMAL(18,2), @XBill DECIMAL(18,2), @XAllBack BIT, @XMsg NVARCHAR(400), @LastLine INT;
 
     IF @InvType NOT IN (1, 2)
         THROW 51001, 'InvType must be 1 (sale) or 2 (refund).', 1;
@@ -889,10 +1045,10 @@ BEGIN
                 THROW 51066, @XMsg, 1;
 
             -- line discount in proportion to the qty (the last part of a line takes what is left of it)
-            INSERT @X (Seq, RefLineNum, ItemId, Qty, UnitPrice, LineDisc, Amount, LineDescrip, PriceType, PriceLinkId, UnitCost, MktPrice)
+            INSERT @X (Seq, RefLineNum, ItemId, Qty, UnitPrice, LineDisc, Amount, LineDescrip, PriceType, PriceLinkId, UnitCost, MktPrice, InBase)
             SELECT ROW_NUMBER() OVER (ORDER BY l.RefLineNum), l.RefLineNum, it.ItemId, l.Qty, it.UnitPrice, x.Discount,
                    ROUND(l.Qty * it.UnitPrice, 2) - x.Discount, CASE WHEN it.ItemId = 0 THEN it.LineDescrip END,
-                   it.PriceType, it.PriceLinkId, it.UnitCost, it.MktPrice
+                   it.PriceType, it.PriceLinkId, it.UnitCost, it.MktPrice, ISNULL(it.InDiscBase, 1)
             FROM @Exchange l
             JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = @ExchangeRef AND it.LineNum = l.RefLineNum
             LEFT JOIN dbo.zf_fn_RefundDone(@ExchangeRef) d ON d.LineNum = it.LineNum
@@ -900,9 +1056,17 @@ BEGIN
                                           WHEN it.Discount > ISNULL(d.Discount, 0) THEN it.Discount - ISNULL(d.Discount, 0)
                                           ELSE 0 END AS DECIMAL(18,2)) AS Discount) x;
 
-            -- the old bill's discount: in proportion to the lines brought back; the last of the bill takes what is left
-            SELECT @XSub = SUM(Amount) FROM @X;
-            SELECT @RefLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem WHERE InvoiceNo = @ExchangeRef AND Qty > 0;
+            -- the old bill's discount: in proportion to the lines brought back that it was taken off (InDiscBase);
+            -- the last of the bill takes what is left
+            SELECT @XSub = SUM(Amount), @XBase = SUM(CASE WHEN InBase = 1 THEN Amount ELSE 0 END) FROM @X;
+            SELECT @RefLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem
+            WHERE InvoiceNo = @ExchangeRef AND Qty > 0 AND ISNULL(InDiscBase, 1) = 1;
+            IF ISNULL(@RefLines, 0) <= 0   -- no line in the base (a discount typed as an amount): all lines share it
+            BEGIN
+                SELECT @RefLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem WHERE InvoiceNo = @ExchangeRef AND Qty > 0;
+                UPDATE @X SET InBase = 1;
+                SET @XBase = @XSub;
+            END
             SELECT @RefBack = Amount FROM dbo.zf_fn_RefundBillDiscountBack(@ExchangeRef);
             SET @XAllBack = CASE WHEN EXISTS (SELECT 1 FROM dbo.zf_tb_InvoiceItem it
                                               LEFT JOIN dbo.zf_fn_RefundDone(@ExchangeRef) d ON d.LineNum = it.LineNum
@@ -912,15 +1076,16 @@ BEGIN
                                  THEN 0 ELSE 1 END;
             SET @XBill = CASE WHEN @RefDiscount <= 0 OR @RefLines <= 0 THEN 0
                               WHEN @XAllBack = 1 THEN @RefDiscount - @RefBack
-                              ELSE ROUND(@RefDiscount * @XSub / @RefLines, 2) END;
+                              ELSE ROUND(@RefDiscount * @XBase / @RefLines, 2) END;
             IF @XBill < 0 SET @XBill = 0;
-            IF @XBill > @XSub SET @XBill = @XSub;
-            -- spread over the lines (it goes into each minus line's Discount; the last line takes the rounding)
-            IF @XBill > 0 AND @XSub > 0
+            IF @XBill > @XBase SET @XBill = @XBase;
+            -- spread over those lines (it goes into each minus line's Discount; the last one takes the rounding)
+            IF @XBill > 0 AND @XBase > 0
             BEGIN
-                UPDATE @X SET BillShare = ROUND(@XBill * Amount / @XSub, 2);
-                UPDATE @X SET BillShare = @XBill - ISNULL((SELECT SUM(BillShare) FROM @X WHERE Seq < (SELECT MAX(Seq) FROM @X)), 0)
-                WHERE Seq = (SELECT MAX(Seq) FROM @X);
+                UPDATE @X SET BillShare = ROUND(@XBill * Amount / @XBase, 2) WHERE InBase = 1;
+                UPDATE @X SET BillShare = @XBill - ISNULL((SELECT SUM(BillShare) FROM @X
+                                                           WHERE InBase = 1 AND Seq < (SELECT MAX(Seq) FROM @X WHERE InBase = 1)), 0)
+                WHERE Seq = (SELECT MAX(Seq) FROM @X WHERE InBase = 1);
             END
 
             SET @Gross = @Gross - ISNULL((SELECT SUM(ROUND(Qty * UnitPrice, 2)) FROM @X), 0);
@@ -943,11 +1108,11 @@ BEGIN
         VALUES (@InvoiceNo, @Seq, @ZNo, @InvType, GETDATE(), @CashierId, @Gross, @Discount, @Net, 1, @BillPriceType, @DiscountPercent, @ExchangeRef);
 
         INSERT dbo.zf_tb_InvoiceItem (InvoiceNo, LineNum, ItemId, Qty, UnitPrice, Discount, Amount, LineDescrip, PriceType,
-                                      PriceLinkId, UnitCost, MktPrice)
+                                      PriceLinkId, UnitCost, MktPrice, InDiscBase)
         SELECT @InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount,
                CASE WHEN it.ItemId = 0 THEN LTRIM(RTRIM(it.LineDescrip)) END,   -- real items keep their name in zf_tb_Item
                ISNULL(it.PriceType, @PriceType),
-               it.PriceLinkId, c.UnitCost, c.MktPrice
+               it.PriceLinkId, c.UnitCost, c.MktPrice, CASE WHEN @InvType = 1 THEN c.InDiscountBase END
         FROM @Items it
         JOIN @Lines c ON c.LineNum = it.LineNum;
 
@@ -1481,7 +1646,9 @@ GO
 -- Same rule as zf_sp_SaveInvoice (zf_fn_BillLineCost). 2 result sets:
 --   lines:  LineNum, UnitCost, Cost, Profit (NULL = cost unknown)
 --   totals: Amount, Cost, Profit (known lines only), UnknownCostLines, DiscountBase,
---           MaxDiscount (= profit, never below 0), MaxDiscountPercent (of DiscountBase, rounded DOWN to 2 decimals)
+--           LeftOutLines (lines the bill discount is not taken off: NoDiscount items, item discount lines when
+--           Till.BillDiscSkipItemDisc is on), MaxDiscount (= profit, never below 0),
+--           MaxDiscountPercent (of DiscountBase, rounded DOWN to 2 decimals)
 CREATE PROCEDURE dbo.zf_sp_GetBillProfit
     @Items dbo.zf_tt_InvoiceItem READONLY
 AS
@@ -1503,6 +1670,7 @@ BEGIN
            @Profit                                                     AS Profit,
            (SELECT COUNT(*) FROM @c WHERE UnitCost IS NULL)            AS UnknownCostLines,
            @Base                                                       AS DiscountBase,
+           (SELECT COUNT(*) FROM @c WHERE InDiscountBase = 0)          AS LeftOutLines,
            @Max                                                        AS MaxDiscount,
            CAST(CASE WHEN @Base > 0 AND @Max < @Base THEN FLOOR(@Max * 10000 / @Base) / 100
                      WHEN @Base > 0 THEN 100 ELSE 0 END AS DECIMAL(5,2)) AS MaxDiscountPercent;
@@ -1613,8 +1781,10 @@ GO
 --     earlier refunds of the same bill already gave back (51066) — no PIN lifts that.
 --   - Line: the sale's UnitPrice; its line discount in proportion to the quantity (the last part of a line takes
 --     what is left of the discount).
---   - Bill discount of the sale: given back in proportion to the refunded line amounts; the refund that brings the
---     last of the bill back takes what is left, so the refunds of a bill add up to what the customer paid.
+--   - Bill discount of the sale: given back in proportion to the refunded line amounts, of the lines it was taken
+--     off only (InDiscBase - not NoDiscount items or, with Till.BillDiscSkipItemDisc, item discount lines); the
+--     refund that brings the last of the bill back takes what is left, so the refunds of a bill add up to what the
+--     customer paid.
 --   - Saved by zf_sp_SaveInvoice as a normal refund bill (InvType 2: own number, open Z, upload, stock comes back
 --     on the back office) with ONE payment of the whole amount (@PayType / @RefNo), then marked with
 --     RefInvoiceNo / RefLineNum. UnitCost and MktPrice are the sale's, so the profit taken back is the profit made.
@@ -1633,7 +1803,7 @@ BEGIN
     SET XACT_ABORT ON;
 
     DECLARE @InvoiceNo VARCHAR(30), @InvType INT, @Status INT, @BillDiscount DECIMAL(18,2), @BillLines DECIMAL(18,2),
-            @Sub DECIMAL(18,2), @Discount DECIMAL(18,2), @Net DECIMAL(18,2), @GivenBack DECIMAL(18,2), @AllBack BIT,
+            @Sub DECIMAL(18,2), @SubBase DECIMAL(18,2), @Discount DECIMAL(18,2), @Net DECIMAL(18,2), @GivenBack DECIMAL(18,2), @AllBack BIT,
             @Msg NVARCHAR(400);
     DECLARE @Items dbo.zf_tt_InvoiceItem, @Payments dbo.zf_tt_InvoicePayment;
     DECLARE @Map  TABLE (LineNum INT PRIMARY KEY, RefLineNum INT NOT NULL);
@@ -1695,8 +1865,18 @@ BEGIN
                                       WHEN it.Discount > ISNULL(d.Discount, 0) THEN it.Discount - ISNULL(d.Discount, 0)
                                       ELSE 0 END AS DECIMAL(18,2)) AS Discount) x;
 
-        SELECT @Sub = SUM(Amount) FROM @Items;
-        SELECT @BillLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem WHERE InvoiceNo = @RefInvoiceNo AND Qty > 0;
+        -- the bill discount comes back only with the lines it was taken off (InDiscBase; NULL = older bill, all lines)
+        SELECT @Sub = SUM(i.Amount), @SubBase = SUM(CASE WHEN ISNULL(it.InDiscBase, 1) = 1 THEN i.Amount ELSE 0 END)
+        FROM @Items i
+        JOIN @Map mp ON mp.LineNum = i.LineNum
+        JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = @RefInvoiceNo AND it.LineNum = mp.RefLineNum;
+        SELECT @BillLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem
+        WHERE InvoiceNo = @RefInvoiceNo AND Qty > 0 AND ISNULL(InDiscBase, 1) = 1;
+        IF ISNULL(@BillLines, 0) <= 0   -- no line in the base (a discount typed as an amount): all lines share it
+        BEGIN
+            SELECT @BillLines = SUM(Amount) FROM dbo.zf_tb_InvoiceItem WHERE InvoiceNo = @RefInvoiceNo AND Qty > 0;
+            SET @SubBase = @Sub;
+        END
         SELECT @GivenBack = Amount FROM dbo.zf_fn_RefundBillDiscountBack(@RefInvoiceNo);
         SET @AllBack = CASE WHEN EXISTS (SELECT 1 FROM dbo.zf_tb_InvoiceItem it
                                          LEFT JOIN @Done d ON d.LineNum = it.LineNum
@@ -1707,9 +1887,9 @@ BEGIN
 
         SET @Discount = CASE WHEN @BillDiscount <= 0 OR @BillLines <= 0 THEN 0
                              WHEN @AllBack = 1 THEN @BillDiscount - @GivenBack
-                             ELSE ROUND(@BillDiscount * @Sub / @BillLines, 2) END;
+                             ELSE ROUND(@BillDiscount * @SubBase / @BillLines, 2) END;
         IF @Discount < 0 SET @Discount = 0;
-        IF @Discount > @Sub SET @Discount = @Sub;
+        IF @Discount > @SubBase SET @Discount = @SubBase;
         SET @Net = @Sub - @Discount;
 
         IF @CheckOnly = 0
@@ -1937,6 +2117,314 @@ BEGIN
 END
 GO
 
+-- Saves the bill on the screen (whole bill each time: header + every line). Returns one row: Saved, Status.
+-- Saved 0 = not saved: the bill is already closed (Status <> 0, e.g. a save that arrived after Pay), or a newer save
+-- (higher SaveSeq) is already stored.
+CREATE PROCEDURE dbo.zf_sp_SaveDraftBill
+    @DraftKey        UNIQUEIDENTIFIER,
+    @SaveSeq         INT,
+    @CashierId       VARCHAR(20) = NULL,
+    @InvType         INT = 1,
+    @PriceType       INT = 1,
+    @Discount        DECIMAL(18,2) = 0,
+    @DiscountPercent DECIMAL(5,2) = NULL,
+    @PageState       NVARCHAR(MAX) = NULL,
+    @Items           dbo.zf_tt_DraftItem READONLY
+AS
+BEGIN
+    DECLARE @z_tc INT; SET @z_tc = @@TRANCOUNT;   -- SQL 2008 R2 error handling (RAISERROR in TRY/CATCH)
+    BEGIN TRY
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @Now DATETIME, @Status INT, @Seq INT, @Lines INT, @Net DECIMAL(18,2);
+    IF NOT EXISTS (SELECT 1 FROM @Items)
+        RAISERROR(N'%s', 16, 1, N'A draft bill needs at least one line - close it instead.');
+    IF @InvType NOT IN (1, 2) OR @PriceType NOT IN (1, 2)
+        RAISERROR(N'%s', 16, 1, N'InvType and PriceType must be 1 or 2.');
+
+    SET @Now = GETDATE();
+    SELECT @Lines = COUNT(*), @Net = ISNULL(SUM(Amount), 0) - ISNULL(@Discount, 0) FROM @Items;
+
+    BEGIN TRAN;
+        SELECT @Status = Status, @Seq = SaveSeq
+        FROM dbo.zf_tb_DraftBill WITH (UPDLOCK, HOLDLOCK) WHERE DraftKey = @DraftKey;
+
+        IF @Status IS NOT NULL AND (@Status <> 0 OR @Seq >= @SaveSeq)
+        BEGIN
+            COMMIT;
+            SELECT CAST(0 AS BIT) AS Saved, @Status AS Status;
+            RETURN 0;
+        END
+
+        IF @Status IS NULL
+        BEGIN
+            -- closed bills are kept 7 days (a late save can't open them again), then go
+            DELETE FROM dbo.zf_tb_DraftBill WHERE Status <> 0 AND ClosedAt < DATEADD(DAY, -7, @Now);
+            INSERT dbo.zf_tb_DraftBill (DraftKey, SaveSeq, Status, CashierId, InvType, PriceType, Discount, DiscountPercent,
+                                        LineCount, NetAmount, PageState, StartedAt, SavedAt)
+            VALUES (@DraftKey, @SaveSeq, 0, @CashierId, @InvType, @PriceType, ISNULL(@Discount, 0), @DiscountPercent,
+                    @Lines, @Net, @PageState, @Now, @Now);
+        END
+        ELSE
+        BEGIN
+            UPDATE dbo.zf_tb_DraftBill
+            SET SaveSeq = @SaveSeq, CashierId = @CashierId, InvType = @InvType, PriceType = @PriceType,
+                Discount = ISNULL(@Discount, 0), DiscountPercent = @DiscountPercent, LineCount = @Lines, NetAmount = @Net,
+                PageState = @PageState, SavedAt = @Now
+            WHERE DraftKey = @DraftKey;
+            DELETE FROM dbo.zf_tb_DraftBillItem WHERE DraftKey = @DraftKey;
+        END
+
+        INSERT dbo.zf_tb_DraftBillItem (DraftKey, LineNum, ItemId, PriceLinkId, PriceType, Qty, UnitPrice, Discount, Amount,
+                                        LineDescrip, Name)
+        SELECT @DraftKey, LineNum, ItemId, PriceLinkId, ISNULL(PriceType, @PriceType), Qty, UnitPrice, Discount, Amount,
+               LEFT(LineDescrip, 50), LEFT(Name, 100)
+        FROM @Items;
+    COMMIT;
+
+    SELECT CAST(1 AS BIT) AS Saved, 0 AS Status;
+    END TRY
+    BEGIN CATCH
+        DECLARE @z_msg NVARCHAR(2048); SET @z_msg = ERROR_MESSAGE();
+        IF @z_tc = 0
+        BEGIN
+            IF XACT_STATE() <> 0 ROLLBACK;
+        END
+        ELSE
+        BEGIN
+            -- called inside the caller's transaction: give its level back, the caller's CATCH rolls back
+            WHILE @@TRANCOUNT > @z_tc AND XACT_STATE() = 1 COMMIT;
+        END
+        RAISERROR(N'%s', 16, 1, @z_msg);
+        RETURN 1;
+    END CATCH
+END
+GO
+-- Ends the bill on the screen: @Status 1 paid (@InvoiceNo), 2 suspended (@SuspendId), 3 cleared. TillService calls it
+-- in the same transaction as zf_sp_SaveInvoice / zf_sp_SuspendBill. A bill never saved as a draft gets a closed row
+-- (so a save still on its way can't open it). An abandoned bill taken back gets its end (sent again).
+CREATE PROCEDURE dbo.zf_sp_CloseDraftBill
+    @DraftKey  UNIQUEIDENTIFIER,
+    @Status    INT,
+    @InvoiceNo VARCHAR(30) = NULL,
+    @SuspendId INT = NULL
+AS
+BEGIN
+    DECLARE @z_tc INT; SET @z_tc = @@TRANCOUNT;   -- SQL 2008 R2 error handling (RAISERROR in TRY/CATCH)
+    BEGIN TRY
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @Now DATETIME;
+    IF @Status NOT IN (1, 2, 3)
+        RAISERROR(N'%s', 16, 1, N'Draft Status must be 1 (paid), 2 (suspended) or 3 (cleared).');
+    SET @Now = GETDATE();
+
+    BEGIN TRAN;
+        UPDATE dbo.zf_tb_DraftBill WITH (UPDLOCK, HOLDLOCK)
+        SET Status = @Status, ClosedAt = @Now, InvoiceNo = @InvoiceNo, SuspendId = @SuspendId
+        WHERE DraftKey = @DraftKey AND Status = 0;
+
+        IF @@ROWCOUNT > 0
+        BEGIN
+            DELETE FROM dbo.zf_tb_DraftBillItem WHERE DraftKey = @DraftKey;
+            UPDATE dbo.zf_tb_AbandonedBill
+            SET FinalStatus = @Status, FinalAt = @Now, InvoiceNo = @InvoiceNo, SuspendId = @SuspendId, Synced = 0
+            WHERE DraftKey = @DraftKey AND FinalStatus IS NULL;
+        END
+        ELSE IF NOT EXISTS (SELECT 1 FROM dbo.zf_tb_DraftBill WHERE DraftKey = @DraftKey)
+            INSERT dbo.zf_tb_DraftBill (DraftKey, SaveSeq, Status, InvType, PriceType, Discount, LineCount, NetAmount,
+                                        StartedAt, SavedAt, ClosedAt, InvoiceNo, SuspendId)
+            VALUES (@DraftKey, 0, @Status, 1, 1, 0, 0, 0, @Now, @Now, @Now, @InvoiceNo, @SuspendId);
+    COMMIT;
+    END TRY
+    BEGIN CATCH
+        DECLARE @z_msg NVARCHAR(2048); SET @z_msg = ERROR_MESSAGE();
+        IF @z_tc = 0
+        BEGIN
+            IF XACT_STATE() <> 0 ROLLBACK;
+        END
+        ELSE
+        BEGIN
+            -- called inside the caller's transaction: give its level back, the caller's CATCH rolls back
+            WHILE @@TRANCOUNT > @z_tc AND XACT_STATE() = 1 COMMIT;
+        END
+        RAISERROR(N'%s', 16, 1, @z_msg);
+        RETURN 1;
+    END CATCH
+END
+GO
+-- Bills left open on this till (the billing page asks when it starts), newest first. FirstItems = a short preview.
+CREATE PROCEDURE dbo.zf_sp_GetOpenDraftBills
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT d.DraftKey, d.CashierId, d.InvType, d.PriceType, d.LineCount, d.NetAmount, d.StartedAt, d.SavedAt, d.Recovered,
+           STUFF((SELECT TOP 3 N', ' + ISNULL(l.Name, ISNULL(l.LineDescrip, N'Item ' + CAST(l.ItemId AS NVARCHAR(10))))
+                  FROM dbo.zf_tb_DraftBillItem l
+                  WHERE l.DraftKey = d.DraftKey
+                  ORDER BY l.LineNum
+                  FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, N'') AS FirstItems
+    FROM dbo.zf_tb_DraftBill d
+    WHERE d.Status = 0 AND d.LineCount > 0
+    ORDER BY d.SavedAt DESC;
+END
+GO
+-- Copies an open draft into zf_tb_AbandonedBill (+ its lines) as it is now. Called by zf_sp_RecoverDraftBill and
+-- zf_sp_DiscardDraftBill inside their transaction. Returns the new AbandonId in @AbandonId.
+CREATE PROCEDURE dbo.zf_sp_LogAbandonedBill
+    @DraftKey  UNIQUEIDENTIFIER,
+    @FoundBy   VARCHAR(20) = NULL,
+    @Outcome   INT,
+    @Reason    NVARCHAR(100) = NULL,
+    @AbandonId INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @Now DATETIME, @ZNo INT;
+    SET @Now = GETDATE();
+    SELECT @ZNo = ZNo FROM dbo.zf_tb_ZReport WHERE Status = 0;
+
+    INSERT dbo.zf_tb_AbandonedBill (DraftKey, ZNo, CashierId, InvType, LineCount, NetAmount, StartedAt, LastSavedAt,
+                                    FoundAt, FoundBy, Outcome, Reason, FinalStatus, FinalAt)
+    SELECT DraftKey, @ZNo, CashierId, InvType, LineCount, NetAmount, StartedAt, SavedAt,
+           @Now, @FoundBy, @Outcome, LEFT(@Reason, 100),
+           CASE WHEN @Outcome = 2 THEN 8 END, CASE WHEN @Outcome = 2 THEN @Now END
+    FROM dbo.zf_tb_DraftBill WHERE DraftKey = @DraftKey;
+    SET @AbandonId = SCOPE_IDENTITY();
+
+    INSERT dbo.zf_tb_AbandonedBillItem (AbandonId, LineNum, ItemId, Descrip, Qty, UnitPrice, Discount, Amount)
+    SELECT @AbandonId, LineNum, ItemId, ISNULL(Name, LineDescrip), Qty, UnitPrice, Discount, Amount
+    FROM dbo.zf_tb_DraftBillItem WHERE DraftKey = @DraftKey;
+END
+GO
+-- Takes a bill found open after a restart back to the screen: it is logged as abandoned (Outcome 1) and stays open
+-- (same DraftKey, the page goes on saving it). 2 result sets like zf_sp_RecallSuspendedBill: the header (with
+-- SaveSeq and PageState), then the lines with ItemFound / the item's current name.
+CREATE PROCEDURE dbo.zf_sp_RecoverDraftBill
+    @DraftKey  UNIQUEIDENTIFIER,
+    @CashierId VARCHAR(20) = NULL
+AS
+BEGIN
+    DECLARE @z_tc INT; SET @z_tc = @@TRANCOUNT;   -- SQL 2008 R2 error handling (RAISERROR in TRY/CATCH)
+    BEGIN TRY
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @AbandonId INT;
+    BEGIN TRAN;
+        UPDATE dbo.zf_tb_DraftBill WITH (UPDLOCK, HOLDLOCK)
+        SET Recovered = Recovered + 1
+        WHERE DraftKey = @DraftKey AND Status = 0 AND LineCount > 0;
+        IF @@ROWCOUNT = 0
+            RAISERROR(N'%s', 16, 1, N'This bill is no longer open - it was already taken back, paid or thrown away.');
+
+        EXEC dbo.zf_sp_LogAbandonedBill @DraftKey, @CashierId, 1, NULL, @AbandonId OUTPUT;
+    COMMIT;
+
+    SELECT DraftKey, SaveSeq, CashierId, InvType, PriceType, Discount, DiscountPercent, LineCount, NetAmount,
+           StartedAt, SavedAt, PageState, @AbandonId AS AbandonId
+    FROM dbo.zf_tb_DraftBill WHERE DraftKey = @DraftKey;
+
+    SELECT l.LineNum, l.ItemId, l.PriceLinkId, l.PriceType, l.Qty, l.UnitPrice, l.Discount, l.Amount, l.LineDescrip,
+           CAST(CASE WHEN l.ItemId = 0 OR i.Status = 1 THEN 1 ELSE 0 END AS BIT) AS ItemFound,
+           ISNULL(l.Name, ISNULL(l.LineDescrip, ISNULL(i.Inv_Descrip, i.Descrip))) AS Name
+    FROM dbo.zf_tb_DraftBillItem l
+    LEFT JOIN dbo.zf_tb_Item i ON i.ItemId = l.ItemId AND l.ItemId <> 0
+    WHERE l.DraftKey = @DraftKey
+    ORDER BY l.LineNum;
+    END TRY
+    BEGIN CATCH
+        DECLARE @z_msg NVARCHAR(2048); SET @z_msg = ERROR_MESSAGE();
+        IF @z_tc = 0
+        BEGIN
+            IF XACT_STATE() <> 0 ROLLBACK;
+        END
+        ELSE
+        BEGIN
+            -- called inside the caller's transaction: give its level back, the caller's CATCH rolls back
+            WHILE @@TRANCOUNT > @z_tc AND XACT_STATE() = 1 COMMIT;
+        END
+        RAISERROR(N'%s', 16, 1, @z_msg);
+        RETURN 1;
+    END CATCH
+END
+GO
+-- Throws away a bill found open after a restart (supervisor PIN in TillService): logged as abandoned (Outcome 2,
+-- FinalStatus 8) with the reason, the draft is closed (Status 8). Returns one row: AbandonId.
+CREATE PROCEDURE dbo.zf_sp_DiscardDraftBill
+    @DraftKey  UNIQUEIDENTIFIER,
+    @CashierId VARCHAR(20) = NULL,
+    @Reason    NVARCHAR(100) = NULL
+AS
+BEGIN
+    DECLARE @z_tc INT; SET @z_tc = @@TRANCOUNT;   -- SQL 2008 R2 error handling (RAISERROR in TRY/CATCH)
+    BEGIN TRY
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @AbandonId INT;
+    BEGIN TRAN;
+        IF NOT EXISTS (SELECT 1 FROM dbo.zf_tb_DraftBill WITH (UPDLOCK, HOLDLOCK) WHERE DraftKey = @DraftKey AND Status = 0)
+            RAISERROR(N'%s', 16, 1, N'This bill is no longer open - it was already taken back, paid or thrown away.');
+
+        EXEC dbo.zf_sp_LogAbandonedBill @DraftKey, @CashierId, 2, @Reason, @AbandonId OUTPUT;
+
+        UPDATE dbo.zf_tb_DraftBill SET Status = 8, ClosedAt = GETDATE() WHERE DraftKey = @DraftKey;
+        DELETE FROM dbo.zf_tb_DraftBillItem WHERE DraftKey = @DraftKey;
+    COMMIT;
+
+    SELECT @AbandonId AS AbandonId;
+    END TRY
+    BEGIN CATCH
+        DECLARE @z_msg NVARCHAR(2048); SET @z_msg = ERROR_MESSAGE();
+        IF @z_tc = 0
+        BEGIN
+            IF XACT_STATE() <> 0 ROLLBACK;
+        END
+        ELSE
+        BEGIN
+            -- called inside the caller's transaction: give its level back, the caller's CATCH rolls back
+            WHILE @@TRANCOUNT > @z_tc AND XACT_STATE() = 1 COMMIT;
+        END
+        RAISERROR(N'%s', 16, 1, @z_msg);
+        RETURN 1;
+    END CATCH
+END
+GO
+-- Oldest abandoned bills not sent yet (POST api/Sync/AbandonedBills). 2 result sets: the bills, then their lines.
+CREATE PROCEDURE dbo.zf_sp_GetUnsyncedAbandonedBills
+    @Top INT = 50
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @Ids TABLE (AbandonId INT NOT NULL PRIMARY KEY);
+    INSERT @Ids (AbandonId)
+    SELECT TOP (@Top) AbandonId FROM dbo.zf_tb_AbandonedBill WHERE Synced = 0 ORDER BY AbandonId;
+
+    SELECT a.AbandonId, a.DraftKey, a.ZNo, a.CashierId, a.InvType, a.LineCount, a.NetAmount, a.StartedAt, a.LastSavedAt,
+           a.FoundAt, a.FoundBy, a.Outcome, a.Reason, a.FinalStatus, a.FinalAt, a.InvoiceNo, a.SuspendId
+    FROM dbo.zf_tb_AbandonedBill a JOIN @Ids i ON i.AbandonId = a.AbandonId
+    ORDER BY a.AbandonId;
+
+    SELECT l.AbandonId, l.LineNum, l.ItemId, l.Descrip, l.Qty, l.UnitPrice, l.Discount, l.Amount
+    FROM dbo.zf_tb_AbandonedBillItem l JOIN @Ids i ON i.AbandonId = l.AbandonId
+    ORDER BY l.AbandonId, l.LineNum;
+END
+GO
+-- A row whose FinalStatus changed while it was on its way (the bill was paid meanwhile) stays unsent and goes again.
+CREATE PROCEDURE dbo.zf_sp_MarkAbandonedBillsSynced
+    @Rows dbo.zf_tt_AbandonSent READONLY
+AS
+BEGIN
+    SET NOCOUNT ON;
+    UPDATE a SET Synced = 1, SyncedAt = GETDATE()
+    FROM dbo.zf_tb_AbandonedBill a
+    JOIN @Rows r ON r.AbandonId = a.AbandonId AND ISNULL(r.FinalStatus, -1) = ISNULL(a.FinalStatus, -1);
+END
+GO
+
 -- Drawer cash of the open Z (same rules as zf_sp_CloseZ). 2 result sets: the totals (no rows when no Z is open),
 -- then the Z's movements (replaced opening cash included, Status 9).
 CREATE PROCEDURE dbo.zf_sp_GetCashSummary
@@ -2084,5 +2572,277 @@ BEGIN
     FROM dbo.zf_tb_Cashier WHERE LoginName = LTRIM(RTRIM(@LoginName));
 
     SELECT COUNT(*) AS TillUsers FROM dbo.zf_tb_Cashier WHERE CanUseTill = 1;
+END
+GO
+
+/* ---------------------------------------------------------------------------
+   Settings (2026-10-27, Docs/StockSystem.md 6.28)
+   General and per-user settings set on the back office (Settings page, z_tb_Setting / z_tb_UserSetting), downloaded
+   by TillService (api/Sync/Settings) and kept in zf_tb_Setting / zf_tb_UserSetting (section 1). The whole list comes
+   down every time and replaces the copy, so a value reset on the back office goes here too. Self-contained section:
+   its own types and procs are dropped and recreated here.
+   --------------------------------------------------------------------------- */
+IF OBJECT_ID('dbo.zf_sp_SaveSettings', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_SaveSettings;
+IF OBJECT_ID('dbo.zf_sp_GetSettings', 'P')  IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetSettings;
+GO
+IF TYPE_ID('dbo.zf_tt_Setting') IS NOT NULL DROP TYPE dbo.zf_tt_Setting;
+GO
+-- LoginName NULL = the general value, else that user's own value
+CREATE TYPE dbo.zf_tt_Setting AS TABLE (
+    LoginName  VARCHAR(50)   NULL,
+    SettingKey VARCHAR(50)   NOT NULL,
+    Value      NVARCHAR(200) NULL
+);
+GO
+
+-- Replaces the till's copy with the downloaded list (general values and every user's own values).
+CREATE PROCEDURE dbo.zf_sp_SaveSettings
+    @Rows dbo.zf_tt_Setting READONLY
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    BEGIN TRAN;
+        DELETE dbo.zf_tb_Setting;
+        DELETE dbo.zf_tb_UserSetting;
+
+        INSERT dbo.zf_tb_Setting (SettingKey, Value)
+        SELECT SettingKey, MAX(Value) FROM @Rows WHERE LoginName IS NULL GROUP BY SettingKey;
+
+        INSERT dbo.zf_tb_UserSetting (LoginName, SettingKey, Value)
+        SELECT LoginName, SettingKey, MAX(Value) FROM @Rows
+        WHERE LoginName IS NOT NULL AND Value IS NOT NULL
+        GROUP BY LoginName, SettingKey;
+    COMMIT;
+END
+GO
+
+-- The settings for one user (@LoginName NULL = the general values): the user's own value, else the general one.
+-- Columns: SettingKey, Value, Own (1 = the user's own value).
+CREATE PROCEDURE dbo.zf_sp_GetSettings
+    @LoginName VARCHAR(50) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT s.SettingKey, COALESCE(u.Value, s.Value) AS Value,
+           CAST(CASE WHEN u.Value IS NULL THEN 0 ELSE 1 END AS BIT) AS Own
+    FROM dbo.zf_tb_Setting s
+    LEFT JOIN dbo.zf_tb_UserSetting u ON u.SettingKey = s.SettingKey AND u.LoginName = LTRIM(RTRIM(@LoginName))
+    ORDER BY s.SettingKey;
+END
+GO
+
+/* ---------------------------------------------------------------------------
+   Card machine (ECR) (2026-10-27, Docs/StockSystem.md 6.29)
+   PAX A910 on the till PC, driven by TillService (PaxA910Ecr). Every card charge is written here BEFORE the bill:
+   an approved card payment is never lost (the bill save failed, a power cut) and never charged twice (the next Pay of
+   the same bill uses it; a retry sends the same EcrRef, so the machine's last transaction shows a payment the
+   customer already made). Self-contained section: its own type and procs are dropped and recreated here.
+   Status: 0 at the machine, 1 approved, 2 not approved (declined / cancelled / machine error), 3 approved for
+   another amount (void it on the machine), 4 no answer (may be paid - ask the machine), 5 voided on the machine
+   (marked by a supervisor). A 1 without InvoiceNo, a 3, a 4 and an old 0 need a look (zf_sp_GetCardPayments).
+   --------------------------------------------------------------------------- */
+IF OBJECT_ID('dbo.zf_tb_CardPayment', 'U') IS NULL
+CREATE TABLE dbo.zf_tb_CardPayment (
+    CardPayId     INT              IDENTITY(1,1) NOT NULL CONSTRAINT PK_zf_tb_CardPayment PRIMARY KEY,
+    EcrRef        VARCHAR(32)      NULL,       -- sent to the machine: 3-digit terminal + 9-digit CardPayId
+    BillKey       UNIQUEIDENTIFIER NOT NULL,   -- the bill on the screen (its draft key)
+    CashierId     VARCHAR(20)      NULL,
+    Amount        DECIMAL(18,2)    NOT NULL,
+    Status        INT              NOT NULL,
+    Attempts      INT              NOT NULL CONSTRAINT DF_zf_tb_CardPayment_Attempts DEFAULT (1),
+    Message       NVARCHAR(400)    NULL,
+    ResponseCode  VARCHAR(10)      NULL,
+    ApprovalCode  VARCHAR(20)      NULL,
+    TermInvoiceNo VARCHAR(20)      NULL,       -- the machine's invoice number (to void on the machine)
+    BatchNo       VARCHAR(20)      NULL,
+    Tid           VARCHAR(20)      NULL,
+    Mid           VARCHAR(30)      NULL,
+    CardNo        VARCHAR(20)      NULL,       -- masked, e.g. 411111XXXXXX1234
+    CardType      VARCHAR(20)      NULL,
+    CardHolder    NVARCHAR(50)     NULL,
+    EntryMode     VARCHAR(20)      NULL,
+    FromLast      BIT              NOT NULL CONSTRAINT DF_zf_tb_CardPayment_FromLast DEFAULT (0),
+    StartedAt     DATETIME         NOT NULL CONSTRAINT DF_zf_tb_CardPayment_StartedAt DEFAULT (GETDATE()),
+    EndedAt       DATETIME         NULL,
+    InvoiceNo     VARCHAR(30)      NULL,       -- the bill it is on
+    PayLineNum    INT              NULL,
+    UsedAt        DATETIME         NULL,
+    VoidedBy      VARCHAR(20)      NULL,
+    VoidReason    NVARCHAR(100)    NULL,
+    VoidedAt      DATETIME         NULL
+);
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_zf_tb_CardPayment_Bill' AND object_id = OBJECT_ID('dbo.zf_tb_CardPayment'))
+    CREATE INDEX IX_zf_tb_CardPayment_Bill ON dbo.zf_tb_CardPayment (BillKey);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_zf_tb_CardPayment_Status' AND object_id = OBJECT_ID('dbo.zf_tb_CardPayment'))
+    CREATE INDEX IX_zf_tb_CardPayment_Status ON dbo.zf_tb_CardPayment (Status, InvoiceNo);
+GO
+
+IF OBJECT_ID('dbo.zf_sp_StartCardPayment', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_StartCardPayment;
+IF OBJECT_ID('dbo.zf_sp_EndCardPayment', 'P')       IS NOT NULL DROP PROCEDURE dbo.zf_sp_EndCardPayment;
+IF OBJECT_ID('dbo.zf_sp_UseCardPayments', 'P')      IS NOT NULL DROP PROCEDURE dbo.zf_sp_UseCardPayments;
+IF OBJECT_ID('dbo.zf_sp_GetCardPayments', 'P')      IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetCardPayments;
+IF OBJECT_ID('dbo.zf_sp_SetCardPaymentVoided', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_SetCardPaymentVoided;
+GO
+IF TYPE_ID('dbo.zf_tt_CardPayUse') IS NOT NULL DROP TYPE dbo.zf_tt_CardPayUse;
+GO
+-- card payments going on a bill (zf_sp_UseCardPayments): which one, on which payment line, for how much
+CREATE TYPE dbo.zf_tt_CardPayUse AS TABLE (
+    CardPayId INT           NOT NULL PRIMARY KEY,
+    LineNum   INT           NOT NULL,
+    Amount    DECIMAL(18,2) NOT NULL
+);
+GO
+
+-- One card payment (@CardPayId), or the ones that need a look (@ToCheck 1: approved but on no bill, approved for
+-- another amount, no answer, at the machine for more than 5 minutes), or one day's (@Date, by StartedAt). Newest first.
+CREATE PROCEDURE dbo.zf_sp_GetCardPayments
+    @CardPayId INT  = NULL,
+    @ToCheck   BIT  = 0,
+    @Date      DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT CardPayId, EcrRef, BillKey, CashierId, Amount, Status, Attempts, Message, ResponseCode, ApprovalCode,
+           TermInvoiceNo, BatchNo, Tid, Mid, CardNo, CardType, CardHolder, EntryMode, FromLast, StartedAt, EndedAt,
+           InvoiceNo, PayLineNum, UsedAt, VoidedBy, VoidReason, VoidedAt
+    FROM dbo.zf_tb_CardPayment
+    WHERE (@CardPayId IS NOT NULL AND CardPayId = @CardPayId)
+       OR (@CardPayId IS NULL AND @ToCheck = 1
+           AND InvoiceNo IS NULL
+           AND (Status IN (1, 3, 4) OR (Status = 0 AND StartedAt < DATEADD(MINUTE, -5, GETDATE()))))
+       OR (@CardPayId IS NULL AND @ToCheck = 0 AND @Date IS NOT NULL
+           AND StartedAt >= @Date AND StartedAt < DATEADD(DAY, 1, @Date))
+    ORDER BY CardPayId DESC;
+END
+GO
+
+-- Before the machine is asked to charge @Amount for the bill @BillKey. Returns the row to use:
+--   Status 1 = this bill already has an approved card payment of @Amount not on a bill yet - use it, do NOT charge;
+--   Status 0 = charge it with its EcrRef. The last try of the same amount that was not approved / had no answer is
+--              used again (same EcrRef: if the customer paid after all, the machine's last transaction shows it).
+-- An approved one of ANOTHER amount still waiting for this bill -> 51082 (never two charges on one bill by mistake).
+CREATE PROCEDURE dbo.zf_sp_StartCardPayment
+    @BillKey   UNIQUEIDENTIFIER,
+    @CashierId VARCHAR(20) = NULL,
+    @Amount    DECIMAL(18,2)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    DECLARE @Id INT, @Other DECIMAL(18,2), @TermId INT, @Msg NVARCHAR(400);
+    IF @Amount <= 0 OR @Amount > 999999.99
+        THROW 51081, 'Card amount must be above 0 and below 1,000,000.', 1;
+
+    BEGIN TRAN;
+        SELECT TOP 1 @Id = CardPayId, @Other = Amount
+        FROM dbo.zf_tb_CardPayment WITH (UPDLOCK, HOLDLOCK)
+        WHERE BillKey = @BillKey AND Status = 1 AND InvoiceNo IS NULL
+        ORDER BY CardPayId;
+        IF @Id IS NOT NULL AND @Other <> @Amount
+        BEGIN
+            SET @Msg = N'A card payment of Rs ' + CONVERT(NVARCHAR(30), @Other) + N' is already approved for this bill. '
+                     + N'Pay Rs ' + CONVERT(NVARCHAR(30), @Other) + N' by card, or void it on the card machine and mark it '
+                     + N'voided (Menu > Card machine).';
+            THROW 51082, @Msg, 1;
+        END
+
+        IF @Id IS NULL
+        BEGIN
+            SELECT TOP 1 @Id = CardPayId
+            FROM dbo.zf_tb_CardPayment WITH (UPDLOCK, HOLDLOCK)
+            WHERE BillKey = @BillKey AND Amount = @Amount AND InvoiceNo IS NULL AND Status IN (0, 2, 4)
+            ORDER BY CardPayId DESC;
+
+            IF @Id IS NOT NULL
+                UPDATE dbo.zf_tb_CardPayment
+                SET Status = 0, Attempts = Attempts + 1, StartedAt = GETDATE(), EndedAt = NULL, Message = NULL,
+                    CashierId = ISNULL(@CashierId, CashierId)
+                WHERE CardPayId = @Id;
+            ELSE
+            BEGIN
+                SELECT @TermId = TerminalId FROM dbo.zf_tb_Config WHERE Id = 1;
+                INSERT dbo.zf_tb_CardPayment (BillKey, CashierId, Amount, Status) VALUES (@BillKey, @CashierId, @Amount, 0);
+                SET @Id = SCOPE_IDENTITY();
+                UPDATE dbo.zf_tb_CardPayment
+                SET EcrRef = RIGHT('000' + CAST(ISNULL(@TermId, 0) % 1000 AS VARCHAR(10)), 3)
+                           + RIGHT('000000000' + CAST(@Id AS VARCHAR(10)), 9)
+                WHERE CardPayId = @Id;
+            END
+        END
+    COMMIT;
+
+    EXEC dbo.zf_sp_GetCardPayments @CardPayId = @Id;
+END
+GO
+
+-- The machine's answer. Only a row at the machine (0) or with no answer yet (4) changes. Returns the row.
+CREATE PROCEDURE dbo.zf_sp_EndCardPayment
+    @CardPayId     INT,
+    @Status        INT,
+    @Message       NVARCHAR(400) = NULL,
+    @ResponseCode  VARCHAR(10)   = NULL,
+    @ApprovalCode  VARCHAR(20)   = NULL,
+    @TermInvoiceNo VARCHAR(20)   = NULL,
+    @BatchNo       VARCHAR(20)   = NULL,
+    @Tid           VARCHAR(20)   = NULL,
+    @Mid           VARCHAR(30)   = NULL,
+    @CardNo        VARCHAR(20)   = NULL,
+    @CardType      VARCHAR(20)   = NULL,
+    @CardHolder    NVARCHAR(50)  = NULL,
+    @EntryMode     VARCHAR(20)   = NULL,
+    @FromLast      BIT           = 0
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF @Status NOT IN (1, 2, 3, 4)
+        THROW 51084, 'Card payment end Status must be 1 to 4.', 1;
+    UPDATE dbo.zf_tb_CardPayment
+    SET Status = @Status, Message = @Message, ResponseCode = @ResponseCode, ApprovalCode = @ApprovalCode,
+        TermInvoiceNo = @TermInvoiceNo, BatchNo = @BatchNo, Tid = @Tid, Mid = @Mid, CardNo = @CardNo,
+        CardType = @CardType, CardHolder = @CardHolder, EntryMode = @EntryMode, FromLast = @FromLast, EndedAt = GETDATE()
+    WHERE CardPayId = @CardPayId AND Status IN (0, 4);
+
+    EXEC dbo.zf_sp_GetCardPayments @CardPayId = @CardPayId;
+END
+GO
+
+-- Called by TillService in the SAME transaction as zf_sp_SaveInvoice: the approved card payments go on the bill.
+-- Each must be approved, not on a bill yet, for the amount of its card payment line (51083 otherwise).
+CREATE PROCEDURE dbo.zf_sp_UseCardPayments
+    @InvoiceNo VARCHAR(30),
+    @Rows      dbo.zf_tt_CardPayUse READONLY
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (SELECT 1 FROM @Rows r
+               WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_CardPayment c WITH (UPDLOCK, HOLDLOCK)
+                                 WHERE c.CardPayId = r.CardPayId AND c.Status = 1 AND c.InvoiceNo IS NULL AND c.Amount = r.Amount)
+                  OR NOT EXISTS (SELECT 1 FROM dbo.zf_tb_InvoicePayment p
+                                 WHERE p.InvoiceNo = @InvoiceNo AND p.LineNum = r.LineNum AND p.PayType = 2 AND p.Amount = r.Amount))
+        THROW 51083, 'The card payment is not approved, is already on a bill, or its amount differs - pay by card again.', 1;
+
+    UPDATE c SET InvoiceNo = @InvoiceNo, PayLineNum = r.LineNum, UsedAt = GETDATE()
+    FROM dbo.zf_tb_CardPayment c
+    JOIN @Rows r ON r.CardPayId = c.CardPayId;
+END
+GO
+
+-- A supervisor says the payment was voided on the machine (or never went through). Only one not on a bill.
+CREATE PROCEDURE dbo.zf_sp_SetCardPaymentVoided
+    @CardPayId INT,
+    @VoidedBy  VARCHAR(20) = NULL,
+    @Reason    NVARCHAR(100)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF LTRIM(RTRIM(ISNULL(@Reason, N''))) = N''
+        THROW 51085, 'Give a reason.', 1;
+    UPDATE dbo.zf_tb_CardPayment
+    SET Status = 5, VoidedBy = @VoidedBy, VoidReason = LTRIM(RTRIM(@Reason)), VoidedAt = GETDATE()
+    WHERE CardPayId = @CardPayId AND InvoiceNo IS NULL AND Status <> 5;
+    IF @@ROWCOUNT = 0
+        THROW 51086, 'This card payment is on a bill or was already marked voided.', 1;
 END
 GO

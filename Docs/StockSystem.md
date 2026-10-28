@@ -152,7 +152,7 @@ while offline — the central `z_tb_System` counters can't be used offline.
 ### Stock (back office)
 | Method | Route | Notes |
 |---|---|---|
-| POST | `api/TempPurchaseSummary/Commit/{grnNo}?userId=` | GRN → stock (+). 400 if not found / already posted / no qty |
+| POST | `api/TempPurchaseSummary/Commit/{grnNo}?userId=` | GRN → stock (+), item cost + price links (§6.1). 400 if not found / already posted / no qty |
 | POST | `api/TempPurchaseReturnSummary/Commit/{prnNo}?userId=` | PRN → stock (−) |
 | GET | `api/StockLedger/Balance/{itemId}` | one item's stock |
 | POST | `api/StockLedger/SearchBalances` | `{ query, catId, supId, onlyNegative, page, pageSize }` → `{ total, rows }` |
@@ -193,6 +193,10 @@ while offline — the central `z_tb_System` counters can't be used offline.
 ### 6.1 GRN / PRN
 1. Back office enters the GRN/PRN as today (temp tables).
 2. **Commit** → `z_sp_PostGrn` / `z_sp_PostPrn` → ledger + balance, `Status = 2`.
+   A GRN commit also updates prices (U025): the item's `CostPrice` = the GRN cost (the item's last line with a
+   cost > 0); a selling price other than the item's `RetailPrice` becomes a price link (§6.5) with the GRN cost,
+   Remark `From GRN…` (an active link with that price already there gets the new cost). `UDate` moves, so the
+   tills download them. A PRN changes no price.
 3. After commit the document is final. To correct it, do a stock adjustment (or a PRN).
 
 ### 6.2 Stock adjustment — any time

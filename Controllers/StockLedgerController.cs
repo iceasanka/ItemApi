@@ -35,6 +35,24 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/StockLedger/ItemStock/5 — Item Entry stock panel: balance, open cost batches, last GRN / sale, last 10 movements
+        [HttpGet("ItemStock/{itemId}")]
+        public async Task<IActionResult> GetItemStock(int itemId)
+        {
+            try
+            {
+                var result = await _repository.GetItemStockAsync(itemId);
+                if (result == null)
+                    return NotFound(new { message = $"Item {itemId} not found.", status = false });
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // POST: api/StockLedger/SearchBalances
         [HttpPost("SearchBalances")]
         public async Task<IActionResult> SearchBalances([FromBody] StockBalanceSearchRequest request)

@@ -150,6 +150,83 @@ namespace ItemApi.Repositories
             }
         }
 
+        public async Task<ItemStockInfo?> GetItemStockAsync(int itemId)
+        {
+            try
+            {
+                if (!await _context.Itemzs.AnyAsync(x => x.ItemId == itemId)) return null;
+
+                var bal = await _context.StockBalances.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.LocationId == _locationId && x.ItemId == itemId);
+                var ledger = _context.StockLedgers.AsNoTracking().Where(x => x.LocationId == _locationId && x.ItemId == itemId);
+
+                // open batches, oldest first (= the order they are sold in)
+                var batches = await _context.StockBatches.AsNoTracking()
+                    .Where(x => x.LocationId == _locationId && x.ItemId == itemId && x.Qty > 0)
+                    .OrderBy(x => x.BatchId)
+                    .ToListAsync();
+
+                var lastGrn = await ledger.Where(x => x.TxnType == (int)Meta.StockTxnType.Grn)
+                    .OrderByDescending(x => x.LedgerId).FirstOrDefaultAsync();
+
+                var sales = ledger.Where(x => x.TxnType == (int)Meta.StockTxnType.Sale || x.TxnType == (int)Meta.StockTxnType.SaleRefund);
+                var lastSale = await sales.Where(x => x.TxnType == (int)Meta.StockTxnType.Sale)
+                    .MaxAsync(x => (DateTime?)x.TxnDate);
+                var since = DateTime.Today.AddDays(-30);
+                var sold30 = -(await sales.Where(x => x.TxnDate >= since).SumAsync(x => (decimal?)x.Qty) ?? 0);
+
+                var recent = await ledger.OrderByDescending(x => x.LedgerId).Take(10).ToListAsync();
+
+                return new ItemStockInfo
+                {
+                    ItemId = itemId,
+                    Qty = bal?.Qty ?? 0,
+                    AvgCost = bal?.AvgCost,
+                    BatchQty = batches.Sum(b => b.Qty),
+                    BatchValue = batches.Sum(b => b.Qty * (b.CostPrice ?? 0)),
+                    LastGrnDate = lastGrn?.TxnDate,
+                    LastGrnNo = lastGrn?.DocNo,
+                    LastGrnQty = lastGrn?.Qty,
+                    LastGrnCost = lastGrn?.CostPrice,
+                    LastGrnSellPrice = lastGrn?.SellPrice,
+                    LastSaleDate = lastSale,
+                    SoldQty30 = sold30,
+                    Batches = batches.Select(b => new ItemStockBatchRow
+                    {
+                        BatchId = b.BatchId,
+                        InDate = b.InDate,
+                        DocNo = b.DocNo,
+                        TxnTypeName = ((Meta.StockTxnType)b.TxnType).ToString(),
+                        SellPrice = b.SellPrice,
+                        PriceLinkId = b.PriceLinkId,
+                        CostPrice = b.CostPrice,
+                        InQty = b.InQty,
+                        Qty = b.Qty
+                    }).ToList(),
+                    RecentMoves = recent.Select(m => new ItemCardRow
+                    {
+                        LedgerId = m.LedgerId,
+                        TxnDate = m.TxnDate,
+                        TxnType = m.TxnType,
+                        TxnTypeName = ((Meta.StockTxnType)m.TxnType).ToString(),
+                        DocNo = m.DocNo,
+                        TerminalId = m.TerminalId,
+                        ZNo = m.ZNo,
+                        QtyIn = m.Qty > 0 ? m.Qty : 0,
+                        QtyOut = m.Qty < 0 ? -m.Qty : 0,
+                        CostPrice = m.CostPrice,
+                        SellPrice = m.SellPrice,
+                        UserId = m.UserId
+                    }).ToList()
+                };
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<int> PostGrnAsync(string grnNo, string? userId)
         {
             return await _context.PostPurchaseDocAsync(grnNo, (int)Meta.StockTxnType.Grn, userId);

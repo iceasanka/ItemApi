@@ -15,6 +15,7 @@ namespace ItemApi.Data
     {
         public DbSet<StockLedger> StockLedgers { get; set; }
         public DbSet<StockBalance> StockBalances { get; set; }
+        public DbSet<StockBatch> StockBatches { get; set; }
         public DbSet<StockAdjustment> StockAdjustments { get; set; }
         public DbSet<StockAdjustmentItem> StockAdjustmentItems { get; set; }
         public DbSet<StockAdjReason> StockAdjReasons { get; set; }

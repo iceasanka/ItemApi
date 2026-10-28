@@ -7,6 +7,7 @@ namespace ItemApi.Interface
         Task<StockBalanceRow?> GetBalanceAsync(int itemId);
         Task<StockBalancePage> SearchBalancesAsync(StockBalanceSearchRequest request);
         Task<ItemCard?> GetItemCardAsync(int itemId, DateTime fromDate, DateTime toDate);
+        Task<ItemStockInfo?> GetItemStockAsync(int itemId);
         Task<int> PostGrnAsync(string grnNo, string? userId);
         Task<int> PostPrnAsync(string prnNo, string? userId);
     }

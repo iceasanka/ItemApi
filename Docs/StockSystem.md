@@ -158,6 +158,7 @@ while offline — the central `z_tb_System` counters can't be used offline.
 | POST | `api/TempPurchaseSummary/Commit/{grnNo}?userId=` | GRN → stock (+), item cost + price links (§6.1). 400 if not found / already posted / no qty |
 | POST | `api/TempPurchaseReturnSummary/Commit/{prnNo}?userId=` | PRN → stock (−) |
 | GET | `api/StockLedger/Balance/{itemId}` | one item's stock |
+| GET | `api/StockLedger/ItemStock/{itemId}` | Item Entry stock panel: balance, AvgCost, open cost batches (§6.30) + FIFO value, last GRN, last sale, sold last 30 days, last 10 movements |
 | POST | `api/StockLedger/SearchBalances` | `{ query, catId, supId, onlyNegative, page, pageSize }` → `{ total, rows }` |
 | GET | `api/StockLedger/ItemCard?itemId=&fromDate=&toDate=` | opening, movements with running balance, closing (default last 30 days) |
 | GET | `api/StockAdjustment/Reasons` | drop-down |

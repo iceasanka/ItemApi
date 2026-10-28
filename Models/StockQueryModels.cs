@@ -43,6 +43,39 @@ namespace ItemApi.Models
         public List<ItemCardRow> Rows { get; set; } = new();
     }
 
+    // GET api/StockLedger/ItemStock/{itemId} — stock panel of Item Entry
+    public class ItemStockInfo
+    {
+        public int ItemId { get; set; }
+        public decimal Qty { get; set; }
+        public decimal? AvgCost { get; set; }
+        // open batches: qty x their cost (FIFO value); qty in a batch without a cost is left out
+        public decimal BatchQty { get; set; }
+        public decimal BatchValue { get; set; }
+        public DateTime? LastGrnDate { get; set; }
+        public string? LastGrnNo { get; set; }
+        public decimal? LastGrnQty { get; set; }
+        public decimal? LastGrnCost { get; set; }
+        public decimal? LastGrnSellPrice { get; set; }
+        public DateTime? LastSaleDate { get; set; }
+        public decimal SoldQty30 { get; set; }   // sales - refunds, last 30 days
+        public List<ItemStockBatchRow> Batches { get; set; } = new();
+        public List<ItemCardRow> RecentMoves { get; set; } = new();
+    }
+
+    public class ItemStockBatchRow
+    {
+        public int BatchId { get; set; }
+        public DateTime InDate { get; set; }
+        public string DocNo { get; set; } = "";
+        public string TxnTypeName { get; set; } = "";
+        public decimal? SellPrice { get; set; }   // NULL = the item's normal price
+        public int? PriceLinkId { get; set; }
+        public decimal? CostPrice { get; set; }
+        public decimal InQty { get; set; }
+        public decimal Qty { get; set; }
+    }
+
     public class ItemCardRow
     {
         public long LedgerId { get; set; }

@@ -6,7 +6,8 @@
    Part A deletes:
      items          z_tb_Item, z_tb_ItemDet, z_tb_ItemOldCode (old-item transfer links), z_tb_ItemPriceLink,
                     z_tb_ScaleExportItem (scale "last exported" snapshot)
-     stock          z_tb_StockLedger, z_tb_StockBalance, z_tb_StockAdjustment(+Item)
+     stock          z_tb_StockLedger, z_tb_StockBalance, z_tb_StockAdjustment(+Item), z_tb_StockBatch(+Move) - cost
+                    batches, switched on again (z_tb_System.StockBatchAt) as the ledger is empty
      till uploads   z_tb_SalesInvoice(+Item, z_tb_SalesPayment), z_tb_ZReport(+Item)
      documents      z_tb_SalesDoc(+Item) — quotations / invoices; their numbers start again at QT000001 / INV000001
      GRN            z_tb_TempPurchase, z_tb_TempPurchaseSummary (GRN / PRN documents and drafts)
@@ -54,6 +55,12 @@ BEGIN
         DELETE FROM dbo.z_tb_ScaleExportItem;
         DELETE FROM dbo.z_tb_StockLedger;
         DELETE FROM dbo.z_tb_StockBalance;
+        IF OBJECT_ID('dbo.z_tb_StockBatch', 'U') IS NOT NULL   -- cost batches (U026)
+        BEGIN
+            DELETE FROM dbo.z_tb_StockBatchMove;
+            DELETE FROM dbo.z_tb_StockBatch;
+            EXEC (N'UPDATE dbo.z_tb_System SET StockBatchAt = GETDATE();');   -- empty ledger: batches on from the start
+        END
         DELETE FROM dbo.z_tb_StockAdjustmentItem;
         DELETE FROM dbo.z_tb_StockAdjustment;
         DELETE FROM dbo.z_tb_SalesInvoiceItem;
@@ -76,7 +83,7 @@ BEGIN
             SELECT OBJECT_NAME(ic.object_id) FROM sys.identity_columns ic
             WHERE OBJECT_NAME(ic.object_id) IN ('z_tb_Item', 'z_tb_ItemDet', 'z_tb_ItemPriceLink', 'z_tb_StockLedger',
                     'z_tb_StockAdjustment', 'z_tb_SalesInvoice', 'z_tb_ZReport', 'z_tb_SalesDoc', 'z_tb_SalesDocItem',
-                    'z_tb_TempPurchase', 'z_tb_TempPurchaseSummary')
+                    'z_tb_TempPurchase', 'z_tb_TempPurchaseSummary', 'z_tb_StockBatch')
               AND ic.last_value IS NOT NULL;
         OPEN c;
         FETCH NEXT FROM c INTO @t;

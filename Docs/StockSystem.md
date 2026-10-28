@@ -97,13 +97,16 @@ Run with `sqlcmd -I` (QUOTED_IDENTIFIER must be ON for the filtered index), e.g.
 | `z_tb_ZReport` / `…Item` | cashier day end: till figures next to server figures (`Srv*`) |
 | `z_tb_System.ADJNO` | new counter column for adjustment numbers (next to `PNO`, `PRNO`) |
 | `z_tb_ItemPriceLink` | extra retail prices per item + location (§6.5). Delete = `Status 0`; one active link per price |
+| `z_tb_StockBatch` / `z_tb_StockBatchMove` | FIFO cost batches: one row per stock-in (price, cost, qty left) / what each ledger row took or put (§6.30) |
+| `z_tb_System.StockBatchAt` | when the batches of the location were built; `NULL` = batches off (§6.30) |
 
 `TxnType` (also `Meta.StockTxnType`): **1** GRN (+), **2** PRN (−), **3** Sale (−), **4** Sale refund (+), **5** Adjustment (±), **7** Opening (±).
 
 ### Procs
 | Proc | Does |
 |---|---|
-| `z_sp_PostStockMovements` | **the only writer** of ledger + balance. Skips lines already posted. Updates balance with `Qty = Qty + x` (atomic — two tills can't overwrite each other). AvgCost moves on GRN lines only |
+| `z_sp_PostStockMovements` | **the only writer** of ledger + balance. Skips lines already posted. Updates balance with `Qty = Qty + x` (atomic — two tills can't overwrite each other). AvgCost moves on GRN lines only. Calls `z_sp_ApplyStockBatches` |
+| `z_sp_ApplyStockBatches` / `z_sp_RebuildStockBatches` | FIFO cost batches + the prices that follow them / build them again from the whole ledger (`@DryRun`) (§6.30) |
 | `z_sp_PostGrn` / `z_sp_PostPrn` (→ `z_sp_PostPurchaseDoc`) | post `z_tb_TempPurchase` lines, set summary + lines `Status = 2`. Refuses a second post |
 | `z_sp_SaveStockAdjustment` | numbers (`ADJ` + `ADJNO`), saves and posts in one transaction |
 | `z_sp_SyncSalesInvoices` | stores a batch of bills from one till + posts sale/refund movements. Duplicates skipped. Re-checks any mismatched Z the late bills belong to |
@@ -193,10 +196,10 @@ while offline — the central `z_tb_System` counters can't be used offline.
 ### 6.1 GRN / PRN
 1. Back office enters the GRN/PRN as today (temp tables).
 2. **Commit** → `z_sp_PostGrn` / `z_sp_PostPrn` → ledger + balance, `Status = 2`.
-   A GRN commit also updates prices (U025): the item's `CostPrice` = the GRN cost (the item's last line with a
-   cost > 0); a selling price other than the item's `RetailPrice` becomes a price link (§6.5) with the GRN cost,
-   Remark `From GRN…` (an active link with that price already there gets the new cost). `UDate` moves, so the
-   tills download them. A PRN changes no price.
+   Prices: each GRN line becomes a cost batch at its selling price + cost (§6.30). A selling price other than the
+   item's `RetailPrice` is stock at a price link (made when there is none, Remark `From GRN…`). The item's and the
+   link's `CostPrice` = the oldest batch left at that price, so a new cost shows only when the older stock is sold.
+   (U025 set the item's cost to the GRN cost straight away, also for another price — replaced by U026.)
 3. After commit the document is final. To correct it, do a stock adjustment (or a PRN).
 
 ### 6.2 Stock adjustment — any time
@@ -1186,6 +1189,40 @@ RefNo goes up with the bill).
 .77 answer lost but paid). First real test: Rs 1.00 on the A910 — it must show Rs 1.00 (amount sent in cents).
 
 **Deploy order**: on each till `U024_Till` → TillService → billing page → Menu → Card machine: Check, then switch ON.
+
+### 6.30 Cost batches (FIFO) — prices follow the stock (back office, 2026-10-28, U026)
+Every stock-in is a **batch** (`z_tb_StockBatch`): selling price, cost, qty in, **qty left**. Stock-outs take from
+the batches; `z_tb_StockBatchMove` keeps what each ledger row took. `z_sp_PostStockMovements` calls
+`z_sp_ApplyStockBatches` for every movement, in the same transaction.
+
+| Movement | Batch |
+|---|---|
+| GRN line | new batch at the line's selling price + cost. Selling price = `RetailPrice` (or 0) → `SellPrice NULL` = **normal price** (follows `RetailPrice` when it is changed). Another price → **price link** stock (`PriceLinkId`; the link is made when there is none) |
+| Refund, + adjustment, opening | new batch at the normal price (a refund at an active link's price: that link), cost = that price's cost now |
+| Sale, PRN, − adjustment | takes from the batches left: **same price** as the line first, then the normal price, then the rest — **oldest first** |
+| Stock below 0 | a stock-out takes what is there, the rest is not in any batch; the next stock-in fills the minus first. An item's open batches = its balance (0 while below 0) |
+
+Then, per item of the movement:
+1. **Cost** — the item's `CostPrice` = the cost of the oldest normal-price batch left; each link's `CostPrice` = its
+   oldest batch left. The till shows this in the profit view and uses it for the bill discount cap.
+2. **Link price sold out** → the link is deleted (`Status 0`). Links that never had a batch (typed in Item Entry, old
+   links) are not touched.
+3. **Normal price sold out, a link price still has stock** → the oldest such price becomes the item's `RetailPrice`
+   (+ the link's `WholesalePrice`, if it has one) and that link is deleted. So when only one price is left there is no link.
+4. A link deleted in Item Entry → its stock is normal-price stock. `RetailPrice` changed to a link's price → that link goes.
+5. `UDate` moves only on a change, so the tills download the new prices / links on their next sync.
+
+Example: item 150 / cost 100 with 10 in stock; GRN 10 at 170 / cost 120 → link 170 / cost 120, item stays 150 / cost 100.
+The 10 at 150 sell → `RetailPrice` 170, cost 120, no link.
+
+- Cost typed in Item Entry is overwritten by the batch cost on the item's next movement.
+- `AvgCost` (`z_tb_StockBalance`) and the sale lines' `CostPrice` are unchanged; FIFO sale cost =
+  `z_tb_StockBatchMove.Qty × z_tb_StockBatch.CostPrice` (not used by a report yet).
+- **Switching on** (database with stock movements): `EXEC dbo.z_sp_RebuildStockBatches @LocationId = 1, @DryRun = 1;`
+  replays the whole ledger, lists the items with a new `RetailPrice` / `CostPrice` and the links added / deleted /
+  re-costed, then rolls back. `@DryRun = 0` keeps it and sets `z_tb_System.StockBatchAt` — until then
+  `z_sp_ApplyStockBatches` does nothing. Run it again any time the batches look wrong. A new / cleaned database
+  (`01_`, `09_`) starts with the batches on.
 
 ---
 

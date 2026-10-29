@@ -139,6 +139,10 @@ builder.Services.AddScoped<ISalesDocRepository, SalesDocRepository>();
 builder.Services.AddSingleton<SalesDocPdfService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<ISettingRepository, SettingRepository>();
+// GRN scan (R&D): invoice photo → Google Gemini (GrnScan:ApiKey in appsettings.json)
+builder.Services.AddHttpClient<GrnScanReader>();
+builder.Services.AddScoped<GrnScanMatcher>();
+builder.Services.AddScoped<GrnScanStore>();
 
 // Register the service
 builder.Services.AddControllers();

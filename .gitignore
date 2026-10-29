@@ -363,3 +363,6 @@ MigrationBackup/
 FodyWeavers.xsd
 /Utility/Templete/peppy-road-357-f3c4409465bf.json
 /ItemApi.sln
+
+# GRN scan test copies (photos of supplier invoices)
+Uploads/GrnScan/

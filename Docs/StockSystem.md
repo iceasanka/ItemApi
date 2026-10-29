@@ -526,7 +526,19 @@ each TillService) sends every user changed since `since`; Admin / Cashier users 
 `canUseTill true` and their hash, the rest with no hash. TillService stores them in `zf_tb_Cashier` with the other
 downloads (5 min / Reload) and signs out anyone who lost access. `POST /auth/cashier` checks the password **on the
 till** — sign-in works offline. With `Till:RequireSignIn` the till refuses billing routes without `X-Cashier-Token`, and
-the `CashierId` it stores is always the signed-in cashier's. The supervisor PIN (`Till:SupervisorPin`) is unchanged.
+the `CashierId` it stores is always the signed-in cashier's.
+
+**Supervisor PIN** (2026-10-29, U028) — set per user on the Users page:
+- **Cashier admin**: an Admin or Cashier user with a supervisor PIN (`z_tb_User.TillPinHash`, 4–8 digits, PBKDF2 like
+  the password; given when the user is made, or with the shield button). It comes down with the cashiers
+  (`zf_tb_Cashier.PinHash`, active till users only) and approves at **every till**: every PIN prompt (refund, bill
+  discount, wholesale, profit view, price check cost, throw a bill away, opening cash / paid out, printer and card
+  machine settings ...) is checked by TillService against the PINs of the cashier admins. `Till:SupervisorPin` in
+  appsettings is used only while no user on that till has a PIN.
+- **Ask the supervisor PIN** (`z_tb_User.TillAskPin`, on by default): off = while that user is signed in the till
+  asks no PIN at all — TillService lets every approval through and the billing page skips the PIN dialog.
+- Changes reach the tills with the cashier download (≤ 5 min / Reload); "Ask the PIN" applies to a cashier already
+  signed in from their next request.
 
 **API**
 | Method | Route | Notes |
@@ -537,9 +549,10 @@ the `CashierId` it stores is always the signed-in cashier's. The supervisor PIN 
 | GET | `api/Auth/Me` | the signed-in user (401 → sign in again) |
 | POST | `api/Auth/ChangePassword` | `{ currentPassword, newPassword }` |
 | GET | `api/Users?text=&includeDisabled=` | admin only |
-| POST | `api/Users` | `{ loginName, userName, roleId, password, phone, email }` |
-| PUT | `api/Users/{id}` | `{ userName, roleId, status, phone, email }` (user name can't change) |
+| POST | `api/Users` | `{ loginName, userName, roleId, password, phone, email, pin, askPin }` |
+| PUT | `api/Users/{id}` | `{ userName, roleId, status, phone, email, askPin }` (user name can't change; askPin left out = unchanged) |
 | POST | `api/Users/{id}/ResetPassword` | `{ newPassword }` — also unlocks |
+| POST | `api/Users/{id}/Pin` | `{ pin }` — supervisor PIN at the till (4–8 digits, Admin / Cashier); empty = removed |
 | GET | `api/Sync/Cashiers?terminalId=&since=` | tills, `X-Terminal-Key` |
 
 **Turning it on** (in this order): run `07` (+ `02` on each till) → deploy ItemApi with `Auth:JwtKey` and
@@ -1224,6 +1237,72 @@ The 10 at 150 sell → `RetailPrice` 170, cost 120, no link.
   re-costed, then rolls back. `@DryRun = 0` keeps it and sets `z_tb_System.StockBatchAt` — until then
   `z_sp_ApplyStockBatches` does nothing. Run it again any time the batches look wrong. A new / cleaned database
   (`01_`, `09_`) starts with the batches on.
+
+### 6.31 GRN scan — read an invoice photo with AI, match the lines to our items (R&D, 2026-10-29)
+Goal: a photo of a supplier invoice becomes a GRN draft. **Step 1 — read**: no db change, no item
+matched, nothing saved to a GRN. Code: `Controllers/GrnScanController.cs`, `Service/GrnScanReader.cs`,
+`Models/GrnScanModels.cs`.
+
+- `POST api/GrnScan/Read` (multipart: `files` = 1–4 photos of ONE invoice, pages in order, JPG / PNG / WEBP / HEIC,
+  10 MB each; `supplierId` optional, only echoed for now) → `{ model, images, ms, supplierId, header: { supplierName,
+  invoiceNo, invoiceDate, vatNo, pageText, totalGross, totalDiscount, netTotal }, lines: [...], check, inputTokens,
+  outputTokens, savedAs }`. 400 / 502 / 504 `{ message }`.
+- Each line as printed: `supplierCode` (the supplier's own code — the key for matching in step 2), `description`,
+  `barcode`, `saleCases` / `salePieces` or `saleQty`, free qty the same way, `caseSize`, `unitPrice`, `grossAmount`,
+  `discount` (scheme disc), `mrp`, `unclear` / `note`. ItemApi adds `qty` (= cases × case size + pieces), `freeTotal`,
+  `unitCost` (= (gross − discount) ÷ qty), `amountDiff` (qty × price − gross), `status` ok / check / error and
+  `issues`. `check`: lines ok / to check / with error, the line sums against the printed total, line numbers that
+  jump, the same supplier code twice.
+- `GET api/GrnScan/Models` — the Gemini models the key can use.
+- Google Gemini API (`generateContent`, JSON answer in a fixed schema, temperature 0). Config `GrnScan`: `ApiKey` —
+  the key from Google AI Studio, kept in `appsettings.json` (never sent to the page);
+  `Model` (default `gemini-3.5-flash`; `gemini-2.5-flash` is closed to new keys); `SaveFolder` (default `Uploads/GrnScan`, git-ignored: each read keeps the
+  photos, `gemini.json` and `result.json` to compare accuracy; `""` = nothing kept); `TimeoutSeconds` (120).
+  Free tier: a daily request limit, and Google may use what is sent to improve its products.
+- The request log never writes the body of `api/GrnScan/*` (photos).
+
+**Step 2 — our item for each line** (U029, `25_BackOffice_GrnScan.sql`, `Service/GrnScanMatcher.cs`, back office
+page Purchasing → **GRN Scan** `/grn-scan`):
+- `z_tb_SupplierItemMap`: supplier + the supplier's item code → ItemId (no code printed: their item name, capitals,
+  letters and digits only, is the key). Keeps the supplier's own name of the item (the remark) and the case size.
+- Matching (`z_sp_GrnScanMatch`, done by `Read` when `supplierId` is sent): saved match by code → by name → a printed
+  barcode of one active item. `matchedBy` code / name / barcode. A matched line gets price checks: unit cost
+  ≥ 10 % from our cost price ("right item? right qty?") and MRP ≠ our price → `status` check.
+- No match: `suggestions` = the 5 closest item names (shared letter triples, + same pack size 500G / 1KG / 450ML,
+  + the item's first word starts the supplier's name, + the item's supplier is this supplier). Supplier short forms
+  (SLT = Sunlight, CMFT = Comfort, WLT = Wonderlight) are not guessed — the first time a person picks.
+- `POST api/GrnScan/Match { supplierId, lines }` — checks + matching again without a new AI read (another supplier,
+  a fixed qty). `GET api/GrnScan/Items?supplierId=&text=` — item picker (every word typed in the name; a code /
+  barcode typed exactly comes first). `POST api/GrnScan/SaveMatches { supplierId, lines: [{ supplierCode,
+  description, itemId, caseSize }] }` — keeps the picks (the same code / name again replaces its match).
+  `GET api/GrnScan/Maps?supplierId=` / `DELETE api/GrnScan/Maps/{mapId}` — the saved matches, remove a wrong one.
+- Page: supplier first, photos (phone camera or files), Read invoice (≈ 1 minute); each line shows what was read,
+  qty (cases × size + pieces), cost a piece, MRP and our item (saved match, or the 3 closest names to click, or
+  search); the pencil fixes a misread number (checked again, no new AI read); **Save matches** keeps the picks. The
+  last scan stays on the page through a refresh (sessionStorage, not the photos). No GRN, stock or price change.
+
+**Step 3 — GRN draft** (U030, `z_sp_GrnScanMakeDraft`, `POST api/GrnScan/MakeDraft`):
+- Page: a **Use** box on each line (leave a line out), then **Make GRN draft** — supplier invoice no and date (from
+  the read, can be changed), selling price = our price now or the printed MRP (a price other than ours makes a price
+  link at the commit, §6.30). Every line in use needs our item and no reading error (fix it with the pencil, or
+  leave it out).
+- A NEW suspended GRN (Status 0, UserId `scan`, next GRN number, RefNo = the invoice no, remark "GRN scan - invoice
+  … of …"). Line qty = qty + free; CostPrice = (gross − line discount) ÷ (qty + free) — the commit takes the line cost
+  for the stock cost, so free goods and the scheme discount lower the cost of every piece; GAmount = the line amount
+  after its discount (GRN total = the invoice after line discounts). Open it on GRN Entry, check and commit as usual —
+  nothing goes to stock before.
+- The same invoice no of the supplier on another GRN → 409 `{ sameInvoice: true }`; the page asks "make it anyway?"
+  (`allowSameInvoice`). The matches of every line are saved again (`UseCount` = invoices it was used on).
+
+**Saved scans** (U031, `z_tb_GrnScan`, `Service/GrnScanStore.cs`): every `Read` is kept (`scanId` in the answer); the
+page saves its work 2 s after each change (`PUT api/GrnScan/Scans/{id}` { supplierId, result, state: { picks, skip }
+}). **Saved scans** on the page: `GET api/GrnScan/Scans?all=` (open ones; all = also those made into a GRN),
+**Open** = `GET api/GrnScan/Scans/{id}` + the photos `GET …/Scans/{id}/Photo/{page}` (no new AI read; matches saved
+since then apply, the picks stay), **Flush selected** = `POST api/GrnScan/Scans/Flush { scanIds }` (the rows and
+their photo folders are deleted; saved matches and GRNs stay). `MakeDraft` with `scanId` marks the scan Status 1 +
+GrnNo.
+
+Next step (not built): 4. photos from the mobile app.
 
 ---
 

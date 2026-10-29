@@ -12,7 +12,9 @@ namespace ItemApi.Repositories
     //   - Password: at least 6 characters for Admin / Back office, 4 for cashiers (they type it at the till many times a day).
     //   - 5 wrong passwords → locked 5 minutes. An admin's password reset unlocks.
     //   - Never deleted, only disabled. There is always at least one active admin.
-    //   - UpdatedDate moves on every change the tills need (name, role, status, password) — they download by it.
+    //   - Till PIN (TillPinHash, 4-8 digits, Admin / Cashier): the user is a cashier admin - the tills take their PIN for
+    //     approvals. TillAskPin false: the till does not ask the PIN while that user is signed in.
+    //   - UpdatedDate moves on every change the tills need (name, role, status, password, PIN) — they download by it.
     //     Sign-in bookkeeping (last login, wrong-password count, lock) does not move it.
     public class UserRepository : IUserRepository
     {
@@ -20,6 +22,7 @@ namespace ItemApi.Repositories
         public static readonly TimeSpan LockTime = TimeSpan.FromMinutes(5);
 
         private static readonly Regex LoginNamePattern = new("^[A-Za-z0-9._-]{3,20}$");
+        private static readonly Regex PinPattern = new("^[0-9]{4,8}$");
         private const string WrongLogin = "Wrong user name or password.";
 
         private readonly AppDbContext _context;
@@ -134,7 +137,16 @@ namespace ItemApi.Repositories
 
         public async Task<UserInfo> CreateAsync(UserCreateRequest r, int byUserId)
         {
+            var pin = (r.Pin ?? "").Trim();
+            if (pin.Length > 0) CheckPin(pin, r.RoleId);
             var user = await AddAsync(r.LoginName, r.UserName, r.RoleId, r.Password, r.Phone, r.Email, byUserId);
+            if (pin.Length > 0 || !r.AskPin)
+            {
+                user.TillPinHash = pin.Length > 0 ? PasswordHasher.Hash(pin) : null;
+                user.TillAskPin = r.AskPin;
+                user.UpdatedDate = DateTime.Now;
+                await _context.SaveChangesAsync();
+            }
             return UserInfo.From(user);
         }
 
@@ -161,6 +173,21 @@ namespace ItemApi.Repositories
             user.Status = r.Status;
             user.Phone = Blank(r.Phone);
             user.Email = Blank(r.Email);
+            if (r.AskPin is bool askPin) user.TillAskPin = askPin;
+            user.UpdatedDate = DateTime.Now;
+            user.UpdatedBy = byUserId;
+            await _context.SaveChangesAsync();
+            return UserInfo.From(user);
+        }
+
+        // Supervisor PIN at the till (cashier admin). Empty = removed. The tills get it with the next download.
+        public async Task<UserInfo> SetPinAsync(int userId, SetPinRequest request, int byUserId)
+        {
+            var user = await _context.AppUsers.FirstOrDefaultAsync(u => u.UserId == userId && u.LoginName != null)
+                       ?? throw new KeyNotFoundException();
+            var pin = (request.Pin ?? "").Trim();
+            if (pin.Length > 0) CheckPin(pin, user.RoleId ?? 0);
+            user.TillPinHash = pin.Length > 0 ? PasswordHasher.Hash(pin) : null;
             user.UpdatedDate = DateTime.Now;
             user.UpdatedBy = byUserId;
             await _context.SaveChangesAsync();
@@ -236,6 +263,12 @@ namespace ItemApi.Repositories
             var min = UserRoles.CanUseBackOffice(roleId) ? 6 : 4;
             if (password.Length < min) throw new UserException($"Password must be at least {min} characters.");
             if (password.Length > 100) throw new UserException("Password: max 100 characters.");
+        }
+
+        private static void CheckPin(string pin, int roleId)
+        {
+            if (!UserRoles.CanUseTill(roleId)) throw new UserException("Only Admin and Cashier users can have a till PIN.");
+            if (!PinPattern.IsMatch(pin)) throw new UserException("PIN: 4 to 8 digits.");
         }
 
         private static void CheckContact(string? phone, string? email)

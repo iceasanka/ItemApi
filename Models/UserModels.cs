@@ -30,6 +30,10 @@ namespace ItemApi.Models
         public DateTime? LastLoginAt { get; set; }
         public int FailedLogins { get; set; }
         public DateTime? LockedUntil { get; set; }
+        // supervisor PIN at the till (cashier admin), PBKDF2 like the password; null = can't approve at the till
+        public string? TillPinHash { get; set; }
+        // false = the till does not ask the supervisor PIN while this user is signed in
+        public bool TillAskPin { get; set; } = true;
     }
 
     [Table("z_tb_Role")]
@@ -102,6 +106,10 @@ namespace ItemApi.Models
         public string? Password { get; set; }
         public string? Phone { get; set; }
         public string? Email { get; set; }
+        // supervisor PIN at the till (4-8 digits, Admin / Cashier only); empty = none
+        public string? Pin { get; set; }
+        // false = the till does not ask the supervisor PIN while this user is signed in
+        public bool AskPin { get; set; } = true;
     }
 
     // LoginName can't change (it is on the bills)
@@ -112,11 +120,19 @@ namespace ItemApi.Models
         public int Status { get; set; } = 1;
         public string? Phone { get; set; }
         public string? Email { get; set; }
+        // null = unchanged
+        public bool? AskPin { get; set; }
     }
 
     public class ResetPasswordRequest
     {
         public string? NewPassword { get; set; }
+    }
+
+    // api/Users/{id}/Pin — empty = remove the PIN
+    public class SetPinRequest
+    {
+        public string? Pin { get; set; }
     }
 
     // ─── Responses ───
@@ -135,6 +151,9 @@ namespace ItemApi.Models
         public DateTime? LastLoginAt { get; set; }
         public bool IsLocked { get; set; }
         public DateTime? CreatedDate { get; set; }
+        // has a supervisor PIN (cashier admin)
+        public bool HasPin { get; set; }
+        public bool AskPin { get; set; }
 
         public static UserInfo From(AppUser u) => new()
         {
@@ -148,7 +167,9 @@ namespace ItemApi.Models
             Email = u.Email,
             LastLoginAt = u.LastLoginAt,
             IsLocked = u.LockedUntil > DateTime.Now,
-            CreatedDate = u.CreatedDate
+            CreatedDate = u.CreatedDate,
+            HasPin = u.TillPinHash != null,
+            AskPin = u.TillAskPin
         };
     }
 
@@ -177,6 +198,9 @@ namespace ItemApi.Models
         public bool CanUseTill { get; set; }
         public string? PasswordHash { get; set; }
         public DateTime? UpdatedDate { get; set; }
+        // supervisor PIN hash (cashier admin), only with CanUseTill
+        public string? TillPinHash { get; set; }
+        public bool TillAskPin { get; set; } = true;
     }
 
     // Business errors (bad password, last admin, ...) → HTTP 400 { message }

@@ -12,6 +12,8 @@
    PasswordHash = "PBKDF2$<iterations>$<salt>$<hash>" (SHA-256), made by ItemApi (Common/PasswordHasher.cs). SQL never
    sees a password. The first admin is made from the sign-in page (api/Auth/Setup) — only while there is no admin.
    Tills download Admin + Cashier users (with the hash) so a cashier can sign in while the till is offline.
+   Supervisor PIN (U028): a till user with TillPinHash is a cashier admin - the tills take their PIN for refunds,
+   discounts and the other approvals. TillAskPin 0 = the till does not ask the PIN while that user is signed in.
    easyway is at compatibility level 100 (SQL 2008): no IIF / FORMAT / CONCAT.
    ============================================================================= */
 SET NOCOUNT ON;
@@ -60,6 +62,10 @@ IF COL_LENGTH('dbo.z_tb_User', 'FailedLogins') IS NULL
     ALTER TABLE dbo.z_tb_User ADD FailedLogins INT NOT NULL CONSTRAINT DF_z_tb_User_FailedLogins DEFAULT (0);
 IF COL_LENGTH('dbo.z_tb_User', 'LockedUntil') IS NULL
     ALTER TABLE dbo.z_tb_User ADD LockedUntil DATETIME NULL;   -- 5 wrong passwords → locked 5 minutes
+IF COL_LENGTH('dbo.z_tb_User', 'TillPinHash') IS NULL
+    ALTER TABLE dbo.z_tb_User ADD TillPinHash VARCHAR(255) NULL;   -- supervisor PIN (cashier admin), PBKDF2 like the password
+IF COL_LENGTH('dbo.z_tb_User', 'TillAskPin') IS NULL
+    ALTER TABLE dbo.z_tb_User ADD TillAskPin BIT NOT NULL CONSTRAINT DF_z_tb_User_TillAskPin DEFAULT (1);   -- 0 = the till never asks the PIN for this user
 GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_z_tb_User_UpdatedDate')
@@ -70,7 +76,7 @@ IF OBJECT_ID('dbo.z_sp_GetCashiersForSync', 'P') IS NOT NULL DROP PROCEDURE dbo.
 GO
 
 -- Users for a till's offline sign-in, changed since @Since (NULL = all). Every changed user comes down, so a user who
--- is disabled or moved to "Back office" stops working on the till too (CanUseTill 0, no hash sent).
+-- is disabled or moved to "Back office" stops working on the till too (CanUseTill 0, no hash / PIN sent).
 CREATE PROCEDURE dbo.z_sp_GetCashiersForSync
     @TerminalId INT,
     @Since      DATETIME = NULL
@@ -84,7 +90,9 @@ BEGIN
     SELECT u.UserId, u.LoginName, u.UserName, u.RoleId,
            CAST(CASE WHEN u.Status = 1 AND u.RoleId IN (1, 3) THEN 1 ELSE 0 END AS BIT) AS CanUseTill,
            CASE WHEN u.Status = 1 AND u.RoleId IN (1, 3) THEN u.PasswordHash END       AS PasswordHash,
-           u.UpdatedDate
+           u.UpdatedDate,
+           CASE WHEN u.Status = 1 AND u.RoleId IN (1, 3) THEN u.TillPinHash END        AS TillPinHash,
+           u.TillAskPin
     FROM dbo.z_tb_User u
     WHERE u.LoginName IS NOT NULL
       AND (@Since IS NULL OR u.UpdatedDate > @Since);

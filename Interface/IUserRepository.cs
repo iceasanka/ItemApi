@@ -15,5 +15,6 @@ namespace ItemApi.Interface
         Task<UserInfo> CreateAsync(UserCreateRequest request, int byUserId);
         Task<UserInfo> UpdateAsync(int userId, UserUpdateRequest request, int byUserId);
         Task ResetPasswordAsync(int userId, ResetPasswordRequest request, int byUserId);
+        Task<UserInfo> SetPinAsync(int userId, SetPinRequest request, int byUserId);
     }
 }

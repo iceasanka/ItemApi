@@ -869,6 +869,10 @@ GO
 --   with InDiscountBase 1 (not NoDiscount items; with Till.BillDiscSkipItemDisc on, no item discount either).
 --   The billing page uses the SAME rule (GET the cap from POST /bill/profit). Each sale line keeps it (InDiscBase),
 --   so a later refund / exchange gives back the bill discount of those lines only.
+-- Refund lines on a sale (U027, Refund on the billing page, no receipt): Qty, Discount and Amount minus, RefLineNum
+--   NULL. Price-checked like a sold line (its Qty without the minus picks the quantity price), the item discount
+--   (minus) never more than the item allows. No bill discount on such a bill (51087). The bill can't come to less
+--   than 0 (51088) - only refund lines is a refund bill (InvType 2). InDiscBase NULL (like exchange lines).
 CREATE PROCEDURE dbo.zf_sp_SaveInvoice
     @InvType      INT = 1,            -- 1 sale, 2 refund
     @PriceType    INT = 1,            -- default for lines that don't send their own PriceType (1 retail, 2 wholesale)
@@ -914,8 +918,11 @@ BEGIN
         THROW 51009, 'Line PriceType must be 1 (retail) or 2 (wholesale).', 1;
     IF NOT EXISTS (SELECT 1 FROM @Items)
         THROW 51002, 'Bill has no items.', 1;
-    IF EXISTS (SELECT 1 FROM @Items WHERE Qty <= 0)
+    -- minus = a refund line, on a sale only (a refund bill's lines are plus)
+    IF EXISTS (SELECT 1 FROM @Items WHERE Qty = 0 OR (Qty < 0 AND @InvType <> 1))
         THROW 51003, 'Item quantity must be positive (use InvType 2 for refunds).', 1;
+    IF @InvType = 1 AND @Discount <> 0 AND EXISTS (SELECT 1 FROM @Items WHERE Qty < 0)
+        THROW 51087, 'No bill discount on a bill with refund items.', 1;
     IF EXISTS (SELECT 1 FROM @Items WHERE Amount <> ROUND(Qty * UnitPrice, 2) - Discount)
         THROW 51004, 'Line Amount must equal Qty * UnitPrice - Discount.', 1;
     IF NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Config)
@@ -929,6 +936,8 @@ BEGIN
     SET @BillPriceType = CASE WHEN EXISTS (SELECT 1 FROM @Items WHERE ISNULL(PriceType, @PriceType) = 2) THEN 2 ELSE 1 END;
 
     -- an exchange is checked after the lines brought back are worked out (in the transaction below)
+    IF @ExchangeRef IS NULL AND @InvType = 1 AND @Net < 0
+        THROW 51088, 'The refund items are worth more than the items sold - add items, or refund them on their own.', 1;
     IF @ExchangeRef IS NULL AND ISNULL((SELECT SUM(Amount) FROM @Payments), 0) <> @Net
         THROW 51006, 'Payments must add up to the bill net amount.', 1;
     IF EXISTS (SELECT 1 FROM @Payments WHERE Tendered < Amount)
@@ -937,7 +946,9 @@ BEGIN
     INSERT @Lines (LineNum, UnitCost, Profit, InDiscountBase, Amount, MktPrice, MaxDiscount)
     SELECT LineNum, UnitCost, Profit, InDiscountBase, Amount, MktPrice, MaxDiscount FROM dbo.zf_fn_BillLineCost(@Items);
 
-    IF EXISTS (SELECT 1 FROM @Items WHERE Discount < 0 OR Discount > ROUND(Qty * UnitPrice, 2))
+    -- a refund line's discount is minus like its Qty
+    IF EXISTS (SELECT 1 FROM @Items WHERE (Qty > 0 AND Discount < 0) OR (Qty < 0 AND Discount > 0)
+                                       OR ABS(Discount) > ABS(ROUND(Qty * UnitPrice, 2)))
         THROW 51016, 'Item discount cannot be negative or more than the line.', 1;
     IF @InvType = 1
     BEGIN
@@ -946,7 +957,7 @@ BEGIN
         FROM @Items it
         JOIN @Lines c ON c.LineNum = it.LineNum
         LEFT JOIN dbo.zf_tb_Item i ON i.ItemId = it.ItemId
-        WHERE it.Discount > c.MaxDiscount;
+        WHERE ABS(it.Discount) > ABS(c.MaxDiscount);   -- refund lines: both minus
         IF @@ROWCOUNT > 0
         BEGIN
             DECLARE @DiscItemMsg NVARCHAR(400) = N'Item discount of ' + ISNULL(@DiscItem, N'an item')
@@ -995,7 +1006,7 @@ BEGIN
         OUTER APPLY (
             SELECT TOP 1 v.Price
             FROM (VALUES (i.QtyLevel2, i.PriceLevel2), (i.QtyLevel3, i.PriceLevel3), (i.QtyLevel4, i.PriceLevel4)) v (MinQty, Price)
-            WHERE v.MinQty > 0 AND v.Price > 0 AND l.Qty >= v.MinQty
+            WHERE v.MinQty > 0 AND v.Price > 0 AND ABS(l.Qty) >= v.MinQty
             ORDER BY v.MinQty DESC
         ) q
         -- ISNULLs keep every test TRUE/FALSE: a NULL price must never let a line through.
@@ -1112,7 +1123,7 @@ BEGIN
         SELECT @InvoiceNo, it.LineNum, it.ItemId, it.Qty, it.UnitPrice, it.Discount, it.Amount,
                CASE WHEN it.ItemId = 0 THEN LTRIM(RTRIM(it.LineDescrip)) END,   -- real items keep their name in zf_tb_Item
                ISNULL(it.PriceType, @PriceType),
-               it.PriceLinkId, c.UnitCost, c.MktPrice, CASE WHEN @InvType = 1 THEN c.InDiscountBase END
+               it.PriceLinkId, c.UnitCost, c.MktPrice, CASE WHEN @InvType = 1 AND it.Qty > 0 THEN c.InDiscountBase END
         FROM @Items it
         JOIN @Lines c ON c.LineNum = it.LineNum;
 
@@ -2498,7 +2509,9 @@ GO
    Users downloaded from the back office (api/Sync/Cashiers, needs Sync:TerminalKey) so a cashier can sign in while the
    till is offline. TillService checks the password against PasswordHash (PBKDF2, made by ItemApi); SQL never sees a
    password. CanUseTill 0 (disabled, or role "Back office") → sign-in refused, no hash kept. Self-contained section:
-   its own type and procs are dropped and recreated here.
+   its own types and procs are dropped and recreated here.
+   Supervisor PIN (2026-10-29, U028): PinHash = the PIN of a cashier admin (Users page); TillService checks the PIN
+   typed at the till against these instead of Till:SupervisorPin. AskPin 0 = no PIN asked while that user is signed in.
    --------------------------------------------------------------------------- */
 IF OBJECT_ID('dbo.zf_tb_Cashier', 'U') IS NULL
 CREATE TABLE dbo.zf_tb_Cashier (
@@ -2517,11 +2530,24 @@ GO
 IF COL_LENGTH('dbo.zf_tb_Config', 'LastCashierSyncAt') IS NULL
     ALTER TABLE dbo.zf_tb_Config ADD LastCashierSyncAt DATETIME NULL;   -- SERVER time of the last cashier download
 GO
+IF COL_LENGTH('dbo.zf_tb_Cashier', 'PinHash') IS NULL
+    ALTER TABLE dbo.zf_tb_Cashier ADD PinHash VARCHAR(255) NULL;   -- supervisor PIN (cashier admin), PBKDF2 made by ItemApi
+IF COL_LENGTH('dbo.zf_tb_Cashier', 'AskPin') IS NULL
+    ALTER TABLE dbo.zf_tb_Cashier ADD AskPin BIT NOT NULL CONSTRAINT DF_zf_tb_Cashier_AskPin DEFAULT (1);
+GO
 
 IF OBJECT_ID('dbo.zf_sp_UpsertCashiers', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_UpsertCashiers;
 IF OBJECT_ID('dbo.zf_sp_GetCashier', 'P')     IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetCashier;
+IF OBJECT_ID('dbo.zf_sp_GetSupervisorPins', 'P') IS NOT NULL DROP PROCEDURE dbo.zf_sp_GetSupervisorPins;
 GO
 IF TYPE_ID('dbo.zf_tt_Cashier') IS NOT NULL DROP TYPE dbo.zf_tt_Cashier;
+IF TYPE_ID('dbo.zf_tt_CashierPin') IS NOT NULL DROP TYPE dbo.zf_tt_CashierPin;
+GO
+CREATE TYPE dbo.zf_tt_CashierPin AS TABLE (
+    UserId   INT          NOT NULL PRIMARY KEY,
+    PinHash  VARCHAR(255) NULL,
+    AskPin   BIT          NOT NULL
+);
 GO
 CREATE TYPE dbo.zf_tt_Cashier AS TABLE (
     UserId        INT           NOT NULL PRIMARY KEY,
@@ -2534,9 +2560,12 @@ CREATE TYPE dbo.zf_tt_Cashier AS TABLE (
 );
 GO
 
+-- @Pins: the PIN and AskPin of the downloaded users (the old TillService does not send it - then they stay as they
+-- are). A user who may not use the till keeps no hash and no PIN.
 CREATE PROCEDURE dbo.zf_sp_UpsertCashiers
     @Rows        dbo.zf_tt_Cashier READONLY,
-    @ServerTime  DATETIME
+    @ServerTime  DATETIME,
+    @Pins        dbo.zf_tt_CashierPin READONLY
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -2556,6 +2585,13 @@ BEGIN
         FROM @Rows s
         WHERE NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Cashier t WHERE t.UserId = s.UserId);
 
+        UPDATE t SET PinHash = p.PinHash, AskPin = p.AskPin
+        FROM dbo.zf_tb_Cashier t JOIN @Pins p ON p.UserId = t.UserId;
+
+        UPDATE t SET PinHash = NULL
+        FROM dbo.zf_tb_Cashier t JOIN @Rows s ON s.UserId = t.UserId
+        WHERE t.CanUseTill = 0 AND t.PinHash IS NOT NULL;
+
         UPDATE dbo.zf_tb_Config SET LastCashierSyncAt = @ServerTime WHERE Id = 1;
     COMMIT;
 END
@@ -2568,10 +2604,21 @@ CREATE PROCEDURE dbo.zf_sp_GetCashier
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT UserId, LoginName, UserName, RoleId, CanUseTill, PasswordHash
+    SELECT UserId, LoginName, UserName, RoleId, CanUseTill, PasswordHash, AskPin
     FROM dbo.zf_tb_Cashier WHERE LoginName = LTRIM(RTRIM(@LoginName));
 
     SELECT COUNT(*) AS TillUsers FROM dbo.zf_tb_Cashier WHERE CanUseTill = 1;
+END
+GO
+
+-- The cashier admins: till users with a supervisor PIN (TillService checks the PIN typed against these hashes).
+CREATE PROCEDURE dbo.zf_sp_GetSupervisorPins
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT UserId, LoginName, PinHash
+    FROM dbo.zf_tb_Cashier
+    WHERE CanUseTill = 1 AND PinHash IS NOT NULL;
 END
 GO
 

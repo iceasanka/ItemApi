@@ -39,7 +39,7 @@ namespace ItemApi.Controllers
             });
         }
 
-        // POST: api/Users { loginName, userName, roleId (1 Admin, 2 Back office, 3 Cashier), password, phone, email }
+        // POST: api/Users { loginName, userName, roleId (1 Admin, 2 Back office, 3 Cashier), password, phone, email, pin, askPin }
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] UserCreateRequest request)
         {
@@ -51,7 +51,7 @@ namespace ItemApi.Controllers
             });
         }
 
-        // PUT: api/Users/5 { userName, roleId, status (1 active / 0 disabled), phone, email } — the user name can't change
+        // PUT: api/Users/5 { userName, roleId, status (1 active / 0 disabled), phone, email, askPin } — the user name can't change
         [HttpPut("{userId:int}")]
         public async Task<IActionResult> Update(int userId, [FromBody] UserUpdateRequest request)
         {
@@ -72,6 +72,18 @@ namespace ItemApi.Controllers
             {
                 await _users.ResetPasswordAsync(userId, request, Me);
                 return Ok(new { message = "Password reset." });
+            });
+        }
+
+        // POST: api/Users/5/Pin { pin } — supervisor PIN at the till (4-8 digits, Admin / Cashier); empty = remove
+        [HttpPost("{userId:int}/Pin")]
+        public async Task<IActionResult> SetPin(int userId, [FromBody] SetPinRequest request)
+        {
+            if (request == null) return BadRequest(new { message = "PIN is required." });
+            return await Run(async () =>
+            {
+                var user = await _users.SetPinAsync(userId, request, Me);
+                return Ok(new { message = user.HasPin ? "PIN saved." : "PIN removed.", data = user });
             });
         }
 

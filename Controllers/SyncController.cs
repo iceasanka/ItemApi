@@ -233,6 +233,49 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/Sync/TillPayRequests?terminalId=1 — supplier payments this till may pay now (waiting, for it or any
+        // till), the whole list every download (U032)
+        [AllowAnonymous]
+        [HttpGet("TillPayRequests")]
+        public async Task<IActionResult> TillPayRequests([FromQuery] int terminalId, [FromServices] ItemApi.Data.AppDbContext db)
+        {
+            try
+            {
+                return Ok(await db.GetTillPayRequestsForSyncAsync(terminalId));
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/Sync/TillPayRequests { terminalId, rows: [{ requestId, moveId, zNo, amount, cashierId, paidAt }] } — the
+        // paid outs made for requests: each is booked once as a PAYMENT on the supplier ledger (a resend is skipped)
+        // → { received }
+        [AllowAnonymous]
+        [HttpPost("TillPayRequests")]
+        public async Task<IActionResult> TillPayRequestsPaid([FromBody] SyncTillPayPaidBatch batch, [FromServices] ItemApi.Data.AppDbContext db)
+        {
+            if (batch == null || batch.TerminalId <= 0)
+                return BadRequest(new { message = "TerminalId is required." });
+            try
+            {
+                return Ok(new SyncTillPayPaidResult { Received = batch.Rows.Count == 0 ? 0 : await db.TillPayRequestsPaidAsync(batch.TerminalId, batch.Rows) });
+            }
+            catch (SqlException ex) when (ex.Number >= 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // POST: api/Sync/TillLog — void lines (taken off a bill before payment) and cash drawer openings of a till.
         // A resend is skipped. → { voids, drawer }
         [AllowAnonymous]

@@ -1,3 +1,5 @@
+using ItemApi.Common;
+using ItemApi.Data;
 using ItemApi.Interface;
 using ItemApi.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -125,6 +127,35 @@ namespace ItemApi.Controllers
                 if (!deleted)
                     return NotFound(new { message = $"Ledger entry with Id {ledgerId} not found.", status = false });
                 return Ok(new { message = "Ledger entry deleted successfully.", status = true });
+            });
+
+        // ─── pay from a till (U032, StockSystem.md 6.32) ───
+
+        // GET: api/SupplierLedger/TillPay?suppId=79&status=0 — requests to pay bills in cash at a till (newest first)
+        [HttpGet("TillPay")]
+        public Task<IActionResult> GetTillPay([FromQuery] int? suppId, [FromQuery] int? status, [FromServices] AppDbContext db) =>
+            Run(async () => Ok(await db.GetTillPayRequestsAsync(suppId, status)));
+
+        // POST: api/SupplierLedger/TillPay { suppId, terminalId (null = any till), amount, remark, lines: [{ ledgerId, amount }] }
+        //   — bills (and returns) to be paid in cash at a till; the till pays it as a Paid Out and the ledger is settled
+        //   when that comes up → { message, requestId }
+        [HttpPost("TillPay")]
+        public Task<IActionResult> AddTillPay([FromBody] TillPayRequestCreate request, [FromServices] AppDbContext db) =>
+            Run(async () =>
+            {
+                if (request == null || request.SuppId <= 0) return BadRequest(new { message = "Choose the supplier." });
+                if (request.Lines.Count == 0) return BadRequest(new { message = "Pick the bills to pay." });
+                var id = await db.AddTillPayRequestAsync(request, User.CurrentUserId(request.UserId));
+                return Ok(new { message = request.TerminalId == null ? "Sent to the tills - any till can pay it." : "Sent to the till.", requestId = id });
+            });
+
+        // POST: api/SupplierLedger/TillPay/5/Cancel — a waiting request taken back (the tills drop it at their next download)
+        [HttpPost("TillPay/{requestId:int}/Cancel")]
+        public Task<IActionResult> CancelTillPay(int requestId, [FromQuery] int? userId, [FromServices] AppDbContext db) =>
+            Run(async () =>
+            {
+                await db.CancelTillPayRequestAsync(requestId, User.CurrentUserId(userId));
+                return Ok(new { message = "Request cancelled." });
             });
 
         private static string? Validate(SupplierLedger? ledger)

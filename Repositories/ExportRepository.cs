@@ -98,10 +98,7 @@ namespace ItemApi.Repositories
                     if (!Directory.Exists(setting.FolderPath))
                         throw new ExportException($"Folder '{setting.FolderPath}' was not found from the server, or the server has no access to it.");
 
-                    // write next to the target, then swap it in, so the scale program never reads a half-written file
-                    var temp = target + ".tmp";
-                    await File.WriteAllBytesAsync(temp, Encode(preview.Lines));
-                    File.Move(temp, target, overwrite: true);
+                    await WriteInPlaceAsync(target, Encode(preview.Lines));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ExportException)
                 {
@@ -263,6 +260,35 @@ namespace ItemApi.Repositories
             foreach (var l in lines)
                 sb.Append(l.Plu).Append('#').Append(l.Descrip).Append('#').Append(Money(l.Price)).Append("#\r\n");
             return new UTF8Encoding(false).GetBytes(sb.ToString());
+        }
+
+        // Overwrites the file in place - the same as saving a downloaded copy over it - so the scale program sees the
+        // file MODIFIED and loads it. (A temp file renamed over it looked like delete + rename, and the scale did not
+        // reload.) The file is locked while it is written (the scale can't read half of it), flushed to disk, closed and
+        // given the time now. The scale reading it at that moment → tried again for up to ~5 s.
+        private static async Task WriteInPlaceAsync(string target, byte[] data)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await using (var fs = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                    {
+                        await fs.WriteAsync(data);
+                        await fs.FlushAsync();
+                        fs.Flush(true);
+                    }
+                    File.SetLastWriteTime(target, DateTime.Now);
+                    break;
+                }
+                // only "in use" (sharing / lock violation) is tried again - not a missing folder or no access
+                catch (IOException ex) when (attempt < 6 && (ex.HResult & 0xFFFF) is 32 or 33)
+                {
+                    await Task.Delay(attempt * 300);
+                }
+            }
+            // a temp file left by the older export (it wrote <file>.tmp and renamed it)
+            try { File.Delete(target + ".tmp"); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
 
         private static string Money(decimal value) => value.ToString("0.00", CultureInfo.InvariantCulture);

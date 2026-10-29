@@ -427,7 +427,9 @@ for English names) — `PLU#Description#Price#`, e.g. `10001#Cashew Nut 1kg#6200
   Name = `Descrip` with `#` and line breaks replaced by a space, cut to `NameMaxLength` (default 30, 0 = no limit).
 - Left out, with the reason shown on the page: no / non-numeric / longer than 5 digits RefCode, no description,
   price ≤ 0, sale locked, and **both** items when two have the same PLU (the scale finds items by PLU).
-- Lines sorted by PLU. Written to `<file>.tmp` then swapped in, so the scale program never reads half a file.
+- Lines sorted by PLU. The file is **overwritten in place** (locked while written, flushed, closed, time set to now) —
+  the same as saving a downloaded copy over it — so the scale program sees it **modified** and reloads it (2026-10-29;
+  before, a `<file>.tmp` renamed over it was not seen as a change by the scale). In use by the scale → tried again ~5 s.
 
 **Folder** = a folder the **API server** can see (local drive or `\\SCALE-PC\Import`). For a share, the IIS app pool /
 service account needs write access. Saving the settings checks that the folder exists.
@@ -1303,6 +1305,41 @@ their photo folders are deleted; saved matches and GRNs stay). `MakeDraft` with 
 GrnNo.
 
 Next step (not built): 4. photos from the mobile app.
+
+### 6.32 Supplier bills paid in cash from a till (2026-10-29, U032)
+SQL: `26_BackOffice_TillPayments.sql` + a section of `02`. Code: `SupplierLedgerController` (`TillPay`),
+`SyncController` (`TillPayRequests`), `Data/AppDbContext.TillPay.cs`; TillService `Sync/SyncWorker.cs`,
+`GET /payrequests`, `POST /cash/movements { requestId }`; pages Supplier Ledger and the billing page.
+
+1. **Supplier Ledger**: tick bills (PURCHASE with something open) and, if wanted, returns (RETURN with credit left) →
+   **Pay from till** → cash to pay (default = bills open − returns left; less = a **part payment**), the till (or any
+   till), the paid out reason ("Supplier <name>: <bill nos>"). → `z_tb_TillPayRequest` Status 0 + its lines. A bill /
+   return can wait on one request only. The page lists the supplier's till payments (waiting / paid / cancelled);
+   a waiting one can be cancelled.
+2. **Till**: TillService downloads the waiting requests for it or any till every sync run (~30 s,
+   `zf_tb_PayRequest`). The billing page shows **Pay supplier (n)** next to Menu → the list → **Pay** opens the Paid Out
+   with the amount and reason filled in and locked; supervisor PIN, drawer check, slip and drawer as any paid out
+   (`zf_sp_PayPayRequest` = `zf_sp_AddCashMovement` + the request paid, one transaction). The paid out also goes up with
+   the cash movements (Day Reports).
+3. **Back office** (the till sends it up at once): `z_sp_TillPayRequestsPaid` adds a **PAYMENT** row (credit = the
+   cash, date = the till's date, remark "Cash at till T01 (paid out N, request N) - …") and settles the bills: the
+   returns ticked first (what is still left on each), then the cash, **oldest bill first**, each bill no more than its
+   ticked amount / what is open. Less cash than bills − returns → the rest stays open on the last bills. The request
+   becomes Paid (till, cashier, time, the PAYMENT ref). A resend is skipped (`z_tb_TillPayReceipt`); a request paid
+   twice (two tills before a sync, or after a cancel) gets one more PAYMENT row "PAID AGAIN - check", not set against
+   bills — the balance stays right.
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/SupplierLedger/TillPay?suppId=&status=` | requests, newest first (`refs`, `billsAmount`, `returnsAmount`, paid details) |
+| POST | `api/SupplierLedger/TillPay` | `{ suppId, terminalId (null = any), amount, remark, lines: [{ ledgerId, amount }] }` |
+| POST | `api/SupplierLedger/TillPay/{id}/Cancel` | waiting only |
+| GET | `api/Sync/TillPayRequests?terminalId=` | till: what it may pay now |
+| POST | `api/Sync/TillPayRequests` | till: `{ terminalId, rows: [{ requestId, moveId, zNo, amount, cashierId, paidAt }] }` → `{ received }` |
+
+Supplier Ledger page (same change): the supplier search is in the title row, the summary is one row of small tiles
+(purchase, paid, balance, overdue, due in 7 days, open bills, returns, days to pay, not set against a bill), the charts
+open with **Charts**, the date filter is tighter.
 
 ---
 

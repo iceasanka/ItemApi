@@ -151,6 +151,19 @@ namespace ItemApi.Controllers
             });
         }
 
+        // DELETE: api/GrnScan/Scans/5/Draft — the GRN draft made from this scan is deleted (not once committed to stock);
+        // the scan is open again to correct and make the draft again → { message, grnNo }
+        [HttpDelete("Scans/{scanId:int}/Draft")]
+        public async Task<IActionResult> DeleteDraft(int scanId)
+        {
+            return await Run(async () =>
+            {
+                var grnNo = await _store.DeleteDraftAsync(scanId, User.CurrentUserId());
+                Log.Information($"GrnScan: draft {grnNo} of scan {scanId} deleted");
+                return Ok(new { message = $"{grnNo} deleted - correct the scan and make the GRN draft again.", grnNo });
+            });
+        }
+
         // GET: api/GrnScan/Scans/5/Photo/1 — a page of the invoice
         [HttpGet("Scans/{scanId:int}/Photo/{page:int}")]
         public async Task<IActionResult> Photo(int scanId, int page)

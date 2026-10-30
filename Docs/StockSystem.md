@@ -1314,12 +1314,30 @@ page Purchasing → **GRN Scan** `/grn-scan`):
   keeps it on save (never more than the qty). A free-only line (nothing bought, e.g. "2 free" on a line of its own) is
   "check", not an error: it goes onto the bought line of the same item (Qty and FreeQty up, cost a piece down); with no
   bought line of that item it is a line of its own at the item's cost now, GAmount 0 (its printed amount is not paid).
+- **Calculate cost** (page only, 2026-10-30; GRN Entry has the same button for its grid): for an invoice with no item
+  prices, only "MRP less N%" and/or a bill discount. Per line in use: amount = qty × (MRP − MRP × % − amount a piece) −
+  line discount (MRP = the printed one, else our selling price; all lines, or only those with no amount read); then a
+  bill discount spread over the lines by amount (the page offers printed total discount − line discounts). The printed
+  figures stay as read; the draft gets `grossAmount` = that amount, `discount` null, so cost a piece = amount ÷ (qty +
+  free) as above. A line with a reading error (no price / amount) can go on once its cost comes from the MRP. The MRP of
+  each line can be changed in the window (`mrpEdits`, line index → MRP; also the draft line's `mrp`, so with "The MRP on
+  the invoice" it is the GRN selling price). Kept in the scan state (`costCalc`).
+- **Delete draft** (`DELETE api/GrnScan/Scans/{id}/Draft`, `GrnScanStore.DeleteDraftAsync`): something wrong on the
+  draft → its `z_tb_TempPurchase` lines and summary are deleted and the scan is open again (Status 0, GrnNo NULL) to
+  correct and make the draft again (a new GRN number). Refused once the GRN is committed (summary Status 2).
+  GRN Entry > **Search GRN** has the same on every draft row (bin, `DELETE api/TempPurchaseSummary/DeleteDraft/{grnNo}`):
+  lines + summary in one transaction, refused once committed; a scan made into it is open again (Status 0, GrnNo NULL).
+- GRN numbers (U035, 2026-10-30): `z_tb_System.PNO` = the next number. Every new GRN takes it and moves it on in one
+  statement - `POST api/TempPurchaseSummary/Insert` (GRN Entry Save / Suspend; the GRN No on the page is only a preview,
+  the lines are saved with the number given back), `z_sp_GrnScanMakeDraft`, the mobile GRN. A number already used is
+  skipped (Insert and the scan draft), so two tabs / browsers saving at once get different numbers.
 - The same invoice no of the supplier on another GRN → 409 `{ sameInvoice: true }`; the page asks "make it anyway?"
   (`allowSameInvoice`). The matches of every line are saved again (`UseCount` = invoices it was used on).
 
 **Saved scans** (U031, `z_tb_GrnScan`, `Service/GrnScanStore.cs`): every `Read` is kept (`scanId` in the answer); the
-page saves its work 2 s after each change (`PUT api/GrnScan/Scans/{id}` { supplierId, result, state: { picks, skip }
-}). **Saved scans** on the page: `GET api/GrnScan/Scans?all=` (open ones; all = also those made into a GRN),
+page saves its work 2 s after each change (`PUT api/GrnScan/Scans/{id}` { supplierId, result, state: { picks, skip, costCalc }
+}). **Saved scans** on the page: `GET api/GrnScan/Scans?all=` (open ones = not made into a GRN, or its GRN not committed yet - a scan stays until its
+GRN is committed; all = also those committed; `grnStatus` = the GRN summary Status, null = none / deleted),
 **Open** = `GET api/GrnScan/Scans/{id}` + the photos `GET …/Scans/{id}/Photo/{page}` (no new AI read; matches saved
 since then apply, the picks stay), **Flush selected** = `POST api/GrnScan/Scans/Flush { scanIds }` (the rows and
 their photo folders are deleted; saved matches and GRNs stay). `MakeDraft` with `scanId` marks the scan Status 1 +

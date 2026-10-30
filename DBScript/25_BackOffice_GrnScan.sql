@@ -7,7 +7,7 @@
      z_tb_SupplierItemMap   supplier + the supplier's item code (or, without a code, their item name) -> ItemId.
                             SupplierDescrip keeps the supplier's own name of the item (the remark).
    Matching order (z_sp_GrnScanMatch): supplier code, then the supplier's item name, then a printed barcode.
-   Section 4 (U030, U033): z_sp_GrnScanMakeDraft - the confirmed lines become a suspended GRN, committed on GRN Entry;
+   Section 4 (U030, U033, U035): z_sp_GrnScanMakeDraft - the confirmed lines become a suspended GRN, committed on GRN Entry;
                            z_tb_TempPurchase.FreeQty keeps the free pieces of a line (U033).
    Section 5 (U031): z_tb_GrnScan - every read kept, so the matching can go on another day; flushed when done.
    Deployed databases: Updates/U029 + U030 + U031 + U033 (same objects).
@@ -239,7 +239,7 @@ BEGIN
     BEGIN TRY
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
-    DECLARE @GrnNo VARCHAR(20), @No INT, @Now DATETIME, @Today DATETIME, @Other VARCHAR(20), @Msg NVARCHAR(400);
+    DECLARE @GrnNo VARCHAR(20), @No INT, @Tries INT, @Now DATETIME, @Today DATETIME, @Other VARCHAR(20), @Msg NVARCHAR(400);
     SET @Now = GETDATE();
     SET @Today = CAST(CONVERT(VARCHAR(10), @Now, 120) AS DATETIME);
     SET @LocationId = ISNULL(@LocationId, 1);
@@ -266,12 +266,20 @@ BEGIN
     END
 
     BEGIN TRAN;
-        -- the next GRN number, taken and moved on in one statement (GRN Entry and the mobile GRN use the same counter)
-        UPDATE dbo.z_tb_System SET @No = PNO, PNO = PNO + 1 WHERE LocaId = '01';
-        IF @No IS NULL RAISERROR(N'%s', 16, 1, N'GRN counter (z_tb_System.PNO) not found.');
-        SET @GrnNo = 'GRN' + RIGHT('00000000' + CAST(@No AS VARCHAR(10)), 8);
-        IF EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchaseSummary WHERE GrnNo = @GrnNo)
-            RAISERROR(N'%s', 16, 1, N'The next GRN number is already used - try again.');
+        -- the next GRN number, taken and moved on in one statement (GRN Entry and the mobile GRN use the same counter);
+        -- a number already on a GRN (e.g. saved from a GRN Entry tab with the number it showed) is skipped (U035)
+        SET @Tries = 0;
+        WHILE 1 = 1
+        BEGIN
+            SET @No = NULL;
+            UPDATE dbo.z_tb_System SET @No = PNO, PNO = PNO + 1 WHERE LocaId = '01';
+            IF @No IS NULL RAISERROR(N'%s', 16, 1, N'GRN counter (z_tb_System.PNO) not found.');
+            SET @GrnNo = 'GRN' + RIGHT('00000000' + CAST(@No AS VARCHAR(10)), 8);
+            IF NOT EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchaseSummary WHERE GrnNo = @GrnNo)
+               AND NOT EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchase WHERE GrnNo = @GrnNo) BREAK;
+            SET @Tries = @Tries + 1;
+            IF @Tries >= 1000 RAISERROR(N'%s', 16, 1, N'No free GRN number found - check z_tb_System.PNO.');
+        END
 
         INSERT dbo.z_tb_TempPurchase (GrnNo, LocationId, ItemId, PDate, CostPrice, SellPrice, Qty, FreeQty, Discount, GAmount,
                                       Status, UDate, UserId)

@@ -56,18 +56,20 @@ namespace ItemApi.Controllers
             }
         }
 
-        // POST: api/TempPurchaseSummary/Insert
+        // POST: api/TempPurchaseSummary/Insert — a new GRN. Its number is taken here (z_tb_System.PNO), not the one the
+        // page showed: with two tabs / browsers open, or a GRN scan / mobile draft made meanwhile, that one may be used.
+        // → data = the saved summary; the page saves the lines with data.grnNo.
         [HttpPost("Insert")]
         public async Task<IActionResult> Insert([FromBody] TempPurchaseSummary summary)
         {
-            if (summary == null || string.IsNullOrEmpty(summary.GrnNo))
-                return BadRequest(new { message = "Invalid request data. GrnNo is required." });
+            if (summary == null)
+                return BadRequest(new { message = "Invalid request data." });
 
             try
             {
+                summary.GrnNo = await _systemrepository.TakeNextGrnNoAsync("01");
                 var result = await _repository.InsertAsync(summary);
-                var updateGrnNo = await _systemrepository.UpdateNextGrnNoAsync("01");
-                return Ok(new { message = "Record inserted successfully.", data = result });
+                return Ok(new { message = $"{result.GrnNo} saved.", data = result });
             }
             catch (Exception ex)
             {
@@ -107,6 +109,29 @@ namespace ItemApi.Controllers
                     return NotFound(new { message = $"Record with Idx {idx} not found.", status = false });
 
                 return Ok(new { message = "Record deleted successfully.", status = true });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // DELETE: api/TempPurchaseSummary/DeleteDraft/GRN00000001 — a GRN draft (suspended / saved, not committed) with its
+        // lines; a GRN scan made into it is open again on GRN Scan to correct and make again
+        [HttpDelete("DeleteDraft/{grnNo}")]
+        public async Task<IActionResult> DeleteDraft([FromRoute] string grnNo)
+        {
+            if (string.IsNullOrWhiteSpace(grnNo))
+                return BadRequest(new { message = "GrnNo is required." });
+
+            try
+            {
+                return await _repository.DeleteDraftAsync(grnNo.Trim()) switch
+                {
+                    1 => NotFound(new { message = $"{grnNo} not found." }),
+                    2 => BadRequest(new { message = $"{grnNo} is committed to stock - it can't be deleted." }),
+                    _ => Ok(new { message = $"{grnNo} deleted." })
+                };
             }
             catch (Exception ex)
             {

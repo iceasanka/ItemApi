@@ -245,11 +245,23 @@ namespace ItemApi.Models
         public int? UpdatedBy { get; set; }
     }
 
-    // the page's work on a scan: picks (line index → our item) and lines left out
+    // the page's work on a scan: picks (line index → our item), lines left out, the cost calculation in use
     public class GrnScanState
     {
         public Dictionary<int, GrnScanItemHit> Picks { get; set; } = new();
         public Dictionary<int, bool> Skip { get; set; } = new();
+        public GrnScanCostCalc? CostCalc { get; set; }
+    }
+
+    // GRN Scan "Calculate cost": cost from the MRP less a % / amount a piece, and a bill discount spread over the lines.
+    // Only the page uses it (the amounts it works out go to MakeDraft); kept so a reopened scan has it.
+    public class GrnScanCostCalc
+    {
+        public string Scope { get; set; } = "all";   // "all" | "noCost" (lines with no amount read)
+        public decimal MrpPercent { get; set; }
+        public decimal MrpAmount { get; set; }
+        public decimal BillDiscount { get; set; }
+        public Dictionary<int, decimal>? MrpEdits { get; set; }   // line index → MRP typed on the page (also the draft's mrp)
     }
 
     // PUT api/GrnScan/Scans/{id} — the page keeps its work as it goes
@@ -274,6 +286,8 @@ namespace ItemApi.Models
         public int Matched { get; set; }
         public int Status { get; set; }
         public string? GrnNo { get; set; }
+        // the GRN made from it: 0 / 1 = draft (suspended / saved), 2 = committed to stock, null = none (or deleted)
+        public int? GrnStatus { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
     }
@@ -286,6 +300,7 @@ namespace ItemApi.Models
         public string? SuppName { get; set; }
         public int Status { get; set; }
         public string? GrnNo { get; set; }
+        public int? GrnStatus { get; set; }   // as GrnScanListRow.GrnStatus
         public int Pages { get; set; }
         public GrnScanResult Result { get; set; } = new();
         public GrnScanState State { get; set; } = new();

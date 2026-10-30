@@ -63,6 +63,27 @@ namespace ItemApi.Data
             }
         }
 
+        // Takes the next GRN number for a new GRN and moves PNO on, in one statement (two tabs / browsers saving at once
+        // get different numbers). A number already on a GRN (e.g. a page that saved with the number it showed) is skipped.
+        // GRN Scan (z_sp_GrnScanMakeDraft) and the mobile GRN take theirs the same way.
+        public async Task<string> TakeNextGrnNoAsync(string locaCode)
+        {
+            var result = await Database.SqlQueryRaw<string>(@"
+                DECLARE @No INT, @GrnNo VARCHAR(20), @Tries INT = 0;
+                WHILE 1 = 1
+                BEGIN
+                    SET @No = NULL;
+                    UPDATE dbo.z_tb_System SET @No = PNO, PNO = PNO + 1 WHERE LocaId = {0};
+                    IF @No IS NULL RAISERROR(N'%s', 16, 1, N'GRN counter (z_tb_System.PNO) not found.');
+                    SET @GrnNo = 'GRN' + RIGHT('00000000' + CAST(@No AS VARCHAR(10)), 8);
+                    SET @Tries = @Tries + 1;
+                    IF @Tries >= 1000 OR (NOT EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchaseSummary WHERE GrnNo = @GrnNo)
+                                     AND NOT EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchase WHERE GrnNo = @GrnNo)) BREAK;
+                END
+                SELECT @GrnNo AS Value;", locaCode).ToListAsync();
+            return result.First();
+        }
+
         public async Task<string> GenerateNextPrnNoAsync(string locaCode)
         {
             try

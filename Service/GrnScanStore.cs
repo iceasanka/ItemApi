@@ -69,19 +69,45 @@ namespace ItemApi.Service
             await _db.SaveChangesAsync();
         }
 
-        // newest first; all = also the ones made into a GRN
+        // The GRN draft made from a scan is deleted (something to correct): the suspended GRN and its lines go, the scan is
+        // open again so it can be fixed and made into a GRN again. Refused once the GRN is committed to stock (Status 2).
+        // → the GRN no deleted
+        public async Task<string> DeleteDraftAsync(int scanId, int? userId)
+        {
+            var doc = await _db.GrnScanDocs.FirstOrDefaultAsync(d => d.ScanId == scanId) ?? throw new KeyNotFoundException();
+            if (doc.Status != 1 || string.IsNullOrEmpty(doc.GrnNo)) throw new GrnScanException("No GRN draft is made from this scan.");
+            var grnNo = doc.GrnNo;
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            var posted = await _db.Database.SqlQueryRaw<int>(
+                "SELECT COUNT(*) AS Value FROM dbo.z_tb_TempPurchaseSummary WITH (UPDLOCK, HOLDLOCK) WHERE GrnNo = @p0 AND Status = 2",
+                grnNo).SingleAsync();
+            if (posted > 0) throw new GrnScanException($"{grnNo} is committed to stock - it can't be deleted.");
+            await _db.Database.ExecuteSqlRawAsync("DELETE FROM dbo.z_tb_TempPurchase WHERE GrnNo = @p0 AND ISNULL(Status, 0) <> 2", grnNo);
+            await _db.Database.ExecuteSqlRawAsync("DELETE FROM dbo.z_tb_TempPurchaseSummary WHERE GrnNo = @p0 AND ISNULL(Status, 0) <> 2", grnNo);
+            doc.Status = 0;
+            doc.GrnNo = null;
+            doc.UpdatedAt = DateTime.Now;
+            doc.UpdatedBy = userId;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return grnNo;
+        }
+
+        // newest first: open ones = not made into a GRN yet, or its GRN not committed to stock yet (still a draft, or the
+        // draft deleted on GRN Entry); all = also those whose GRN is committed
         public async Task<List<GrnScanListRow>> ListAsync(bool all)
         {
             var q = from d in _db.GrnScanDocs.AsNoTracking()
                     join s in _db.SupplierEntities on d.SuppId equals s.SuppId into sup
                     from s in sup.DefaultIfEmpty()
-                    where all || d.Status == 0
+                    let grnStatus = _db.TempPurchaseSummaries.Where(t => t.GrnNo == d.GrnNo).Select(t => t.Status).FirstOrDefault()
+                    where all || d.Status == 0 || grnStatus == null || grnStatus != 2
                     orderby d.CreatedAt descending
                     select new GrnScanListRow
                     {
                         ScanId = d.ScanId, SuppId = d.SuppId, SuppName = s != null ? s.SuppName : null, InvoiceNo = d.InvoiceNo,
                         InvoiceDate = d.InvoiceDate, Pages = d.Pages, Lines = d.Lines, Matched = d.Matched, Status = d.Status,
-                        GrnNo = d.GrnNo, CreatedAt = d.CreatedAt, UpdatedAt = d.UpdatedAt
+                        GrnNo = d.GrnNo, GrnStatus = d.Status == 1 ? grnStatus : null, CreatedAt = d.CreatedAt, UpdatedAt = d.UpdatedAt
                     };
             return await q.Take(200).ToListAsync();
         }
@@ -93,9 +119,12 @@ namespace ItemApi.Service
             var supp = doc.SuppId == null ? null : await _db.SupplierEntities.AsNoTracking().FirstOrDefaultAsync(s => s.SuppId == doc.SuppId);
             var result = JsonSerializer.Deserialize<GrnScanResult>(doc.ResultJson, Json) ?? new GrnScanResult();
             result.ScanId = doc.ScanId;
+            var grnStatus = doc.Status == 1 && doc.GrnNo != null
+                ? await _db.TempPurchaseSummaries.AsNoTracking().Where(t => t.GrnNo == doc.GrnNo).Select(t => t.Status).FirstOrDefaultAsync()
+                : null;
             return new GrnScanOpen
             {
-                ScanId = doc.ScanId, SuppId = doc.SuppId, SuppName = supp?.SuppName, Status = doc.Status, GrnNo = doc.GrnNo,
+                ScanId = doc.ScanId, SuppId = doc.SuppId, SuppName = supp?.SuppName, Status = doc.Status, GrnNo = doc.GrnNo, GrnStatus = grnStatus,
                 Pages = PhotoFiles(doc.Folder).Count, Result = result,
                 State = string.IsNullOrEmpty(doc.StateJson) ? new GrnScanState() : JsonSerializer.Deserialize<GrnScanState>(doc.StateJson, Json) ?? new GrnScanState()
             };

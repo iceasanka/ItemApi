@@ -122,6 +122,37 @@ namespace ItemApi.Repositories
             }
         }
 
+        // GRN Entry > Search GRN > delete a draft: the summary and its lines in one go, refused once committed (Status 2).
+        // A GRN scan made into it (z_tb_GrnScan, U031) is open again, so it can be corrected and made into a draft again.
+        public async Task<int> DeleteDraftAsync(string grnNo)
+        {
+            try
+            {
+                var result = await _context.Database.SqlQueryRaw<int>(@"
+                    SET XACT_ABORT ON;
+                    BEGIN TRAN;
+                    DECLARE @St INT, @Found INT = 0;
+                    SELECT @St = ISNULL(Status, 0), @Found = 1 FROM dbo.z_tb_TempPurchaseSummary WITH (UPDLOCK, HOLDLOCK) WHERE GrnNo = {0};
+                    IF @Found = 0 AND EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchase WHERE GrnNo = {0} AND ISNULL(Status, 0) = 2) SET @St = 2;
+                    IF @Found = 0 AND @St IS NULL AND NOT EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchase WHERE GrnNo = {0})
+                    BEGIN COMMIT; SELECT 1 AS Value; RETURN; END
+                    IF @St = 2 BEGIN COMMIT; SELECT 2 AS Value; RETURN; END
+                    DELETE FROM dbo.z_tb_TempPurchase WHERE GrnNo = {0};
+                    DELETE FROM dbo.z_tb_TempPurchaseSummary WHERE GrnNo = {0};
+                    IF OBJECT_ID(N'dbo.z_tb_GrnScan', 'U') IS NOT NULL
+                        EXEC sp_executesql N'UPDATE dbo.z_tb_GrnScan SET Status = 0, GrnNo = NULL, UpdatedAt = GETDATE() WHERE GrnNo = @g',
+                                           N'@g VARCHAR(20)', @g = {0};
+                    COMMIT;
+                    SELECT 0 AS Value;", grnNo).ToListAsync();
+                return result.First();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<List<TempPurchaseSummary>> SearchAsync(TempPurchaseSummarySearchRequest request)
         {
             try

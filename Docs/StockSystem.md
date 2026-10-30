@@ -839,6 +839,12 @@ BarTender nor LocalPrintAgent: ItemApi builds the label as ZPL and sends it RAW 
 | GET | `api/Label/Printers` | Windows printers on the API server |
 | POST | `api/Label/Print` | `{ labelLayoutId (null = default), skip, items: [{ itemId, qty, price, mfdDate, expDate }] }` → `{ labels, pages, printer, layoutName }`. `price` null = retail price at the location. `skip` = labels already used on the first sheet. Max 1000 per item, 5000 per print |
 | POST | `api/Label/Zpl` | same body, returns the ZPL text instead of printing |
+| POST | `api/Label/Preview?page=0` | same body → that page as PNG with label frames, drawn from the ZPL itself (`Service/ZplPreview.cs`: places, barcodes EAN-13 / Code 128, text; the Zebra font 0 drawn with Arial Narrow, so text widths are close, not exact). `one=true` = the first item's label alone. Barcode labels page: page preview + the clicked line's label |
+
+MFD / EXP dates (barcode labels): the body's `showDates` (null = the layout's `ShowDates`) turns the date line on or off
+for that print only — the Barcode labels page has a "MFD / EXP dates" switch (starts as the layout says) and "all
+lines" MFD / EXP dates (new lines get them too). With the line on, the barcode is shorter to make room; a line without
+dates prints no date line. An EXP date before its MFD date is a 400. Printed as `MFD dd-MM-yy  EXP dd-MM-yy`.
 
 Pages that come out the same are sent once with `^PQ` (100 labels of one item on a 1-across roll = one page × 100).
 
@@ -867,6 +873,15 @@ labels without a discount). The server DRAWS the label (GDI+, Sinhala shaped by 
 Windows printer driver — the Pegasus as before, or an A4 laser with sheets of shelf labels. Same drawing → PNG preview.
 - Layout of one label: wide (width ≥ 1.8 × height) = the old design — left code / English name (both) / price, right
   the big name; narrow = the same parts one under the other. Each text is as big as its box allows.
+- Designed layout (U034, `DesignJson`): the Label layouts dialog → Design → "Design it myself" starts from the automatic
+  places; each part (item code, name, English name, price, Save, Now, footer) is dragged where it goes and sized by its
+  corner, with its own font size in pt (0 = as big as the box allows; a text that does not fit gets smaller), left /
+  centre / right, bold, italic and its own font (`GET api/Label/Fonts` = the fonts on the API server; empty = the
+  layout's English font; Sinhala text always keeps the layout's Sinhala font; a style the font lacks falls back to the
+  nearest it has). JSON `[{ k, x, y, w, h, size, align, bold, italic, font }]`, mm on the upright label (before the
+  landscape turn); a font not on the server is a 400. A part with nothing to show on a label (no discount, item code off …) is left out; "Back to automatic" = NULL.
+  Every part must be on the label (400). The dialog's print preview is the server drawing of the unsaved layout.
+- Price labels page: click a line → that item's label alone (`Price/Preview?one=true`) above the page preview.
 - Style per item: `AUTO` (discount label when there is a discount, else price), `PRICE`, `DISCOUNT` (400 when there is
   no discount — the old empty-template case). Amount wins over % (as old). Amount → "Save Rs x" + "Now Rs y";
   % → "Save x%" without price (as old). Discount more than the price → 400.
@@ -881,11 +896,12 @@ Windows printer driver — the Pegasus as before, or an A4 laser with sheets of 
 | Method | Route | |
 |---|---|---|
 | GET | `api/Label/Layouts?kind=2` | price layouts (kind 1 = barcode, none = both) |
-| POST/PUT | `api/Label/Layouts` | + `labelKind` (on add; never changes), `language`, `rotate`, `sinhalaFont`, `englishFont`, `footerText` |
+| POST/PUT | `api/Label/Layouts` | + `labelKind` (on add; never changes), `language`, `rotate`, `sinhalaFont`, `englishFont`, `footerText`, `designJson` |
 | GET | `api/Label/Layouts/{id}/Preview` | a price layout's test page as PNG (sample label, frames) — nothing printed |
+| POST | `api/Label/Layouts/Preview?discount=true` | body = a price layout not saved yet → one sample label as PNG (`discount=false`: no discount, the footer shows) |
 | POST | `api/Label/Layouts/{id}/Test` | prints that test page (both kinds) |
 | POST | `api/Label/Price/Print` | `{ labelLayoutId (null = default price layout), language (null = layout's), skip, items: [{ itemId, qty, style, price, discountAmount, discountPercent, name, sinhalaName }] }` → `{ labels, pages, printer, layoutName }`. Max 500 per item, 1000 per print |
-| POST | `api/Label/Price/Preview?page=0` | same body → that page as PNG with label frames |
+| POST | `api/Label/Price/Preview?page=0` | same body → that page as PNG with label frames; `one=true` = the first item's label alone |
 
 A barcode layout sent to a price route (or the other way round) is a 400. First install adds "Price 72 x 25 mm"
 (default) and "Price landscape 72 x 100 mm" (turned) — check both with Test print on the real printer.
@@ -1293,6 +1309,11 @@ page Purchasing → **GRN Scan** `/grn-scan`):
   for the stock cost, so free goods and the scheme discount lower the cost of every piece; GAmount = the line amount
   after its discount (GRN total = the invoice after line discounts). Open it on GRN Entry, check and commit as usual —
   nothing goes to stock before.
+- Free goods (U033): `z_tb_TempPurchase.FreeQty` = of the line's Qty, the free pieces (NULL on lines made elsewhere;
+  Qty stays bought + free, so the stock and the commit are unchanged). GRN Entry shows "incl. N free" under the qty and
+  keeps it on save (never more than the qty). A free-only line (nothing bought, e.g. "2 free" on a line of its own) is
+  "check", not an error: it goes onto the bought line of the same item (Qty and FreeQty up, cost a piece down); with no
+  bought line of that item it is a line of its own at the item's cost now, GAmount 0 (its printed amount is not paid).
 - The same invoice no of the supplier on another GRN → 409 `{ sameInvoice: true }`; the page asks "make it anyway?"
   (`allowSameInvoice`). The matches of every line are saved again (`UseCount` = invoices it was used on).
 

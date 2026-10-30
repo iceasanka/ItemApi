@@ -1,6 +1,7 @@
 using ItemApi.Common;
 using ItemApi.Interface;
 using ItemApi.Models;
+using ItemApi.Service;
 using Microsoft.AspNetCore.Mvc;
 using Serilog;
 
@@ -90,11 +91,28 @@ namespace ItemApi.Controllers
             return await Run(async () => File(await _repository.PreviewTestAsync(id), "image/png"));
         }
 
+        // POST: api/Label/Layouts/Preview?discount=true — body = a price layout as it is on the page, not saved yet (the
+        // designer); one label with the sample item as PNG. discount=false = the sample without a discount (footer shows).
+        [HttpPost("Layouts/Preview")]
+        public async Task<IActionResult> PreviewDesign([FromBody] LabelLayout request, [FromQuery] bool discount = true)
+        {
+            if (request == null)
+                return BadRequest(new { message = "The layout is required." });
+            return await Run(() => Task.FromResult<IActionResult>(File(_repository.PreviewDesign(request, discount), "image/png")));
+        }
+
         // GET: api/Label/Printers — Windows printers on the API server (for the layout's printer list)
         [HttpGet("Printers")]
         public async Task<IActionResult> GetPrinters()
         {
             return await Run(() => Task.FromResult<IActionResult>(Ok(_repository.GetPrinters())));
+        }
+
+        // GET: api/Label/Fonts — fonts installed on the API server (the price label designer's font list)
+        [HttpGet("Fonts")]
+        public async Task<IActionResult> GetFonts()
+        {
+            return await Run(() => Task.FromResult<IActionResult>(Ok(PriceLabelRenderer.Fonts())));
         }
 
         // POST: api/Label/Print { labelLayoutId, skip, items: [{ itemId, qty, price, mfdDate, expDate }] }
@@ -124,6 +142,17 @@ namespace ItemApi.Controllers
             });
         }
 
+        // POST: api/Label/Preview?page=0 — same body as Print; that page as PNG, drawn from the ZPL (label frames in).
+        // one=true: only the first item's label, on its own (the page's preview of the item picked)
+        [HttpPost("Preview")]
+        public async Task<IActionResult> Preview([FromBody] LabelPrintRequest request, [FromQuery] int page = 0,
+                                                 [FromQuery] bool one = false)
+        {
+            if (request == null)
+                return BadRequest(new { message = "Items are required." });
+            return await Run(async () => File(await _repository.PreviewAsync(request, page, one), "image/png"));
+        }
+
         // POST: api/Label/Price/Print { labelLayoutId, language, skip,
         //   items: [{ itemId, qty, style: AUTO|PRICE|DISCOUNT, price, discountAmount, discountPercent, name, sinhalaName }] }
         // Price labels through the Windows printer driver. The old api/Util/printprice … routes are not changed.
@@ -140,13 +169,15 @@ namespace ItemApi.Controllers
             });
         }
 
-        // POST: api/Label/Price/Preview?page=0 — same body as Print; the page as PNG (label frames drawn in)
+        // POST: api/Label/Price/Preview?page=0 — same body as Print; the page as PNG (label frames drawn in).
+        // one=true: only the first item's label, on its own (the page's preview of the item picked)
         [HttpPost("Price/Preview")]
-        public async Task<IActionResult> PreviewPrice([FromBody] PriceLabelRequest request, [FromQuery] int page = 0)
+        public async Task<IActionResult> PreviewPrice([FromBody] PriceLabelRequest request, [FromQuery] int page = 0,
+                                                      [FromQuery] bool one = false)
         {
             if (request == null)
                 return BadRequest(new { message = "Items are required." });
-            return await Run(async () => File(await _repository.PreviewPriceAsync(request, page), "image/png"));
+            return await Run(async () => File(await _repository.PreviewPriceAsync(request, page, one), "image/png"));
         }
 
         private async Task<IActionResult> Run(Func<Task<IActionResult>> action)

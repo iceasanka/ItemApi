@@ -56,6 +56,7 @@ CREATE TABLE dbo.z_tb_LabelLayout (
     SinhalaFont      NVARCHAR(50)  NULL,         -- kind 2: NULL = Iskoola Pota
     EnglishFont      NVARCHAR(50)  NULL,         -- kind 2: NULL = Courier New (as the old BarTender labels)
     FooterText       NVARCHAR(100) NULL,         -- kind 2: a line on price labels without a discount (shop slogan)
+    DesignJson       NVARCHAR(MAX) NULL,         -- kind 2 (U034): where each part goes, its font size; NULL = placed by itself
     IsDefault        BIT           NOT NULL CONSTRAINT DF_z_tb_LabelLayout_IsDefault DEFAULT (0),     -- one per LabelKind
     Status           INT           NOT NULL CONSTRAINT DF_z_tb_LabelLayout_Status DEFAULT (1),        -- 1 active, 0 deleted
     UserId           INT           NULL,
@@ -77,6 +78,9 @@ IF COL_LENGTH('dbo.z_tb_LabelLayout', 'EnglishFont') IS NULL
     ALTER TABLE dbo.z_tb_LabelLayout ADD EnglishFont NVARCHAR(50) NULL;
 IF COL_LENGTH('dbo.z_tb_LabelLayout', 'FooterText') IS NULL
     ALTER TABLE dbo.z_tb_LabelLayout ADD FooterText NVARCHAR(100) NULL;
+-- U034: the price label designer (Label layouts page) - [{ k, x, y, w, h, size, align, bold }], mm / pt
+IF COL_LENGTH('dbo.z_tb_LabelLayout', 'DesignJson') IS NULL
+    ALTER TABLE dbo.z_tb_LabelLayout ADD DesignJson NVARCHAR(MAX) NULL;
 GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.z_tb_LabelLayout WHERE LabelKind = 1)

@@ -119,25 +119,58 @@ namespace ItemApi.Service
 
         // The confirmed lines become a suspended GRN (z_sp_GrnScanMakeDraft); their matches are kept for next time.
         // Cost a piece = (gross - discount) / (qty + free): the GRN commit takes the line cost for the stock cost.
+        // Qty = bought + free, FreeQty = the free ones. A free line (nothing bought, e.g. "2 free" printed on a line of its
+        // own) goes onto the bought line of the same item and lowers its cost; with no bought line of that item it is a
+        // line of its own at the item's cost now, amount 0 (what the paper prints for it is not paid).
         public async Task<(GrnScanDraftResult Draft, int MatchesSaved)> MakeDraftAsync(GrnScanDraftRequest r, int? userId)
         {
             if (r.Lines.Count == 0) throw new GrnScanException("Choose the lines to put on the GRN.");
+            var mrp = string.Equals(r.SellPrice, "mrp", StringComparison.OrdinalIgnoreCase);
             var rows = new List<GrnScanDraftRow>();
+            var freeLines = new List<(int Key, GrnScanDraftLine Line)>();
             for (var i = 0; i < r.Lines.Count; i++)
             {
                 var l = r.Lines[i];
-                var qty = l.Qty + (l.FreeQty ?? 0);
                 var net = l.GrossAmount - (l.Discount ?? 0);
                 if (l.ItemId <= 0) throw new GrnScanException($"Line {i + 1}: choose our item.");
-                if (l.Qty <= 0 || qty <= 0) throw new GrnScanException($"Line {i + 1}: no qty.");
+                if (l.Qty < 0 || l.FreeQty < 0) throw new GrnScanException($"Line {i + 1}: a qty below 0.");
+                if (l.Qty == 0 && l.FreeQty > 0)
+                {
+                    freeLines.Add((i + 1, l));
+                    continue;
+                }
+                if (l.Qty == 0) throw new GrnScanException($"Line {i + 1}: no qty.");
                 if (net < 0) throw new GrnScanException($"Line {i + 1}: the discount is more than the amount.");
                 rows.Add(new GrnScanDraftRow
                 {
-                    LineKey = i + 1, ItemId = l.ItemId, Qty = Math.Round(qty, 2), CostPrice = Math.Round(net / qty, 2),
-                    SellPrice = string.Equals(r.SellPrice, "mrp", StringComparison.OrdinalIgnoreCase) && l.Mrp > 0 ? l.Mrp : null,
-                    GAmount = Math.Round(net, 2)
+                    LineKey = i + 1, ItemId = l.ItemId, Qty = l.Qty + (l.FreeQty ?? 0), FreeQty = l.FreeQty > 0 ? l.FreeQty : null,
+                    SellPrice = mrp && l.Mrp > 0 ? l.Mrp : null, GAmount = net
                 });
             }
+            var bought = rows.ToList();
+            foreach (var (key, l) in freeLines)
+            {
+                var to = bought.FirstOrDefault(x => x.ItemId == l.ItemId);
+                if (to != null)
+                {
+                    to.Qty += l.FreeQty!.Value;
+                    to.FreeQty = (to.FreeQty ?? 0) + l.FreeQty.Value;
+                }
+                else
+                    rows.Add(new GrnScanDraftRow
+                    {
+                        LineKey = key, ItemId = l.ItemId, Qty = l.FreeQty!.Value, FreeQty = l.FreeQty, CostPrice = null,
+                        SellPrice = mrp && l.Mrp > 0 ? l.Mrp : null, GAmount = 0
+                    });
+            }
+            foreach (var x in bought) x.CostPrice = Math.Round(x.GAmount / x.Qty, 2);
+            foreach (var x in rows)
+            {
+                x.Qty = Math.Round(x.Qty, 2);
+                x.FreeQty = x.FreeQty is { } f ? Math.Round(f, 2) : null;
+                x.GAmount = Math.Round(x.GAmount, 2);
+            }
+            rows = rows.OrderBy(x => x.LineKey).ToList();
             var invoiceNo = Clean(r.InvoiceNo, 30);
             var remark = "GRN scan" + (invoiceNo != null ? " - invoice " + invoiceNo : "") +
                          (Clean(r.InvoiceDate, 20) is { } d ? " of " + d : "");

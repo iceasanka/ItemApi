@@ -51,6 +51,9 @@ namespace ItemApi.Repositories
                 existing.CostPrice  = tempPurchase.CostPrice;
                 existing.SellPrice  = tempPurchase.SellPrice;
                 existing.Qty        = tempPurchase.Qty;
+                // GRN Entry may leave it out: the free pieces stay, never more than the qty
+                var free            = Math.Min(tempPurchase.FreeQty ?? existing.FreeQty ?? 0, tempPurchase.Qty ?? 0);
+                existing.FreeQty    = free > 0 ? free : null;
                 existing.Discount   = tempPurchase.Discount;
                 existing.GAmount    = tempPurchase.GAmount;
                 existing.ExpDate    = tempPurchase.ExpDate;

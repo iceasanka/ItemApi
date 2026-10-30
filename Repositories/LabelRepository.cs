@@ -95,6 +95,7 @@ namespace ItemApi.Repositories
             layout.SinhalaFont = Blank(request.SinhalaFont);
             layout.EnglishFont = Blank(request.EnglishFont);
             layout.FooterText = Blank(request.FooterText);
+            layout.DesignJson = layout.LabelKind == LabelLayout.Price ? Blank(request.DesignJson) : null;
             layout.UserId = request.UserId;
             layout.UDate = DateTime.Now;
 
@@ -140,6 +141,7 @@ namespace ItemApi.Repositories
         public async Task<(LabelLayout Layout, string Zpl, LabelPrintResult Result)> BuildAsync(LabelPrintRequest request)
         {
             var layout = await GetLayoutForPrintAsync(LabelLayout.Barcode, request.LabelLayoutId);
+            layout.ShowDates = request.ShowDates ?? layout.ShowDates;   // not tracked: only for this print
             var labels = await ReadLabelsAsync(request);
 
             CheckSkip(layout, request.Skip);
@@ -154,6 +156,32 @@ namespace ItemApi.Repositories
                 Printer = PrinterOf(layout),
                 LayoutName = layout.Name
             });
+        }
+
+        // One page of barcode labels as PNG, drawn from the ZPL that Print would send, with a frame round every label
+        // (page 0 = the first). one = only the first item's label, on its own (the page's preview of the item picked).
+        public async Task<byte[]> PreviewAsync(LabelPrintRequest request, int page, bool one = false)
+        {
+            var layout = await GetLayoutForPrintAsync(LabelLayout.Barcode, request.LabelLayoutId);
+            layout.ShowDates = request.ShowDates ?? layout.ShowDates;   // not tracked: only for this print
+            var labels = await ReadLabelsAsync(request);
+            if (labels.Count == 0) throw new LabelException("No label to show.");
+            if (one)
+            {
+                layout = new LabelLayout
+                {
+                    Name = layout.Name, Dpi = layout.Dpi, LabelWidthMm = layout.LabelWidthMm, LabelHeightMm = layout.LabelHeightMm,
+                    LabelsAcross = 1, RowsPerPage = 1, BarcodeType = layout.BarcodeType, BarcodeHeightMm = layout.BarcodeHeightMm,
+                    ShowName = layout.ShowName, ShowPrice = layout.ShowPrice, ShowItemCode = layout.ShowItemCode, ShowDates = layout.ShowDates
+                };
+                labels = labels.Take(1).ToList();
+                request.Skip = 0;
+            }
+            CheckSkip(layout, request.Skip);
+            ZplLabelBuilder.CheckFits(layout, labels);
+            var slots = Enumerable.Repeat<LabelData?>(null, request.Skip).Concat(labels).ToList();
+            var (zpl, _) = ZplLabelBuilder.Build(layout, slots, borders: true);
+            return ZplPreview.Png(zpl, page);
         }
 
         public async Task<LabelPrintResult> PrintAsync(LabelPrintRequest request)
@@ -177,10 +205,16 @@ namespace ItemApi.Repositories
             return new LabelPrintResult { Labels = count, Pages = pages, Printer = printer, LayoutName = layout.Name };
         }
 
-        // One page as PNG — what Print would send (page 0 = the first)
-        public async Task<byte[]> PreviewPriceAsync(PriceLabelRequest request, int page)
+        // One page as PNG — what Print would send (page 0 = the first). one = only the first label, on its own (the page's
+        // preview of the item picked)
+        public async Task<byte[]> PreviewPriceAsync(PriceLabelRequest request, int page, bool one = false)
         {
             var (layout, slots, _) = await BuildPriceAsync(request);
+            if (one)
+            {
+                var label = slots.FirstOrDefault(s => s != null) ?? throw new LabelException("No label to show.");
+                return PriceLabelRenderer.Preview(OneLabel(layout), new List<PriceLabelData?> { label }, 0, borders: true);
+            }
             var pages = PriceLabelRenderer.PageCount(layout, slots.Count);
             if (page < 0 || page >= pages)
                 throw new LabelException($"Page must be 0 to {pages - 1}.");
@@ -339,6 +373,27 @@ namespace ItemApi.Repositories
             return PriceLabelRenderer.Preview(layout, Enumerable.Repeat<PriceLabelData?>(PriceSample(layout), perPage).ToList(), 0, true);
         }
 
+        // A price layout as it is on the page, before it is saved (the designer's preview): one label, the sample item.
+        // discount = the sample with a discount (Save / Now), else without one (the footer shows).
+        public byte[] PreviewDesign(LabelLayout request, bool discount)
+        {
+            request.LabelKind = LabelLayout.Price;
+            if (string.IsNullOrWhiteSpace(request.Name)) request.Name = "Preview";
+            Validate(request);
+            var sample = PriceSample(request);
+            if (!discount) sample.DiscountAmount = null;
+            return PriceLabelRenderer.Preview(OneLabel(request), new List<PriceLabelData?> { sample }, 0, true);
+        }
+
+        // the layout with one label on the page, no margins
+        private static LabelLayout OneLabel(LabelLayout l) => new()
+        {
+            LabelKind = l.LabelKind, Name = l.Name, LabelWidthMm = l.LabelWidthMm, LabelHeightMm = l.LabelHeightMm,
+            LabelsAcross = 1, RowsPerPage = 1, ShowName = l.ShowName, ShowPrice = l.ShowPrice, ShowItemCode = l.ShowItemCode,
+            Language = l.Language, Rotate = l.Rotate, SinhalaFont = l.SinhalaFont, EnglishFont = l.EnglishFont,
+            FooterText = l.FooterText, DesignJson = l.DesignJson
+        };
+
         // Sinhala "Sample" (ආදර්ශය); with a discount so every part of the label shows
         private static PriceLabelData PriceSample(LabelLayout layout) => new()
         {
@@ -392,6 +447,8 @@ namespace ItemApi.Repositories
                 throw new LabelException("Labels per item must be 1 to 1000.");
             if (lines.Any(l => l.Price is < 0))
                 throw new LabelException("Price cannot be negative.");
+            if (lines.Any(l => l.MfdDate != null && l.ExpDate != null && l.ExpDate.Value.Date < l.MfdDate.Value.Date))
+                throw new LabelException("An EXP date is before its MFD date.");
             if (lines.Sum(l => l.Qty) > MaxLabelsPerPrint)
                 throw new LabelException($"At most {MaxLabelsPerPrint} labels at once.");
 
@@ -486,6 +543,7 @@ namespace ItemApi.Repositories
                 if ((l.SinhalaFont?.Trim().Length ?? 0) > 50 || (l.EnglishFont?.Trim().Length ?? 0) > 50 || (l.FooterText?.Trim().Length ?? 0) > 100)
                     throw new LabelException("Font names max 50 and footer text max 100 characters.");
                 CheckFonts(new LabelLayout { SinhalaFont = Blank(l.SinhalaFont), EnglishFont = Blank(l.EnglishFont) });
+                CheckDesign(l);
                 return;
             }
 
@@ -499,6 +557,32 @@ namespace ItemApi.Repositories
                 throw new LabelException("Barcode height must be 0 (fit the label) to 100 mm.");
             if (l.Darkness is < 0 or > 30)
                 throw new LabelException("Darkness must be 0 to 30, or empty for the printer's own setting.");
+        }
+
+        // the price label design: known parts once each, every box on the label (0.5 mm slack), size 0-72 pt
+        private static void CheckDesign(LabelLayout l)
+        {
+            if ((l.DesignJson?.Length ?? 0) > 8000)
+                throw new LabelException("The label design is too long.");
+            var design = PriceLabelRenderer.Design(l);
+            if (design == null) return;
+            var keys = PriceLabelElement.Keys.Split(',');
+            var (w, h) = PriceLabelRenderer.UprightSize(l);
+            foreach (var e in design)
+            {
+                if (!keys.Contains(e.K))
+                    throw new LabelException($"Label design: unknown part '{e.K}'.");
+                if (design.Count(x => x.K == e.K) > 1)
+                    throw new LabelException($"Label design: '{e.K}' is there twice.");
+                if (e.W < 1 || e.H < 1 || e.X < -0.5f || e.Y < -0.5f || e.X + e.W > w + 0.5f || e.Y + e.H > h + 0.5f)
+                    throw new LabelException($"Label design: '{e.K}' is off the label ({w:0.#} × {h:0.#} mm) - drag it back on.");
+                if (e.Size is < 0 or > 72)
+                    throw new LabelException($"Label design: the size of '{e.K}' must be 0 (fit the box) to 72 pt.");
+                if (e.Align is not ("L" or "C" or "R"))
+                    throw new LabelException($"Label design: the alignment of '{e.K}' must be L, C or R.");
+                if (!string.IsNullOrWhiteSpace(e.Font) && (e.Font.Length > 50 || !PriceLabelRenderer.FontExists(e.Font)))
+                    throw new LabelException($"Label design: font '{e.Font}' of '{e.K}' is not installed on the API server.");
+            }
         }
 
         private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

@@ -172,6 +172,16 @@ namespace ItemApi.Service
                 l.FreeTotal = l.FreeQty ?? Pieces(l.FreeCases, l.FreePieces, l.CaseSize, l, "free");
                 if (string.IsNullOrWhiteSpace(l.SupplierCode) && string.IsNullOrWhiteSpace(l.Barcode))
                     l.Issues.Add("No item code read.");
+                l.UnitCost = null;
+                l.AmountDiff = null;
+                // free goods only (nothing bought): no price or amount to check, the GRN puts them on the item's bought line
+                if (l.Qty is null or <= 0 && l.FreeTotal > 0)
+                {
+                    l.Issues.Add("Free only - goes on the GRN as free qty, nothing to pay.");
+                    if (l.Unclear) l.Issues.Add("Hard to read" + (string.IsNullOrWhiteSpace(l.Note) ? "." : ": " + l.Note));
+                    l.Status = "check";
+                    continue;
+                }
                 if (l.Qty is null or <= 0) l.Issues.Add("No quantity.");
                 if (l.UnitPrice is null or <= 0) l.Issues.Add("No unit price.");
                 if (l.GrossAmount is null) l.Issues.Add("No amount.");

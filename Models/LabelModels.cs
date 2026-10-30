@@ -61,6 +61,8 @@ namespace ItemApi.Models
         public string? EnglishFont { get; set; }
         // price labels: a line on labels without a discount (shop slogan)
         public string? FooterText { get; set; }
+        // price labels (U034): JSON list of PriceLabelElement — where each part goes; null = placed by itself
+        public string? DesignJson { get; set; }
         // one default per LabelKind
         public bool IsDefault { get; set; }
         // 1 active, 0 deleted
@@ -79,6 +81,8 @@ namespace ItemApi.Models
         public List<LabelPrintLine> Items { get; set; } = new();
         // labels to leave empty at the start of the first page (a sheet that is partly used)
         public int Skip { get; set; }
+        // null = the layout's ShowDates; true / false = the MFD / EXP line on or off for this print only
+        public bool? ShowDates { get; set; }
         [JsonConverter(typeof(LenientUserIdConverter))]
         public int? UserId { get; set; }
     }
@@ -152,6 +156,29 @@ namespace ItemApi.Models
         public decimal? DiscountAmount { get; set; }
         // set = "Save x%" (no price — as the old DiscountPercentagePrint label)
         public decimal? DiscountPercent { get; set; }
+    }
+
+    // One part of a designed price label (LabelLayout.DesignJson). Sizes in mm on the upright label (before the
+    // landscape turn), from its top-left corner.
+    public class PriceLabelElement
+    {
+        // code, name (the big name), name2 (English under a Sinhala name), price, save (Save Rs x / Save x%),
+        // now (Now Rs y), footer (labels without a discount)
+        public const string Keys = "code,name,name2,price,save,now,footer";
+
+        public string K { get; set; } = "";
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float W { get; set; }
+        public float H { get; set; }
+        // pt; 0 = as big as the box allows. A text that does not fit is made smaller.
+        public float Size { get; set; }
+        // L, C, R
+        public string Align { get; set; } = "L";
+        public bool Bold { get; set; }
+        public bool Italic { get; set; }
+        // font of the part's English text; null = the layout's English font. Sinhala text keeps the layout's Sinhala font.
+        public string? Font { get; set; }
     }
 
     // A wrong layout / request: 400 with the message

@@ -15,9 +15,11 @@ namespace ItemApi.Interface
         // barcode labels (ZPL)
         Task<(LabelLayout Layout, string Zpl, LabelPrintResult Result)> BuildAsync(LabelPrintRequest request);
         Task<LabelPrintResult> PrintAsync(LabelPrintRequest request);
+        Task<byte[]> PreviewAsync(LabelPrintRequest request, int page, bool one = false);
 
         // price labels (Windows printer driver)
         Task<LabelPrintResult> PrintPriceAsync(PriceLabelRequest request);
-        Task<byte[]> PreviewPriceAsync(PriceLabelRequest request, int page);
+        Task<byte[]> PreviewPriceAsync(PriceLabelRequest request, int page, bool one = false);
+        byte[] PreviewDesign(LabelLayout request, bool discount);
     }
 }

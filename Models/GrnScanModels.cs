@@ -212,8 +212,11 @@ namespace ItemApi.Models
     {
         public int LineKey { get; set; }
         public int ItemId { get; set; }
+        // pieces bought + free; FreeQty = of them, the free ones
         public decimal Qty { get; set; }
-        public decimal CostPrice { get; set; }
+        public decimal? FreeQty { get; set; }
+        // null = the item's cost now (a free line of an item with no bought line)
+        public decimal? CostPrice { get; set; }
         public decimal? SellPrice { get; set; }
         public decimal GAmount { get; set; }
     }

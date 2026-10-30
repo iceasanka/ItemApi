@@ -7,9 +7,10 @@
      z_tb_SupplierItemMap   supplier + the supplier's item code (or, without a code, their item name) -> ItemId.
                             SupplierDescrip keeps the supplier's own name of the item (the remark).
    Matching order (z_sp_GrnScanMatch): supplier code, then the supplier's item name, then a printed barcode.
-   Section 4 (U030): z_sp_GrnScanMakeDraft - the confirmed lines become a suspended GRN, committed on GRN Entry.
+   Section 4 (U030, U033): z_sp_GrnScanMakeDraft - the confirmed lines become a suspended GRN, committed on GRN Entry;
+                           z_tb_TempPurchase.FreeQty keeps the free pieces of a line (U033).
    Section 5 (U031): z_tb_GrnScan - every read kept, so the matching can go on another day; flushed when done.
-   Deployed databases: Updates/U029 + U030 + U031 (same objects).
+   Deployed databases: Updates/U029 + U030 + U031 + U033 (same objects).
    ============================================================================= */
 SET NOCOUNT ON;
 SET ANSI_NULLS ON;
@@ -204,7 +205,13 @@ GO
 --   CostPrice = what one piece really costs: (gross - line discount) / (qty + free qty), as the GRN commit takes the
 --   line CostPrice for the stock cost (free goods and the scheme discount lower the cost of every piece).
 --   GAmount = the invoice line amount after its discount. SellPrice NULL = the item's selling price now.
+--   FreeQty (U033) = how many of the line's Qty came free; Qty stays bought + free, so stock and the GRN commit are
+--   as before. A free line of an item with no bought line: CostPrice NULL = the item's cost now, GAmount 0.
 --   The same supplier invoice no on another GRN is refused (state 2) unless @AllowSameRef = 1.
+-- z_tb_TempPurchase.FreeQty (U033): the free pieces in Qty (GRN scan; NULL on lines made elsewhere)
+IF COL_LENGTH(N'dbo.z_tb_TempPurchase', N'FreeQty') IS NULL
+    ALTER TABLE dbo.z_tb_TempPurchase ADD FreeQty DECIMAL(18,2) NULL;
+GO
 IF OBJECT_ID(N'dbo.z_sp_GrnScanMakeDraft', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_GrnScanMakeDraft;
 GO
 IF TYPE_ID(N'dbo.z_tt_GrnScanDraftLine') IS NOT NULL DROP TYPE dbo.z_tt_GrnScanDraftLine;
@@ -213,9 +220,10 @@ CREATE TYPE dbo.z_tt_GrnScanDraftLine AS TABLE (
     LineKey   INT           NOT NULL PRIMARY KEY,   -- order on the invoice
     ItemId    INT           NOT NULL,
     Qty       DECIMAL(18,2) NOT NULL,               -- pieces bought + free
-    CostPrice DECIMAL(18,2) NOT NULL,               -- a piece
+    CostPrice DECIMAL(18,2) NULL,                   -- a piece; NULL = the item's cost now (a free line only)
     SellPrice DECIMAL(18,2) NULL,                   -- NULL = the item's selling price now
-    GAmount   DECIMAL(18,2) NOT NULL                -- the invoice line amount after its discount
+    GAmount   DECIMAL(18,2) NOT NULL,               -- the invoice line amount after its discount
+    FreeQty   DECIMAL(18,2) NULL                    -- of Qty, the free pieces
 );
 GO
 CREATE PROCEDURE dbo.z_sp_GrnScanMakeDraft
@@ -241,8 +249,9 @@ BEGIN
         RAISERROR(N'%s', 16, 1, N'Supplier not found.');
     IF NOT EXISTS (SELECT 1 FROM @Lines)
         RAISERROR(N'%s', 16, 1, N'No lines to put on the GRN.');
-    IF EXISTS (SELECT 1 FROM @Lines WHERE Qty <= 0 OR CostPrice < 0 OR SellPrice < 0 OR GAmount < 0)
-        RAISERROR(N'%s', 16, 1, N'A line has no qty, or a cost / price / amount below 0.');
+    IF EXISTS (SELECT 1 FROM @Lines WHERE Qty <= 0 OR CostPrice < 0 OR SellPrice < 0 OR GAmount < 0
+                                       OR FreeQty < 0 OR FreeQty > Qty)
+        RAISERROR(N'%s', 16, 1, N'A line has no qty, free qty above its qty, or a cost / price / amount below 0.');
     IF EXISTS (SELECT 1 FROM @Lines l WHERE NOT EXISTS (SELECT 1 FROM dbo.z_tb_Item i WHERE i.ItemId = l.ItemId AND i.Status = 1))
         RAISERROR(N'%s', 16, 1, N'An item of these lines is not found or not active.');
     IF @RefNo IS NOT NULL AND ISNULL(@AllowSameRef, 0) = 0
@@ -264,9 +273,10 @@ BEGIN
         IF EXISTS (SELECT 1 FROM dbo.z_tb_TempPurchaseSummary WHERE GrnNo = @GrnNo)
             RAISERROR(N'%s', 16, 1, N'The next GRN number is already used - try again.');
 
-        INSERT dbo.z_tb_TempPurchase (GrnNo, LocationId, ItemId, PDate, CostPrice, SellPrice, Qty, Discount, GAmount, Status, UDate, UserId)
-        SELECT @GrnNo, @LocationId, l.ItemId, @Today, l.CostPrice, ISNULL(l.SellPrice, ISNULL(d.RetailPrice, 0)), l.Qty, 0, l.GAmount,
-               1, @Now, 'scan'
+        INSERT dbo.z_tb_TempPurchase (GrnNo, LocationId, ItemId, PDate, CostPrice, SellPrice, Qty, FreeQty, Discount, GAmount,
+                                      Status, UDate, UserId)
+        SELECT @GrnNo, @LocationId, l.ItemId, @Today, ISNULL(l.CostPrice, ISNULL(d.CostPrice, 0)),
+               ISNULL(l.SellPrice, ISNULL(d.RetailPrice, 0)), l.Qty, NULLIF(l.FreeQty, 0), 0, l.GAmount, 1, @Now, 'scan'
         FROM @Lines l
         LEFT JOIN dbo.z_tb_ItemDet d ON d.ItemId = l.ItemId AND d.LocationId = @LocationId
         ORDER BY l.LineKey;

@@ -26,6 +26,9 @@ namespace ItemApi.Models
 
         public decimal? Qty { get; set; }
 
+        // of Qty, the free pieces (GRN scan, U033); NULL on lines made elsewhere
+        public decimal? FreeQty { get; set; }
+
         public decimal? Discount { get; set; }
 
         public decimal? GAmount { get; set; }

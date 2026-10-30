@@ -67,8 +67,10 @@ namespace ItemApi.Data
             t.Columns.Add("CostPrice", typeof(decimal));
             t.Columns.Add("SellPrice", typeof(decimal));
             t.Columns.Add("GAmount", typeof(decimal));
+            t.Columns.Add("FreeQty", typeof(decimal));
             foreach (var r in rows)
-                t.Rows.Add(r.LineKey, r.ItemId, r.Qty, r.CostPrice, (object?)r.SellPrice ?? DBNull.Value, r.GAmount);
+                t.Rows.Add(r.LineKey, r.ItemId, r.Qty, (object?)r.CostPrice ?? DBNull.Value, (object?)r.SellPrice ?? DBNull.Value, r.GAmount,
+                           (object?)r.FreeQty ?? DBNull.Value);
 
             var result = await Database.SqlQueryRaw<GrnScanDraftResult>(
                 "EXEC dbo.z_sp_GrnScanMakeDraft @SuppId = @SuppId, @RefNo = @RefNo, @Remark = @Remark, @Lines = @Lines, @AllowSameRef = @AllowSameRef",

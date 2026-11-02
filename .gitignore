@@ -366,3 +366,6 @@ FodyWeavers.xsd
 
 # GRN scan test copies (photos of supplier invoices)
 Uploads/GrnScan/
+
+# secrets of this machine (API keys) - never commit; a key pushed to GitHub is blocked by Google
+appsettings.Local.json

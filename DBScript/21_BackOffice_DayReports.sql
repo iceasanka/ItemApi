@@ -121,6 +121,8 @@ GO
 -- One row per till of the location (also tills without bills that day): the day's bills, discounts, sales and
 -- payments, and the cash in / out of the drawer. Refunds count negative in the payment totals, like the till Z.
 -- ExpectedCash = opening cash + cash (sales - refunds) + paid in - paid out.
+-- CashBack (U041): cash paid back on sale bills under 0 (till U039 - the items back worth more than the items sold),
+-- plus, with CashBackBills; already inside Cash (not a paid out) - shown on its own line.
 CREATE PROCEDURE dbo.z_sp_DayReportTills
     @Date DATE, @LocationId INT = 1, @TerminalId INT = NULL
 AS
@@ -140,7 +142,8 @@ BEGIN
            ISNULL(p.Cheque, 0) AS Cheque, ISNULL(p.OtherPay, 0) AS OtherPay,
            ISNULL(m.OpeningCash, 0) AS OpeningCash, ISNULL(m.PaidIn, 0) AS PaidIn, ISNULL(m.PaidOut, 0) AS PaidOut,
            ISNULL(m.OpeningCash, 0) + ISNULL(p.Cash, 0) + ISNULL(m.PaidIn, 0) - ISNULL(m.PaidOut, 0) AS ExpectedCash,
-           b.FirstBillAt, b.LastBillAt, m.LastMoveAt
+           b.FirstBillAt, b.LastBillAt, m.LastMoveAt,
+           ISNULL(cb.CashBack, 0) AS CashBack, ISNULL(cb.CashBackBills, 0) AS CashBackBills
     FROM dbo.z_tb_Terminal t
     LEFT JOIN (SELECT TerminalId,
                       SUM(CASE WHEN Status <> 9 AND InvType = 1 THEN 1 ELSE 0 END) AS Bills,
@@ -177,6 +180,11 @@ BEGIN
                FROM dbo.z_tb_CashMovement
                WHERE CreatedAt >= @From AND CreatedAt < @To AND LocationId = @LocationId AND Status = 1
                GROUP BY TerminalId) m ON m.TerminalId = t.TerminalId
+    LEFT JOIN (SELECT s.TerminalId, SUM(-p.Amount) AS CashBack, COUNT(DISTINCT s.InvoiceId) AS CashBackBills
+               FROM dbo.z_tb_SalesInvoice s JOIN dbo.z_tb_SalesPayment p ON p.InvoiceId = s.InvoiceId
+               WHERE s.InvDate >= @From AND s.InvDate < @To AND s.LocationId = @LocationId AND s.Status <> 9
+                 AND s.InvType = 1 AND p.PayType = 1 AND p.Amount < 0
+               GROUP BY s.TerminalId) cb ON cb.TerminalId = t.TerminalId
     WHERE t.LocationId = @LocationId
       AND (@TerminalId IS NULL OR t.TerminalId = @TerminalId)
     ORDER BY t.TerminalId;
@@ -185,6 +193,7 @@ GO
 -- The Zs (cashier day ends) whose business date is @Date, with the drawer cash: opening cash, paid in, paid out
 -- (from z_tb_CashMovement of that Z) and the expected cash. Discounts from the Z's bills on the server.
 -- Status 2 received, 3 reconciled, 4 mismatch.
+-- CashBack / CashBackBills (U041): cash paid back on the Z's sale bills under 0 - already inside CashAmount.
 CREATE PROCEDURE dbo.z_sp_DayReportZ
     @Date DATE, @LocationId INT = 1, @TerminalId INT = NULL
 AS
@@ -197,7 +206,8 @@ BEGIN
            ISNULL(m.OpeningCash, 0) AS OpeningCash, ISNULL(m.PaidIn, 0) AS PaidIn, ISNULL(m.PaidOut, 0) AS PaidOut,
            ISNULL(m.OpeningCash, 0) + z.CashAmount + ISNULL(m.PaidIn, 0) - ISNULL(m.PaidOut, 0) AS ExpectedCash,
            CAST(CASE WHEN m.Moves IS NULL THEN 0 ELSE 1 END AS BIT) AS HasCashMovements,
-           z.Status, z.MismatchNote
+           z.Status, z.MismatchNote,
+           ISNULL(cb.CashBack, 0) AS CashBack, ISNULL(cb.CashBackBills, 0) AS CashBackBills
     FROM dbo.z_tb_ZReport z
     JOIN dbo.z_tb_Terminal t ON t.TerminalId = z.TerminalId
     LEFT JOIN dbo.z_tb_User u ON u.LoginName = z.CashierId
@@ -215,6 +225,12 @@ BEGIN
                  AND EXISTS (SELECT 1 FROM dbo.z_tb_ZReport zz
                              WHERE zz.TerminalId = s.TerminalId AND zz.ZNo = s.ZNo AND zz.BusinessDate = @Date)
                GROUP BY s.TerminalId, s.ZNo) d ON d.TerminalId = z.TerminalId AND d.ZNo = z.ZNo
+    LEFT JOIN (SELECT s.TerminalId, s.ZNo, SUM(-p.Amount) AS CashBack, COUNT(DISTINCT s.InvoiceId) AS CashBackBills
+               FROM dbo.z_tb_SalesInvoice s JOIN dbo.z_tb_SalesPayment p ON p.InvoiceId = s.InvoiceId
+               WHERE s.Status <> 9 AND s.InvType = 1 AND p.PayType = 1 AND p.Amount < 0
+                 AND EXISTS (SELECT 1 FROM dbo.z_tb_ZReport zz
+                             WHERE zz.TerminalId = s.TerminalId AND zz.ZNo = s.ZNo AND zz.BusinessDate = @Date)
+               GROUP BY s.TerminalId, s.ZNo) cb ON cb.TerminalId = z.TerminalId AND cb.ZNo = z.ZNo
     WHERE z.BusinessDate = @Date AND z.LocationId = @LocationId
       AND (@TerminalId IS NULL OR z.TerminalId = @TerminalId)
     ORDER BY z.TerminalId, z.ZNo;

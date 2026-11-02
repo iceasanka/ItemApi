@@ -42,6 +42,9 @@ namespace ItemApi.Models
         public DateTime? FirstBillAt { get; set; }
         public DateTime? LastBillAt { get; set; }
         public DateTime? LastMoveAt { get; set; }
+        // cash paid back on sale bills under 0 (till U039, U041), plus - already inside Cash, not a paid out
+        public decimal CashBack { get; set; }
+        public int CashBackBills { get; set; }
     }
 
     // z_sp_DayReportZ — Status 2 received, 3 reconciled, 4 mismatch
@@ -75,6 +78,9 @@ namespace ItemApi.Models
         public bool HasCashMovements { get; set; }
         public int Status { get; set; }
         public string? MismatchNote { get; set; }
+        // cash paid back on the Z's sale bills under 0 (till U039, U041), plus - already inside CashAmount
+        public decimal CashBack { get; set; }
+        public int CashBackBills { get; set; }
     }
 
     // z_sp_DayReportCash — Kind 1 opening cash, 2 paid in, 3 paid out; Status 1 active, 9 replaced

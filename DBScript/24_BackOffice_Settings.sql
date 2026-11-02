@@ -61,7 +61,10 @@ INSERT @s VALUES
   1, 'bool', NULL, N'0', 10),
  ('Till.ProfitView', N'Till', N'Profit button',
   N'Hidden: no profit button. Shown, PIN needed: a supervisor PIN opens the profit view. Shown, no PIN: it opens without the PIN (owners, supervisors).',
-  2, 'choice', N'0=Hidden|1=Shown, PIN needed|2=Shown, no PIN', N'1', 20);
+  2, 'choice', N'0=Hidden|1=Shown, PIN needed|2=Shown, no PIN', N'1', 20),
+ ('Till.NoSaleReason', N'Till', N'No Sale: ask the reason',
+  N'On: No Sale asks why the drawer is opened (Change, ...) before it opens. Off: No Sale opens the drawer straight away (still logged, with no reason).',
+  2, 'bool', NULL, N'1', 30);
 
 UPDATE t SET GroupName = s.GroupName, Label = s.Label, Descrip = s.Descrip, Scope = s.Scope, ValueType = s.ValueType,
              Options = s.Options, DefaultValue = s.DefaultValue, SortOrder = s.SortOrder
@@ -80,7 +83,7 @@ IF OBJECT_ID(N'dbo.z_sp_SetUserSetting', 'P')      IS NOT NULL DROP PROCEDURE db
 IF OBJECT_ID(N'dbo.z_sp_GetSettingsForSync', 'P')  IS NOT NULL DROP PROCEDURE dbo.z_sp_GetSettingsForSync;
 IF OBJECT_ID(N'dbo.z_fn_SettingValueOk', 'FN')     IS NOT NULL DROP FUNCTION dbo.z_fn_SettingValueOk;
 GO
--- 1 when @Value is allowed for the setting: bool '0' / '1', choice one of its Options
+-- 1 when @Value is allowed for the setting: bool '0' / '1', choice one of its Options, number 0 or more (U038 loyalty)
 CREATE FUNCTION dbo.z_fn_SettingValueOk (@SettingKey VARCHAR(50), @Value NVARCHAR(200))
 RETURNS BIT
 AS
@@ -88,6 +91,9 @@ BEGIN
     DECLARE @ok BIT; SET @ok = 0;
     SELECT @ok = CASE WHEN ValueType = 'bool' AND @Value IN (N'0', N'1') THEN 1
                       WHEN ValueType = 'choice' AND @Value <> N'' AND CHARINDEX(N'|' + @Value + N'=', N'|' + ISNULL(Options, N'')) > 0 THEN 1
+                      WHEN ValueType = 'number' AND @Value LIKE N'%[0-9]%' AND @Value NOT LIKE N'%[^0-9.]%'
+                           AND LEN(@Value) - LEN(REPLACE(@Value, N'.', N'')) <= 1 AND LEN(@Value) <= 12
+                           AND LEFT(@Value, 1) <> N'.' AND RIGHT(@Value, 1) <> N'.' THEN 1
                       ELSE 0 END
     FROM dbo.z_tb_Setting WHERE SettingKey = @SettingKey;
     RETURN @ok;

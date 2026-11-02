@@ -9,8 +9,8 @@ namespace ItemApi.Service
 {
     // GRN scan, step 1 (R&D, Docs/StockSystem.md 6.31): sends invoice photos to Google Gemini (generateContent, JSON
     // answer in a fixed schema) and checks the sums of every line. Config section "GrnScan":
-    //   ApiKey       from Google AI Studio, in appsettings.json (an environment variable GrnScan__ApiKey wins over it).
-    //                Never sent to the web page.
+    //   ApiKey       from Google AI Studio, in appsettings.Local.json (git-ignored - a key pushed to GitHub is blocked
+    //                by Google); an environment variable GrnScan__ApiKey wins over it. Never sent to the web page.
     //   Model        default gemini-3.5-flash (GET api/GrnScan/Models lists what the key can use; gemini-2.5-flash is
     //                closed to new keys, gemini-flash-latest / gemini-3.8-flash did not answer on 2026-10-29)
     //   SaveFolder   default Uploads/GrnScan - every read is kept there (images + Gemini's answer) to compare
@@ -47,7 +47,7 @@ namespace ItemApi.Service
 
         private string ApiKey => _config["GrnScan:ApiKey"] is { Length: > 0 } k
             ? k
-            : throw new GrnScanException("GrnScan:ApiKey is not set - put the key from Google AI Studio in appsettings.json (GrnScan:ApiKey) and restart ItemApi.");
+            : throw new GrnScanException("GrnScan:ApiKey is not set - put the key from Google AI Studio in appsettings.Local.json (GrnScan:ApiKey, next to appsettings.json) and restart ItemApi.");
 
         public static string? ImageType(string fileName) => ImageTypes.GetValueOrDefault(Path.GetExtension(fileName));
 

@@ -24,6 +24,18 @@ namespace ItemApi.Data
         public Task<List<DayBill>> GetDayBillsAsync(DateTime date, int locationId, int? terminalId) =>
             DayQuery<DayBill>("z_sp_DayReportBills", date, locationId, terminalId);
 
+        // bank transfer / cheque payments of the bills dated from..to (both included); payType null = both (U042)
+        public async Task<List<DayBankChequeRow>> GetDayBankChequeAsync(DateTime from, DateTime to, int locationId, int? terminalId, int? payType)
+        {
+            return await Database.SqlQueryRaw<DayBankChequeRow>(
+                "EXEC dbo.z_sp_DayReportBankCheque @From = @From, @To = @To, @LocationId = @LocationId, @TerminalId = @TerminalId, @PayType = @PayType",
+                new SqlParameter("@From", SqlDbType.Date) { Value = from.Date },
+                new SqlParameter("@To", SqlDbType.Date) { Value = to.Date },
+                new SqlParameter("@LocationId", locationId),
+                new SqlParameter("@TerminalId", SqlDbType.Int) { Value = (object?)terminalId ?? DBNull.Value },
+                new SqlParameter("@PayType", SqlDbType.Int) { Value = (object?)payType ?? DBNull.Value }).ToListAsync();
+        }
+
         // null = no such bill
         public async Task<DayBillDetail?> GetDayBillAsync(string invoiceNo)
         {
@@ -163,6 +175,23 @@ namespace ItemApi.Data
                 new SqlParameter("@Bills", SqlDbType.Structured) { TypeName = "dbo.z_tt_TillAbandonedBill", Value = b },
                 new SqlParameter("@Lines", SqlDbType.Structured) { TypeName = "dbo.z_tt_TillAbandonedLine", Value = l }).ToListAsync();
             return result.FirstOrDefault() ?? new SyncAbandonedResult();
+        }
+
+        // Tills > Z report: discounts / refunds / exchanges / voids of one Z (U047). null = no U047 on the db.
+        public async Task<ZReportDetails?> GetZReportDetailsAsync(int terminalId, int zNo, int locationId)
+        {
+            try
+            {
+                return (await Database.SqlQueryRaw<ZReportDetails>(
+                    "EXEC dbo.z_sp_ZReportDetails @TerminalId = @TerminalId, @ZNo = @ZNo, @LocationId = @LocationId",
+                    new SqlParameter("@TerminalId", terminalId),
+                    new SqlParameter("@ZNo", zNo),
+                    new SqlParameter("@LocationId", locationId)).ToListAsync()).FirstOrDefault();
+            }
+            catch (SqlException ex) when (ex.Number == 2812)   // procedure not there (U047 not run)
+            {
+                return null;
+            }
         }
 
         private async Task<List<T>> DayQuery<T>(string proc, DateTime date, int locationId, int? terminalId)

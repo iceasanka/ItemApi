@@ -68,6 +68,8 @@ namespace ItemApi.Models
         public decimal OtherAmount { get; set; }
         public decimal? BankAmount { get; set; }
         public decimal? ChequeAmount { get; set; }
+        // card machine settlement typed at day end (U045 / U046); null = not entered. Difference = this − CardAmount
+        public decimal? CardSettlement { get; set; }
         public decimal ItemDiscount { get; set; }
         public decimal BillDiscount { get; set; }
         public decimal OpeningCash { get; set; }
@@ -144,7 +146,12 @@ namespace ItemApi.Models
         public decimal ItemDiscount { get; set; }
         public decimal Cash { get; set; }
         public decimal Card { get; set; }
+        // bank transfer (PayType 5) and cheque (PayType 6), U043; OtherPay = the rest (credit, voucher, points ...)
+        public decimal Bank { get; set; }
+        public decimal Cheque { get; set; }
         public decimal OtherPay { get; set; }
+        // transfer reference / cheque number of the bill (U043), null = none
+        public string? PayRef { get; set; }
         // refunds negative, NULL on a voided bill or when no line has a cost; UncostedLines = lines left out
         public decimal? Cost { get; set; }
         public decimal? Profit { get; set; }
@@ -193,6 +200,26 @@ namespace ItemApi.Models
     // PayType 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque
     public class DayBillPayment
     {
+        public int LineNum { get; set; }
+        public int PayType { get; set; }
+        public decimal Amount { get; set; }
+        public string? RefNo { get; set; }
+    }
+
+    // GET api/DayReport/BankCheque — one bank transfer (PayType 5) / cheque (PayType 6) payment (z_sp_DayReportBankCheque, U042).
+    // Amount negative on a refund bill (InvType 2); NetAmount = the bill's own amount (plus).
+    public class DayBankChequeRow
+    {
+        public int InvoiceId { get; set; }
+        public string InvoiceNo { get; set; } = "";
+        public int TerminalId { get; set; }
+        public string TerminalCode { get; set; } = "";
+        public int ZNo { get; set; }
+        public int InvType { get; set; }
+        public DateTime InvDate { get; set; }
+        public string? CashierId { get; set; }
+        public string? CashierName { get; set; }
+        public decimal NetAmount { get; set; }
         public int LineNum { get; set; }
         public int PayType { get; set; }
         public decimal Amount { get; set; }

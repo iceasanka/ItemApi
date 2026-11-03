@@ -265,6 +265,7 @@ namespace ItemApi.Repositories
                                      Descrip = i != null ? i.Descrip : zi.ItemId == 0 ? "Other items (not in item list)" : null
                                  }).ToListAsync();
 
+                z.Details = await _context.GetZReportDetailsAsync(terminalId, zNo, _locationId);
                 return z;
             }
             catch (Exception ex)

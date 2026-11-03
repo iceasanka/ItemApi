@@ -498,6 +498,13 @@ IF COL_LENGTH('dbo.zf_tb_ZReport', 'ItemDiscount') IS NULL
                                       BillDiscount DECIMAL(18,2) NULL;
 GO
 
+-- Card machine settlement (2026-11-03, U045): the total the card machine printed at its settlement, typed on the day
+-- end screen (zf_sp_CloseZ @CardSettlement). Compared with CardAmount on the Z slip; sent to the back office.
+-- NULL = not entered.
+IF COL_LENGTH('dbo.zf_tb_ZReport', 'CardSettlement') IS NULL
+    ALTER TABLE dbo.zf_tb_ZReport ADD CardSettlement DECIMAL(18,2) NULL;
+GO
+
 -- Settings (2026-10-27, Docs/StockSystem.md 6.28): a copy of the back office z_tb_Setting / z_tb_UserSetting, the
 -- whole list replaced on every download (zf_sp_SaveSettings). zf_tb_Setting.Value = the general value (its default
 -- when none is set); zf_tb_UserSetting = a user's own value, used instead of the general one (zf_sp_GetSettings).
@@ -825,6 +832,8 @@ END
 GO
 
 -- Returns the open Z, opening a new one if there is none (called at cashier sign-on and by SaveInvoice).
+-- An open Z with no bill yet takes today's date (U044): the Z opened right after a day end at night is dated the
+-- day it sells, not the night before. OpenedAt is not changed.
 CREATE PROCEDURE dbo.zf_sp_OpenZ
     @CashierId VARCHAR(20) = NULL,
     @ZNo       INT = NULL OUTPUT,
@@ -836,6 +845,11 @@ BEGIN
 
     BEGIN TRAN;
         SELECT @ZNo = ZNo FROM dbo.zf_tb_ZReport WITH (UPDLOCK, HOLDLOCK) WHERE Status = 0;
+
+        IF @ZNo IS NOT NULL
+            UPDATE dbo.zf_tb_ZReport SET BusinessDate = CAST(GETDATE() AS DATE)
+            WHERE ZNo = @ZNo AND BusinessDate < CAST(GETDATE() AS DATE)
+              AND NOT EXISTS (SELECT 1 FROM dbo.zf_tb_Invoice i WHERE i.ZNo = @ZNo);
 
         IF @ZNo IS NULL
         BEGIN
@@ -1457,8 +1471,10 @@ END
 GO
 
 -- Cashier day end: totals the open Z from the local bills and closes it. The next bill opens a new Z.
+-- @CardSettlement = the card machine settlement total typed by the cashier (U045), NULL = not entered.
 CREATE PROCEDURE dbo.zf_sp_CloseZ
-    @CashierId VARCHAR(20) = NULL
+    @CashierId      VARCHAR(20) = NULL,
+    @CardSettlement DECIMAL(18,2) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -1512,6 +1528,7 @@ BEGIN
                                    FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = i.InvoiceNo
                                    WHERE i.ZNo = @ZNo AND i.Status <> 9 AND i.InvType = 1), 0),
             BillDiscount = ISNULL((SELECT SUM(Discount) FROM dbo.zf_tb_Invoice WHERE ZNo = @ZNo AND Status <> 9 AND InvType = 1), 0),
+            CardSettlement = @CardSettlement,
             Status       = 1
         FROM dbo.zf_tb_ZReport z
         WHERE z.ZNo = @ZNo;
@@ -1543,7 +1560,7 @@ BEGIN
 
     SELECT c.TerminalId, z.ZNo, z.BusinessDate, z.CashierId, z.OpenedAt, z.ClosedAt, z.FromSeq, z.ToSeq,
            z.InvoiceCount, z.LineCount, z.TotalQty, z.SalesAmount, z.RefundAmount, z.NetSales,
-           z.CashAmount, z.CardAmount, z.OtherAmount, z.BankAmount, z.ChequeAmount, z.Status
+           z.CashAmount, z.CardAmount, z.OtherAmount, z.BankAmount, z.ChequeAmount, z.CardSettlement, z.Status
     FROM dbo.zf_tb_ZReport z CROSS JOIN dbo.zf_tb_Config c
     WHERE z.ZNo = @ZNo AND z.Status <> 0;
 

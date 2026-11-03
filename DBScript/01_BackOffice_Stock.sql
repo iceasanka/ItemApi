@@ -311,6 +311,12 @@ IF COL_LENGTH('dbo.z_tb_ZReport', 'BankAmount') IS NULL
                                      ChequeAmount DECIMAL(18,2) NULL;
 GO
 
+-- Card machine settlement (2026-11-03, U045): the total the till's card machine printed at its settlement, typed by the
+-- cashier at day end. Difference = CardSettlement - CardAmount. NULL = not entered (or a till without U045).
+IF COL_LENGTH('dbo.z_tb_ZReport', 'CardSettlement') IS NULL
+    ALTER TABLE dbo.z_tb_ZReport ADD CardSettlement DECIMAL(18,2) NULL;
+GO
+
 IF OBJECT_ID('dbo.z_tb_ZReportItem', 'U') IS NULL
 CREATE TABLE dbo.z_tb_ZReportItem (
     ZId        INT           NOT NULL,
@@ -1133,7 +1139,8 @@ CREATE PROCEDURE dbo.z_sp_SubmitZReport
     @OtherAmount   DECIMAL(18,2) = 0,
     @BankAmount    DECIMAL(18,2) = NULL,   -- part of @OtherAmount; NULL = till without the split
     @ChequeAmount  DECIMAL(18,2) = NULL,
-    @Items         dbo.z_tt_ZReportItem READONLY
+    @Items         dbo.z_tt_ZReportItem READONLY,
+    @CardSettlement DECIMAL(18,2) = NULL   -- card machine settlement typed at day end (U045); NULL = not entered
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -1155,11 +1162,11 @@ BEGIN
             INSERT dbo.z_tb_ZReport
                 (TerminalId, ZNo, LocationId, BusinessDate, CashierId, OpenedAt, ClosedAt, FromSeq, ToSeq,
                  InvoiceCount, LineCount, TotalQty, SalesAmount, RefundAmount, NetSales,
-                 CashAmount, CardAmount, OtherAmount, BankAmount, ChequeAmount, Status)
+                 CashAmount, CardAmount, OtherAmount, BankAmount, ChequeAmount, CardSettlement, Status)
             VALUES
                 (@TerminalId, @ZNo, @LocationId, @BusinessDate, @CashierId, @OpenedAt, @ClosedAt, @FromSeq, @ToSeq,
                  @InvoiceCount, @LineCount, @TotalQty, @SalesAmount, @RefundAmount, @NetSales,
-                 @CashAmount, @CardAmount, @OtherAmount, @BankAmount, @ChequeAmount, 2);
+                 @CashAmount, @CardAmount, @OtherAmount, @BankAmount, @ChequeAmount, @CardSettlement, 2);
             SET @ZId = SCOPE_IDENTITY();
         END
         ELSE IF @Status <> 3   -- a reconciled Z is final; a resend is ignored
@@ -1169,7 +1176,7 @@ BEGIN
                 FromSeq = @FromSeq, ToSeq = @ToSeq, InvoiceCount = @InvoiceCount, LineCount = @LineCount,
                 TotalQty = @TotalQty, SalesAmount = @SalesAmount, RefundAmount = @RefundAmount, NetSales = @NetSales,
                 CashAmount = @CashAmount, CardAmount = @CardAmount, OtherAmount = @OtherAmount,
-                BankAmount = @BankAmount, ChequeAmount = @ChequeAmount,
+                BankAmount = @BankAmount, ChequeAmount = @ChequeAmount, CardSettlement = @CardSettlement,
                 Status = 2, SubmittedAt = GETDATE()
             WHERE ZId = @ZId;
             DELETE dbo.z_tb_ZReportItem WHERE ZId = @ZId;

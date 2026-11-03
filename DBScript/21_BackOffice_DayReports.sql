@@ -53,6 +53,7 @@ IF OBJECT_ID(N'dbo.z_sp_DayReportBills', 'P') IS NOT NULL DROP PROCEDURE dbo.z_s
 IF OBJECT_ID(N'dbo.z_sp_DayReportBill', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_DayReportBill;
 IF OBJECT_ID(N'dbo.z_sp_DayReportBillLines', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_DayReportBillLines;
 IF OBJECT_ID(N'dbo.z_sp_DayReportBillPayments', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_DayReportBillPayments;
+IF OBJECT_ID(N'dbo.z_sp_DayReportBankCheque', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_DayReportBankCheque;
 GO
 IF TYPE_ID('dbo.z_tt_CashMovement') IS NOT NULL DROP TYPE dbo.z_tt_CashMovement;
 GO
@@ -194,6 +195,7 @@ GO
 -- (from z_tb_CashMovement of that Z) and the expected cash. Discounts from the Z's bills on the server.
 -- Status 2 received, 3 reconciled, 4 mismatch.
 -- CashBack / CashBackBills (U041): cash paid back on the Z's sale bills under 0 - already inside CashAmount.
+-- CardSettlement (U046): card machine settlement typed at day end (U045), NULL = not entered.
 CREATE PROCEDURE dbo.z_sp_DayReportZ
     @Date DATE, @LocationId INT = 1, @TerminalId INT = NULL
 AS
@@ -201,7 +203,7 @@ BEGIN
     SET NOCOUNT ON;
     SELECT z.ZId, z.TerminalId, t.TerminalCode, z.ZNo, z.BusinessDate, z.CashierId, u.UserName AS CashierName,
            z.OpenedAt, z.ClosedAt, z.InvoiceCount, z.SalesAmount, z.RefundAmount, z.NetSales,
-           z.CashAmount, z.CardAmount, z.OtherAmount, z.BankAmount, z.ChequeAmount,
+           z.CashAmount, z.CardAmount, z.OtherAmount, z.BankAmount, z.ChequeAmount, z.CardSettlement,
            ISNULL(d.ItemDiscount, 0) AS ItemDiscount, ISNULL(d.BillDiscount, 0) AS BillDiscount,
            ISNULL(m.OpeningCash, 0) AS OpeningCash, ISNULL(m.PaidIn, 0) AS PaidIn, ISNULL(m.PaidOut, 0) AS PaidOut,
            ISNULL(m.OpeningCash, 0) + z.CashAmount + ISNULL(m.PaidIn, 0) - ISNULL(m.PaidOut, 0) AS ExpectedCash,
@@ -307,6 +309,9 @@ GO
 -- Every bill of the day (voided ones too, Status 9), newest first, with how it was paid.
 -- Cost / Profit as z_sp_DayReportItems (refund bills negative, after the bill discount); NULL = no line has a cost,
 -- and always NULL on a voided bill. UncostedLines = lines left out of Cost / Profit (other items, items without a cost).
+-- Payments as on the bill (plus, also on a refund bill): Cash, Card, Bank (5 bank transfer), Cheque (6), OtherPay =
+-- the rest (3 credit, 4 voucher, 8 points ...) - Bank / Cheque split out by U043. PayRef = the transfer reference /
+-- cheque number (the first one given on the bill), NULL = none.
 CREATE PROCEDURE dbo.z_sp_DayReportBills
     @Date DATE, @LocationId INT = 1, @TerminalId INT = NULL
 AS
@@ -322,7 +327,12 @@ BEGIN
            ISNULL((SELECT SUM(it.Discount) FROM dbo.z_tb_SalesInvoiceItem it WHERE it.InvoiceId = s.InvoiceId), 0) AS ItemDiscount,
            ISNULL((SELECT SUM(p.Amount) FROM dbo.z_tb_SalesPayment p WHERE p.InvoiceId = s.InvoiceId AND p.PayType = 1), 0) AS Cash,
            ISNULL((SELECT SUM(p.Amount) FROM dbo.z_tb_SalesPayment p WHERE p.InvoiceId = s.InvoiceId AND p.PayType = 2), 0) AS Card,
-           ISNULL((SELECT SUM(p.Amount) FROM dbo.z_tb_SalesPayment p WHERE p.InvoiceId = s.InvoiceId AND p.PayType NOT IN (1, 2)), 0) AS OtherPay,
+           ISNULL((SELECT SUM(p.Amount) FROM dbo.z_tb_SalesPayment p WHERE p.InvoiceId = s.InvoiceId AND p.PayType = 5), 0) AS Bank,
+           ISNULL((SELECT SUM(p.Amount) FROM dbo.z_tb_SalesPayment p WHERE p.InvoiceId = s.InvoiceId AND p.PayType = 6), 0) AS Cheque,
+           ISNULL((SELECT SUM(p.Amount) FROM dbo.z_tb_SalesPayment p WHERE p.InvoiceId = s.InvoiceId AND p.PayType NOT IN (1, 2, 5, 6)), 0) AS OtherPay,
+           (SELECT TOP 1 p.RefNo FROM dbo.z_tb_SalesPayment p
+            WHERE p.InvoiceId = s.InvoiceId AND p.PayType IN (5, 6) AND LTRIM(RTRIM(ISNULL(p.RefNo, ''))) <> ''
+            ORDER BY p.LineNum) AS PayRef,
            CASE WHEN s.Status <> 9 THEN CAST(sg.Sign * pr.CostSum AS DECIMAL(18,2)) END AS Cost,
            CASE WHEN s.Status <> 9 THEN CAST(sg.Sign * (pr.CostedAmount * (1 - sg.DiscShare) - pr.CostSum) AS DECIMAL(18,2)) END AS Profit,
            CASE WHEN s.Status <> 9 THEN ISNULL(pr.UncostedLines, 0) ELSE 0 END AS UncostedLines
@@ -388,6 +398,32 @@ BEGIN
     JOIN dbo.z_tb_SalesPayment p ON p.InvoiceId = s.InvoiceId
     WHERE s.InvoiceNo = @InvoiceNo
     ORDER BY p.LineNum;
+END
+GO
+-- Bank transfer (5) and cheque (6) payments of the bills dated @From..@To (both included), oldest first (U042).
+-- Voided bills (Status 9) left out; refund bills (InvType 2) negative, like the till Z. @PayType NULL = both.
+CREATE PROCEDURE dbo.z_sp_DayReportBankCheque
+    @From DATE, @To DATE, @LocationId INT = 1, @TerminalId INT = NULL, @PayType INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @F DATETIME, @T DATETIME;
+    SET @F = @From;
+    SET @T = DATEADD(DAY, 1, CAST(@To AS DATETIME));
+
+    SELECT s.InvoiceId, s.InvoiceNo, s.TerminalId, t.TerminalCode, s.ZNo, s.InvType, s.InvDate, s.CashierId,
+           u.UserName AS CashierName, s.NetAmount, p.LineNum, p.PayType,
+           CASE WHEN s.InvType = 2 THEN -p.Amount ELSE p.Amount END AS Amount,
+           p.RefNo
+    FROM dbo.z_tb_SalesInvoice s
+    JOIN dbo.z_tb_SalesPayment p ON p.InvoiceId = s.InvoiceId
+    JOIN dbo.z_tb_Terminal t ON t.TerminalId = s.TerminalId
+    LEFT JOIN dbo.z_tb_User u ON u.LoginName = s.CashierId
+    WHERE s.InvDate >= @F AND s.InvDate < @T AND s.LocationId = @LocationId AND s.Status <> 9
+      AND p.PayType IN (5, 6)
+      AND (@PayType IS NULL OR p.PayType = @PayType)
+      AND (@TerminalId IS NULL OR s.TerminalId = @TerminalId)
+    ORDER BY s.InvDate, s.InvoiceId, p.LineNum;
 END
 GO
 SET NOEXEC OFF;

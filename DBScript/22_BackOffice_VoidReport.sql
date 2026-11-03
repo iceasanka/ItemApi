@@ -264,7 +264,46 @@ BEGIN
     ORDER BY d.OpenedAt DESC, d.TerminalId, d.DrawerLogId;
 END
 GO
+IF OBJECT_ID(N'dbo.z_sp_ZReportDetails', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_ZReportDetails;
+GO
+-- Detail lines of one Z (Tills > Z report page, U047), from the Z's bills and void log on the server - bills the till
+-- has not sent yet are not in it. One row. Amounts plus; voided bills (Status 9) left out of the bill figures.
+-- ItemDiscount / BillDiscount: line and sub total discounts of the sale bills (as the till Z).
+-- Exchange: sale bills with items brought back (minus lines); ExchangeAmount = those lines, already inside the sales.
+-- Voids (z_tb_TillVoidLog, lines of refund bills left out as the Voids report): Kind 1 void line, 2 void bill
+-- (bills = groups), 3 qty made smaller.
+CREATE PROCEDURE dbo.z_sp_ZReportDetails
+    @TerminalId INT, @ZNo INT, @LocationId INT = 1
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT
+        ISNULL((SELECT SUM(it.Discount) FROM dbo.z_tb_SalesInvoice s JOIN dbo.z_tb_SalesInvoiceItem it ON it.InvoiceId = s.InvoiceId
+                WHERE s.TerminalId = @TerminalId AND s.ZNo = @ZNo AND s.LocationId = @LocationId AND s.Status <> 9 AND s.InvType = 1), 0) AS ItemDiscount,
+        ISNULL((SELECT SUM(s.Discount) FROM dbo.z_tb_SalesInvoice s
+                WHERE s.TerminalId = @TerminalId AND s.ZNo = @ZNo AND s.LocationId = @LocationId AND s.Status <> 9 AND s.InvType = 1), 0) AS BillDiscount,
+        (SELECT COUNT(*) FROM dbo.z_tb_SalesInvoice s
+         WHERE s.TerminalId = @TerminalId AND s.ZNo = @ZNo AND s.LocationId = @LocationId AND s.Status <> 9 AND s.InvType = 2) AS RefundBills,
+        ISNULL((SELECT SUM(s.NetAmount) FROM dbo.z_tb_SalesInvoice s
+                WHERE s.TerminalId = @TerminalId AND s.ZNo = @ZNo AND s.LocationId = @LocationId AND s.Status <> 9 AND s.InvType = 2), 0) AS RefundAmount,
+        (SELECT COUNT(DISTINCT s.InvoiceId) FROM dbo.z_tb_SalesInvoice s JOIN dbo.z_tb_SalesInvoiceItem it ON it.InvoiceId = s.InvoiceId
+         WHERE s.TerminalId = @TerminalId AND s.ZNo = @ZNo AND s.LocationId = @LocationId AND s.Status <> 9 AND s.InvType = 1 AND it.Amount < 0) AS ExchangeBills,
+        ISNULL((SELECT SUM(-it.Amount) FROM dbo.z_tb_SalesInvoice s JOIN dbo.z_tb_SalesInvoiceItem it ON it.InvoiceId = s.InvoiceId
+                WHERE s.TerminalId = @TerminalId AND s.ZNo = @ZNo AND s.LocationId = @LocationId AND s.Status <> 9 AND s.InvType = 1 AND it.Amount < 0), 0) AS ExchangeAmount,
+        ISNULL(v.VoidLines, 0) AS VoidLines, ISNULL(v.VoidLineAmount, 0) AS VoidLineAmount,
+        ISNULL(v.VoidBills, 0) AS VoidBills, ISNULL(v.VoidBillAmount, 0) AS VoidBillAmount,
+        ISNULL(v.QtyCuts, 0) AS QtyCuts, ISNULL(v.QtyCutAmount, 0) AS QtyCutAmount
+    FROM (SELECT SUM(CASE WHEN Kind = 1 THEN 1 ELSE 0 END) AS VoidLines,
+                 SUM(CASE WHEN Kind = 1 THEN Amount ELSE 0 END) AS VoidLineAmount,
+                 COUNT(DISTINCT CASE WHEN Kind = 2 THEN GroupNo END) AS VoidBills,
+                 SUM(CASE WHEN Kind = 2 THEN Amount ELSE 0 END) AS VoidBillAmount,
+                 SUM(CASE WHEN Kind = 3 THEN 1 ELSE 0 END) AS QtyCuts,
+                 SUM(CASE WHEN Kind = 3 THEN Amount ELSE 0 END) AS QtyCutAmount
+          FROM dbo.z_tb_TillVoidLog
+          WHERE TerminalId = @TerminalId AND ZNo = @ZNo AND LocationId = @LocationId AND Refund = 0) v;
+END
+GO
 SET NOEXEC OFF;
 GO
-PRINT 'U019 back office: voids & No Sale report (z_tb_TillVoidLog, z_tb_TillDrawerLog, z_sp_SyncTillLog, z_sp_DayReportLoss* ).';
+PRINT 'U019 back office: voids & No Sale report (z_tb_TillVoidLog, z_tb_TillDrawerLog, z_sp_SyncTillLog, z_sp_DayReportLoss*, z_sp_ZReportDetails).';
 GO

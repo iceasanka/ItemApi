@@ -60,6 +60,8 @@ namespace ItemApi.Models
         // part of OtherAmount: bank transfer (PayType 5) and cheque (PayType 6); null = the till sent no split
         [Column(TypeName = "decimal(18,2)")] public decimal? BankAmount { get; set; }
         [Column(TypeName = "decimal(18,2)")] public decimal? ChequeAmount { get; set; }
+        // card machine settlement typed at day end on the till (U045); null = not entered. Difference = this - CardAmount
+        [Column(TypeName = "decimal(18,2)")] public decimal? CardSettlement { get; set; }
         public int? SrvInvoiceCount { get; set; }
         public int? SrvLineCount { get; set; }
         [Column(TypeName = "decimal(18,3)")] public decimal? SrvTotalQty { get; set; }
@@ -77,6 +79,30 @@ namespace ItemApi.Models
 
         [NotMapped]
         public List<ZReportItem>? Items { get; set; }
+
+        // GET ZReport/{terminalId}/{zNo} only: discounts / refunds / exchanges / voids (z_sp_ZReportDetails, U047);
+        // null = not read (no U047)
+        [NotMapped]
+        public ZReportDetails? Details { get; set; }
+    }
+
+    // One row of z_sp_ZReportDetails (U047), from the Z's bills and void log on the server. Amounts plus.
+    // Exchange = sale bills with items brought back (minus lines), already inside the sales.
+    // Voids: Kind 1 void line, 2 void bill (bills = groups), 3 qty made smaller; lines of refund bills left out.
+    public class ZReportDetails
+    {
+        public decimal ItemDiscount { get; set; }
+        public decimal BillDiscount { get; set; }
+        public int RefundBills { get; set; }
+        public decimal RefundAmount { get; set; }
+        public int ExchangeBills { get; set; }
+        public decimal ExchangeAmount { get; set; }
+        public int VoidLines { get; set; }
+        public decimal VoidLineAmount { get; set; }
+        public int VoidBills { get; set; }
+        public decimal VoidBillAmount { get; set; }
+        public int QtyCuts { get; set; }
+        public decimal QtyCutAmount { get; set; }
     }
 
     // Key (ZId, ItemId) set in AppDbContext.StockLedger.cs
@@ -281,6 +307,8 @@ namespace ItemApi.Models
         // part of OtherAmount; not sent by tills on the old TillService
         public decimal? BankAmount { get; set; }
         public decimal? ChequeAmount { get; set; }
+        // card machine settlement typed at day end (till U045); null = not entered / older TillService
+        public decimal? CardSettlement { get; set; }
         public List<ZReportSubmitItem> Items { get; set; } = new();
     }
 

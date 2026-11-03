@@ -128,7 +128,7 @@ Business errors are `THROW 50001–50099`; the API turns them into **HTTP 400 `{
 | `zf_tb_Invoice` / `…Item` / `…Payment` | bills, `Synced` flag |
 | `zf_tb_ZReport` / `…Item` | Z per shift: 0 open, 1 closed, 2 submitted, 3 reconciled, 4 mismatch |
 | `zf_sp_SetupTerminal` | one-time setup |
-| `zf_sp_OpenZ` | open Z (called at sign-on; SaveInvoice also opens one if needed) |
+| `zf_sp_OpenZ` | open Z (called at sign-on; SaveInvoice also opens one if needed). An open Z with no bill yet takes today's date (U044, §6.4) |
 | `zf_sp_SaveInvoice` | allocates `T01-00000123`, checks `Amount = Qty*Price − Disc`, payments = net and (sales only) each price (§6.5), saves |
 | `zf_sp_VoidInvoice` | only an **unsent** bill in the **open** Z. After upload → do a refund bill |
 | `zf_tb_SuspendedBill` / `…Item` | suspended (parked) bills, §6.6. Status 1 suspended, 2 recalled, 9 cancelled |
@@ -243,6 +243,34 @@ while offline — the central `z_tb_System` counters can't be used offline.
    - **3 Reconciled** → `zf_sp_SetZStatus(z, 3)`. Done.
    - **4 Mismatch** → `missingInvoiceNos` → `zf_sp_GetInvoicesByNo` → `POST api/Sync/Invoices`
      → submit the Z again. (Late bills also trigger an automatic re-check on the server.)
+
+**Z date (`BusinessDate`, U044, 2026-11-03):** the next Z opens straight after a day end, so a day end at night
+opened a Z dated that night. `zf_sp_OpenZ` now re-dates the open Z to today while it has no bill yet (sign-on, cash
+in / out and every bill call it), so the Z is filed under the day it sells - the Tills page and Day Reports filter on
+this date. `OpenedAt` keeps the real open time; a Z with bills keeps its date (open over midnight = the day it
+started). Zs dated wrong before U044: `DataFixes/F003_*_ZDateFirstBill.sql` (date of the first bill).
+
+**Card machine settlement (U045, 2026-11-03):** on the day end screen the cashier may type the total the card machine
+printed at its settlement (empty = not entered; the keypad types into the box tapped last, counted cash or card).
+`POST /z/close { countedCash, cardSettlement }` → `zf_sp_CloseZ @CardSettlement` stores it on the Z
+(`zf_tb_ZReport.CardSettlement`) in the same transaction; the Z slip prints `Card sales`, `Card machine settlement` and
+`Card difference` / `CARD SHORT` / `CARD OVER` (settlement − card sales, bold when not 0). `zf_sp_GetZForSubmit` sends
+it up → `z_sp_SubmitZReport @CardSettlement` → `z_tb_ZReport.CardSettlement`. Back office Tills page: column
+"Card machine" (the settlement, the difference in red); Z detail and its print: settlement and short / over. It does
+not change the reconcile (the Z status is about the bills only). Day Reports (U046, `z_sp_DayReportZ.CardSettlement`):
+the same "Card machine" column on the Day end (Z) tab, and on Summary > Payments the settlement total of the day's Zs
+with Card difference / short / over against those Zs' card sales. Summary > Per till: "Card machine" = the till's Zs
+of the day added up the same way (worked out on the page from the Z list). Print Day report (80mm / A4): the settlement
+and CARD SHORT / OVER under Payments, and a "Card mc" column in Per till when any Z of the day has a settlement.
+
+**Z details (2026-11-03).** The Z / X slip prints, after NET SALES: Item discounts, Sub total discounts, TOTAL
+DISCOUNTS; Refund bills (n), Exchange items back (n) (minus lines on sale bills, already inside Sales), TOTAL REFUND /
+EXCHANGE; Void lines / Void bills / Qty cuts (n) and TOTAL VOIDS (`zf_tb_VoidLog`, lines of refund bills left out, as
+the Voids report); Voided saved bills (Status 9) when any. TillService reads them from the bills and the void log
+(`TillDb.GetZDetailsAsync`, no till db change; `ZSummary.details` in the `/z/close` and `/x` answers). Back office
+Z detail page and its print: the same three groups from `z_sp_ZReportDetails` (U047, the Z's bills and void log on
+the server, so bills not received yet are missing), and the list of each bank transfer / cheque of the Z (bill, time,
+cashier, ref / cheque no, amount; from `api/DayReport/BankCheque` by the Z's open..close days, kept to its ZNo).
 4. Back office sees all Zs on the Z report screen; a Z stuck on 4 needs a look (`mismatchNote`,
    item diff table).
 
@@ -625,6 +653,22 @@ SQL: `Updates/U003_BackOffice_PayTypes.sql`, `Updates/U003_Till_PayTypes.sql` (a
   between Card and "Credit / voucher".
 - **Drawer and cash**: neither opens the drawer nor counts as drawer cash (`ExpectedCash` is cash only).
 - **Dashboards** (§6.9) still show Cash / Card / Other; Other includes both. Not split there yet.
+- **Not Paid In**: a bank transfer / cheque bill is a sale paid another way, never a Paid In (`zf_tb_CashMovement` is
+  cash put into / taken out of the drawer only).
+- **Bank & cheque report (2026-11-03, U042)**:
+  - Back office **Sales → Bank & cheque report** (`/bank-cheque-report`, `GET api/DayReport/BankCheque?from&to&terminalId&payType`,
+    `z_sp_DayReportBankCheque`): every bank transfer / cheque payment in a date range (at most a year) with bill, till,
+    Z, cashier and the reference / cheque no — to match with the bank statement. Voided bills out, refunds negative.
+    Filter by till / type / text; transfers without a reference counted; Print A4, Excel (CSV), bill view.
+  - Till **Menu → Bank & cheque** (also F12 Cash menu; shortcut key settable): `GET /reports/bankcheque` for the open Z
+    (else the last one) on the screen, Print = `POST /reports/bankcheque/print` → a BANK TRANSFERS slip and a CHEQUES
+    slip, each only when it has bills (400 when neither). No PIN, no drawer.
+  - **Day end**: after the CASH IN / OUT slip and before the Z slip, the same BANK TRANSFERS and CHEQUES slips print,
+    each only when the Z has such bills. The CHEQUES slip ends with "Received by" for whoever takes the cheques. A
+    failure reading them never stops the Z slip. No till db change (TillService only).
+- **Day Reports → Bills (2026-11-03, U043)**: Cash / Card / **Bank / Cheque** / Other (credit, voucher, points) per bill
+  and the transfer reference / cheque no (`PayRef`); filter by payment type; the text filter also finds the reference;
+  a total row of the bills shown (voided out, refunds taken off).
 - **Mixing versions**: new TillService on a till db without U003 → bills save, the Z closes, but the split is 0
   (`GetIfThere`); old TillService on an updated till db works; a new till talking to an old ItemApi → the back office
   keeps only "Other". The new ItemApi **needs** U003 on easyway first (the Z list reads the new columns).

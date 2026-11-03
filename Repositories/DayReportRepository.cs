@@ -106,6 +106,20 @@ namespace ItemApi.Repositories
             }
         }
 
+        // bank transfer / cheque payments for matching with the bank statement (U042)
+        public async Task<List<DayBankChequeRow>> GetBankChequeAsync(DateTime from, DateTime to, int? terminalId, int? payType)
+        {
+            try
+            {
+                return await _context.GetDayBankChequeAsync(from, to, _locationId, terminalId, payType);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<DayBillDetail?> GetBillAsync(string invoiceNo)
         {
             try

@@ -88,6 +88,7 @@ builder.Services.AddAuthorization(o =>
 });
 
 builder.Services.AddScoped<IGoogleSheetService, GoogleSheetService>();
+builder.Services.AddSingleton<BankDriveService>(); // bank statement CSVs in Google Drive (cheque-validate)
 
 
 

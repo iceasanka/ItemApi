@@ -68,5 +68,20 @@ namespace ItemApi.Models
         /// <summary>NotFound + AmountMismatch: debited by the bank but not updated in the database.</summary>
         [JsonPropertyName("notUpdated")]
         public List<ChequeUploadRow> NotUpdated => NotFound.Concat(AmountMismatch).OrderBy(r => r.LineNo).ToList();
+
+        /// <summary>Money in (Credit column) on the statement: cash deposits and other credits - shown only, nothing updated.</summary>
+        [JsonPropertyName("credits")]
+        public List<BankCreditRow> Credits { get; set; } = new();
+    }
+
+    /// <summary>A credit line of the bank statement.</summary>
+    public class BankCreditRow
+    {
+        [JsonPropertyName("lineNo")] public int LineNo { get; set; }
+        [JsonPropertyName("bankDate")] public string? BankDate { get; set; }
+        [JsonPropertyName("description")] public string? Description { get; set; }
+        [JsonPropertyName("amount")] public decimal Amount { get; set; }
+        /// <summary>The description reads like a cash deposit (CASH / CDM / CRM / DEPOSIT ...).</summary>
+        [JsonPropertyName("isCash")] public bool IsCash { get; set; }
     }
 }

@@ -200,6 +200,21 @@ namespace ItemApi.Repositories
                     if (columns.Count < 8)
                         continue;
 
+                    // money in (Credit column): kept to show the cash deposits
+                    var creditStr = columns[7].Replace(",", "").Trim();
+                    if (creditStr.Length > 0 && decimal.TryParse(creditStr, NumberStyles.Number, CultureInfo.InvariantCulture, out var credit) && credit != 0)
+                    {
+                        var desc = columns.Count > 3 ? columns[3].Trim() : "";
+                        result.Credits.Add(new BankCreditRow
+                        {
+                            LineNo = i + 1,
+                            BankDate = BankDateOf(columns),
+                            Description = desc,
+                            Amount = credit,
+                            IsCash = CashWords.IsMatch(desc)
+                        });
+                    }
+
                     string debitStr = columns[6];
                     string chequeNoStr = columns.Last();
 
@@ -217,7 +232,7 @@ namespace ItemApi.Repositories
                     chequeListFromFile.Add(new ChequeUploadRow
                     {
                         LineNo = i + 1,
-                        BankDate = columns[0].Trim(),
+                        BankDate = BankDateOf(columns),
                         ChequeNumber = chequeNo,
                         BankAmount = amount
                     });
@@ -279,6 +294,13 @@ namespace ItemApi.Repositories
                 throw ex;
             }
         }
+
+        // the bank (ComBank) export starts every line with an empty column: the date is in the first non-empty of the two
+        private static string BankDateOf(List<string> columns) =>
+            (string.IsNullOrWhiteSpace(columns[0]) && columns.Count > 1 ? columns[1] : columns[0]).Trim();
+
+        private static readonly System.Text.RegularExpressions.Regex CashWords = new(
+            @"\b(CASH|CSH|CDM|CRM|DEPOSIT|DEP)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
         private List<string> ParseCsvLine(string line)
         {

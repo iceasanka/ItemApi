@@ -195,6 +195,62 @@ namespace ItemApi.Controllers
             });
         }
 
+        // GET: api/ChequeCreate/drive/files — bank statement files waiting in Google Drive (1_IreshaFoodCity > BankTransactionFiles)
+        [HttpGet("drive/files")]
+        public async Task<IActionResult> DriveFiles([FromServices] BankDriveService drive, CancellationToken ct)
+        {
+            try { return Ok(await drive.ListAsync(ct)); }
+            catch (BankDriveException ex) { return StatusCode(502, new { message = ex.Message }); }
+        }
+
+        // POST: api/ChequeCreate/drive/process { fileIds } — each file: downloaded (copy kept in Uploads/BankFiles),
+        // processed like an upload, then deleted from Drive (or moved to BankTransactionFiles/Processed when the service
+        // account may not delete it). A file that fails stays in Drive. → [{ fileId, name, ok, removed, message, result }]
+        [HttpPost("drive/process")]
+        public async Task<IActionResult> DriveProcess([FromServices] BankDriveService drive, [FromBody] BankDriveProcessRequest request, CancellationToken ct)
+        {
+            var ids = request?.FileIds?.Where(i => !string.IsNullOrWhiteSpace(i)).Distinct().ToList() ?? new List<string>();
+            if (ids.Count == 0) return BadRequest(new { message = "Tick at least one file." });
+
+            var localDir = Path.Combine(Directory.GetCurrentDirectory(), "Uploads", "BankFiles");
+            var results = new List<BankDriveFileResult>();
+            foreach (var id in ids)
+            {
+                var r = new BankDriveFileResult { FileId = id };
+                results.Add(r);
+                try
+                {
+                    var path = await drive.DownloadAsync(id, localDir, ct);
+                    r.Name = Path.GetFileName(path)[16..]; // without the yyyyMMdd-HHmmss_ prefix
+                    r.Result = await _repository.ProcessFile(path);
+                    r.Result.FileName = r.Name;
+                    r.Ok = true;
+                }
+                catch (BankDriveException ex)
+                {
+                    r.Message = ex.Message;
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    Serilog.Log.Error(ex, "Cheque validate: processing Drive file {FileId} failed", id);
+                    r.Message = "Processing failed: " + ex.Message;
+                    continue;
+                }
+
+                try
+                {
+                    r.Removed = await drive.RemoveAsync(id, ct);
+                    r.Message = r.Removed == "deleted" ? "Processed and deleted from Drive." : "Processed and moved to the Processed folder in Drive.";
+                }
+                catch (Exception ex)
+                {
+                    r.Message = "Processed, but could not be removed from Drive: " + ex.Message;
+                }
+            }
+            return Ok(results);
+        }
+
         /// <summary>
         /// Export upload rows (usually result.notUpdated from POST upload) as a CSV file.
         /// </summary>

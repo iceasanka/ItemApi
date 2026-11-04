@@ -2,9 +2,13 @@ using ItemApi.Common;
 using ItemApi.Data;
 using ItemApi.Interface;
 using ItemApi.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Serilog;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace ItemApi.Controllers
 {
@@ -128,6 +132,86 @@ namespace ItemApi.Controllers
                     return NotFound(new { message = $"Ledger entry with Id {ledgerId} not found.", status = false });
                 return Ok(new { message = "Ledger entry deleted successfully.", status = true });
             });
+
+        // ─── ledger entry typed at a till (Menu > Add ledger entry) ───
+        // TillService calls these live (tills have no user token) with the shared terminal key (X-Terminal-Key =
+        // Sync:TerminalKey, the same check as api/Sync/Cashiers). Saved straight to the ledger, nothing is synced later.
+
+        // GET: api/SupplierLedger/Till/Suppliers → [{ suppId, suppCode, suppName }] (active suppliers, by name)
+        [AllowAnonymous]
+        [HttpGet("Till/Suppliers")]
+        public Task<IActionResult> TillSuppliers([FromServices] AppDbContext db, [FromServices] IConfiguration config) =>
+            Run(async () =>
+            {
+                var refused = CheckTerminalKey(config);
+                if (refused != null)
+                    return refused;
+                return Ok(await db.SupplierEntities.AsNoTracking()
+                    .Where(s => s.Status == 1)
+                    .OrderBy(s => s.SuppName)
+                    .Select(s => new TillSupplierRow { SuppId = s.SuppId, SuppCode = s.SuppCode, SuppName = s.SuppName })
+                    .ToListAsync());
+            });
+
+        // POST: api/SupplierLedger/Till { terminalId, cashierId, suppId, type (1 PURCHASE / 2 PAYMENT / 3 RETURN), qty, price,
+        //   invoiceNo, remark } — amount = qty x price; today's date; a bill's due date from the supplier's cheque period.
+        [AllowAnonymous]
+        [HttpPost("Till")]
+        public Task<IActionResult> AddFromTill([FromBody] TillLedgerRequest req, [FromServices] IConfiguration config) =>
+            Run(async () =>
+            {
+                var refused = CheckTerminalKey(config);
+                if (refused != null)
+                    return refused;
+                if (req == null || req.TerminalId <= 0)
+                    return BadRequest(new { message = "TerminalId is required." });
+                if (req.SuppId <= 0)
+                    return BadRequest(new { message = "Pick the supplier." });
+                if (req.Type is < 1 or > 3)
+                    return BadRequest(new { message = "Type must be 1 (PURCHASE), 2 (PAYMENT) or 3 (RETURN)." });
+                if (req.Qty <= 0 || req.Price <= 0)
+                    return BadRequest(new { message = "Qty and price must be more than 0." });
+                var amount = Math.Round(req.Qty * req.Price, 2, MidpointRounding.AwayFromZero);
+                if (amount <= 0 || amount > 999_999_999m)
+                    return BadRequest(new { message = "Check the qty and price (amount out of range)." });
+                var invoiceNo = req.InvoiceNo?.Trim();
+                if (invoiceNo?.Length > 50)
+                    return BadRequest(new { message = "Bill no: max 50 characters." });
+
+                // who typed it, kept with the remark (a till cashier is not a back office user)
+                var by = $" [till {req.TerminalId}{(string.IsNullOrWhiteSpace(req.CashierId) ? "" : ", " + req.CashierId.Trim())}]";
+                var remark = (req.Remark ?? "").Trim();
+                if (remark.Length + by.Length > 500)
+                    remark = remark[..Math.Max(0, 500 - by.Length)];
+
+                var ledger = new SupplierLedger
+                {
+                    SuppId = req.SuppId,
+                    TxnDate = DateTime.Today,
+                    Type = req.Type,
+                    InvoiceNo = string.IsNullOrEmpty(invoiceNo) ? null : invoiceNo,
+                    Remark = remark + by,
+                    DebitAmount = req.Type == 1 ? amount : 0,
+                    CreditAmount = req.Type == 1 ? 0 : amount,
+                    DueDate = null, // a bill: TxnDate + the supplier's cheque period
+                    Allocations = null,
+                };
+                var result = await _repository.AddLedgerAsync(ledger);
+                Log.Information("Ledger entry {LedgerId} from till {TerminalId} ({CashierId}): supp {SuppId} type {Type} {Amount}",
+                    result.LedgerId, req.TerminalId, req.CashierId, req.SuppId, req.Type, amount);
+                return Ok(result);
+            });
+
+        private IActionResult? CheckTerminalKey(IConfiguration config)
+        {
+            var key = config["Sync:TerminalKey"];
+            if (string.IsNullOrEmpty(key))
+                return StatusCode(403, new { message = "Set Sync:TerminalKey on the back office API (and the same key on each till)." });
+            var sent = Request.Headers[SyncController.TerminalKeyHeader].ToString();
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(sent), Encoding.UTF8.GetBytes(key)))
+                return StatusCode(403, new { message = "Wrong terminal key (Sync:TerminalKey)." });
+            return null;
+        }
 
         // ─── pay from a till (U032, StockSystem.md 6.32) ───
 

@@ -1424,6 +1424,32 @@ Supplier Ledger page (same change): the supplier search is in the title row, the
 (purchase, paid, balance, overdue, due in 7 days, open bills, returns, days to pay, not set against a bill), the charts
 open with **Charts**, the date filter is tighter.
 
+### 6.34 Cheque planner — can I write this cheque? (back office Payments & Cash → Cheque Planner, 2026-11-05, U048)
+The bank-balance planning that was kept by hand in the Google sheet (tab AsankaTemp), from the database. **Separate
+from the sheet**: the Cheque Writer still writes each cheque to AsankaTemp and Cheque Validate still colours it green
+(`GoogleSheetService`) — the planner neither reads nor writes the sheet.
+- **Money in per day** (`z_sp_ChequePlanDays`): a day with Z reports (the tills have balanced) uses the real figures —
+  **cash in hand** = cash sales + paid in − paid out of its Zs (the opening float is not counted), **card** = card
+  sales, **bank** = bank transfers. A day with no Z yet uses its own expected takings (`z_tb_CashPlanDay`, e.g. a Poya
+  day = 0) or else the averages (`z_tb_CashPlanConfig.AvgCash` 400,000 / `AvgCard` 0).
+- **Money out** (`z_sp_ChequePlanCheques`): written cheques (`z_tb_WrittenCheque`; `IsDebited = 1` is already out of
+  the bank and is not counted) and planned cheques (`z_tb_CashPlanCheque`, Status 1; removed = 9). A planned cheque
+  drops off once a written cheque with the same date and amount for the same supplier (SuppId or name) exists.
+  Cheques dated before today not debited yet (last `OverdueDays`, 45) count as going out today.
+- **Coming bank balance** (worked out on the page): the bank balance typed today (`BankBalance`, `BankBalanceAt`)
+  − the overdue cheques, then each day from today + money in − cheques (today's money in only when
+  `TodayNotBanked`). **Safe to write** on a day = the lowest coming balance from that day on − `KeepMin`; a cheque up to
+  that amount never takes the balance under the minimum later. The page answers yes / tight / no for an amount and a
+  date and offers the earliest safe date.
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `api/ChequePlanner?from=&to=` | `{ today, from, to, config, days, cheques }` (400 days at most) |
+| PUT | `api/ChequePlanner/config` | `{ avgCash, avgCard, keepMin, bankBalance, todayNotBanked, overdueDays }` |
+| PUT | `api/ChequePlanner/day/{yyyy-mm-dd}` | `{ expectedCash, expectedCard, note }` — all empty = back to the average |
+| POST | `api/ChequePlanner/cheque` | planned cheque `{ date, supplierName, suppId, amount, note }` → `{ planId }` |
+| PUT / DELETE | `api/ChequePlanner/cheque/{planId}` | change / remove a planned cheque (written cheques are changed on Cheque Summary) |
+
 ---
 
 ## 7. Status values

@@ -136,6 +136,7 @@ builder.Services.AddScoped<ISalaryPayslipRepository, SalaryPayslipRepository>();
 builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>();
 builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
 builder.Services.AddScoped<IDayReportRepository, DayReportRepository>();
+builder.Services.AddScoped<IChequePlannerRepository, ChequePlannerRepository>(); // Payments & Cash > Cheque Planner (U048)
 builder.Services.AddScoped<IExportRepository, ExportRepository>();
 builder.Services.AddScoped<ILabelRepository, LabelRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();

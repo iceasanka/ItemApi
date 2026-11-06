@@ -16,22 +16,6 @@ namespace ItemApi.Controllers
             _repository = repository;
         }
 
-        [HttpGet("GetAllSuppliers")]
-        public async Task<ActionResult<IEnumerable<Supplier>>> GetAllSuppliers()
-        {
-            try
-            {
-                var suppliers = await _repository.GetAllSuppliersAsync();
-                return Ok(suppliers);
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Error: {ex}");
-
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
-        }
-
         [HttpGet("SearchSuppliers")]
         public async Task<ActionResult<IEnumerable<Supplier>>> SearchSuppliers([FromQuery] string query)
         {

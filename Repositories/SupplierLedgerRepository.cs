@@ -66,6 +66,16 @@ namespace ItemApi.Repositories
             return await _context.GetSupplierLedgerMonthlyAsync(suppId, months);
         }
 
+        public async Task<SupplierMarkPaidResult> MarkPaidAsync(SupplierMarkPaidRequest request, int? userId)
+        {
+            return await _context.MarkSupplierBillsPaidAsync(request, userId);
+        }
+
+        public async Task<SupplierAdjustBalanceResult> AdjustBalanceAsync(SupplierAdjustBalanceRequest request, int? userId)
+        {
+            return await _context.AdjustSupplierBalanceAsync(request, userId);
+        }
+
         // the saved line as the ledger page shows it (with reference, due date and running balance)
         private async Task<SupplierLedgerRow> GetRowAsync(int suppId, int ledgerId)
         {

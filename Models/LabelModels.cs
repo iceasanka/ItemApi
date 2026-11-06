@@ -6,7 +6,7 @@ using ItemApi.Common;
 namespace ItemApi.Models
 {
     // Barcode labels printed straight to the Zebra as ZPL (DBScript/16_BackOffice_LabelLayout.sql, api/Label).
-    // The old BarTender barcode print (api/Util/printbarcode) is separate and unchanged. StockSystem.md §6.20.
+    // (The old BarTender barcode print, api/Util/printbarcode, was removed on 2026-11-05.) StockSystem.md §6.20.
 
     // One sticker roll / sheet. Sizes in mm; LabelWidthMm / LabelHeightMm are ONE label.
     [Table("z_tb_LabelLayout")]
@@ -21,7 +21,7 @@ namespace ItemApi.Models
         // 1 barcode label (ZPL to the Zebra), 2 price label (drawn, through the Windows printer driver)
         public int LabelKind { get; set; } = Barcode;
         public string Name { get; set; } = "";
-        // Windows printer on the API server; empty = PrinterAddress, then AppSettings:PrinterZebra (price: PrinterName)
+        // Windows printer on the API server; empty = PrinterAddress, then Settings > Printers: sticker printer (price labels: bill printer)
         public string? PrinterName { get; set; }
         // network printer "ip:9100"
         public string? PrinterAddress { get; set; }
@@ -117,8 +117,8 @@ namespace ItemApi.Models
         public DateTime? ExpDate { get; set; }
     }
 
-    // POST api/Label/Price/Print and api/Label/Price/Preview. Replaces the old printprice / printDiscountPrice /
-    // printitempricelandscape (one item, one copy, BarTender): many items, copies, any layout.
+    // POST api/Label/Price/Print and api/Label/Price/Preview. Replaced the old printprice / printDiscountPrice /
+    // printitempricelandscape (one item, one copy, BarTender - removed 2026-11-05): many items, copies, any layout.
     public class PriceLabelRequest
     {
         // null = the default price layout

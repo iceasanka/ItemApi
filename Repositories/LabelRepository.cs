@@ -13,7 +13,7 @@ namespace ItemApi.Repositories
     // Labels without BarTender — layouts in z_tb_LabelLayout, items from z_tb_Item / z_tb_ItemDet.
     //   kind 1 barcode labels: ZPL straight to the Zebra (Windows printer name or ip:9100). Docs/StockSystem.md §6.20.
     //   kind 2 price labels: drawn here, printed through the Windows printer driver (Sinhala). §6.21.
-    // The printer is on the API server. The old BarTender routes (api/Util/print…) are not used here.
+    // The printer is on the API server (the layout's own, else Settings > Printers). No BarTender.
     public class LabelRepository : ILabelRepository
     {
         private const int MaxLabelsPerPrint = 5000;
@@ -24,16 +24,13 @@ namespace ItemApi.Repositories
 
         private readonly AppDbContext _context;
         private readonly int _locationId;
-        private readonly string? _zebraPrinter;
-        private readonly string? _pricePrinter;
+        private readonly PrinterConfig _printers;
 
-        public LabelRepository(AppDbContext context, IOptions<AppSettings> appSettings)
+        public LabelRepository(AppDbContext context, IOptions<AppSettings> appSettings, PrinterConfig printers)
         {
             _context = context;
             _locationId = appSettings.Value.LocationId;
-            _zebraPrinter = appSettings.Value.PrinterZebra;
-            // the printer the old BarTender price labels used (PegasusPR8003)
-            _pricePrinter = appSettings.Value.PrinterName;
+            _printers = printers;
         }
 
         public async Task<List<LabelLayout>> GetLayoutsAsync(int? kind, bool includeDeleted)
@@ -153,7 +150,7 @@ namespace ItemApi.Repositories
             {
                 Labels = labels.Count,
                 Pages = pages,
-                Printer = PrinterOf(layout),
+                Printer = await PrinterOfAsync(layout),
                 LayoutName = layout.Name
             });
         }
@@ -198,7 +195,7 @@ namespace ItemApi.Repositories
         public async Task<LabelPrintResult> PrintPriceAsync(PriceLabelRequest request)
         {
             var (layout, slots, count) = await BuildPriceAsync(request);
-            var printer = PrinterOf(layout);
+            var printer = await PrinterOfAsync(layout);
             var pages = await PrintPriceSlotsAsync(layout, slots, printer, "Price labels", false);
             Log.Information("Price labels printed: {Labels} on {Pages} pages, layout {Layout}, printer {Printer}, user {UserId}",
                 count, pages, layout.Name, printer, request.UserId);
@@ -311,7 +308,7 @@ namespace ItemApi.Repositories
                                                             string docName, bool borders)
         {
             if (string.IsNullOrWhiteSpace(printer))
-                throw new LabelException("No printer: set one on the label layout (or AppSettings:PrinterName).");
+                throw new LabelException("No printer: set one on the label layout, or choose the bill printer on Settings > Printers (price labels need a Windows printer - not a COM port / network bill printer).");
             try
             {
                 return await Task.Run(() => PriceLabelRenderer.Print(printer, layout, slots, docName, borders));
@@ -339,7 +336,7 @@ namespace ItemApi.Repositories
             if (layout.LabelKind == LabelLayout.Price)
             {
                 CheckFonts(layout);
-                var printer = PrinterOf(layout);
+                var printer = await PrinterOfAsync(layout);
                 var pages = await PrintPriceSlotsAsync(layout, Enumerable.Repeat<PriceLabelData?>(PriceSample(layout), perPage).ToList(),
                     printer, "Price label test", true);
                 return new LabelPrintResult { Labels = perPage, Pages = pages, Printer = printer, LayoutName = layout.Name };
@@ -357,7 +354,7 @@ namespace ItemApi.Repositories
             ZplLabelBuilder.CheckFits(layout, new[] { sample });
             var (zpl, zplPages) = ZplLabelBuilder.Build(layout, Enumerable.Repeat<LabelData?>(sample, perPage).ToList(), borders: true);
             await SendAsync(layout, zpl, "Label test");
-            return new LabelPrintResult { Labels = perPage, Pages = zplPages, Printer = PrinterOf(layout), LayoutName = layout.Name };
+            return new LabelPrintResult { Labels = perPage, Pages = zplPages, Printer = await PrinterOfAsync(layout), LayoutName = layout.Name };
         }
 
         // The test page of a price layout as PNG (no printer needed) — for the layout dialog's preview
@@ -492,9 +489,14 @@ namespace ItemApi.Repositories
             return labels;
         }
 
-        private string PrinterOf(LabelLayout layout) => layout.LabelKind == LabelLayout.Price
-            ? layout.PrinterName ?? _pricePrinter ?? ""
-            : layout.PrinterName ?? layout.PrinterAddress ?? _zebraPrinter ?? "";
+        // the layout's own printer, else Settings > Printers: price labels = the bill printer, barcode labels = the sticker printer
+        private async Task<string> PrinterOfAsync(LabelLayout layout)
+        {
+            var p = await _printers.GetAsync();
+            return layout.LabelKind == LabelLayout.Price
+                ? layout.PrinterName ?? Blank(p.Bill) ?? ""
+                : layout.PrinterName ?? layout.PrinterAddress ?? Blank(p.StickerTarget.Display) ?? "";
+        }
 
         private async Task SendAsync(LabelLayout layout, string zpl, string docName)
         {
@@ -504,14 +506,17 @@ namespace ItemApi.Repositories
                 await RawPrinter.SendToNetworkAsync(layout.PrinterAddress, data, TimeSpan.FromSeconds(10));
                 return;
             }
-            var printer = layout.PrinterName ?? _zebraPrinter;
-            if (string.IsNullOrWhiteSpace(printer))
-                throw new LabelException("No printer: set one on the label layout (or AppSettings:PrinterZebra).");
+            // the layout's own Windows printer, else the sticker printer of Settings > Printers (Windows, COM port or network)
+            var target = layout.PrinterName != null
+                ? new PrinterTarget { Conn = PrinterTarget.Windows, Name = layout.PrinterName }
+                : (await _printers.GetAsync()).StickerTarget;
+            if (!target.IsSet)
+                throw new LabelException("No printer: set one on the label layout, or choose the sticker printer on Settings > Printers.");
             try
             {
-                await Task.Run(() => RawPrinter.SendToWindowsPrinter(printer, data, docName));
+                await target.SendRawAsync(data, docName);
             }
-            catch (System.ComponentModel.Win32Exception ex)
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException)
             {
                 throw new LabelException(ex.Message + " (on the API server).");
             }

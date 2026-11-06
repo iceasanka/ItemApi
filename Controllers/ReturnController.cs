@@ -14,9 +14,11 @@ namespace ItemApi.Controllers
         private readonly IReturnRepository _repository;
         private readonly IItemRepository _itemRepository;
         private PrinterService printerService;
+        private readonly PrinterConfig _printers;
 
-        public ReturnController(IReturnRepository repository, IItemRepository itemRepository)
+        public ReturnController(IReturnRepository repository, IItemRepository itemRepository, PrinterConfig printers)
         {
+            _printers = printers;
             _repository = repository;
             _itemRepository = itemRepository;
             printerService = new PrinterService();
@@ -233,7 +235,7 @@ namespace ItemApi.Controllers
                 }
 
 
-                printerService.PrintProcessedData(returnItems);
+                await printerService.PrintProcessedDataAsync(returnItems, await _printers.GetAsync());
 
                 return Ok(new { message = "Items processed successfully.", print = true });
             }
@@ -250,7 +252,7 @@ namespace ItemApi.Controllers
         {
             try
             {
-                printerService.PrintProcessedData(returnItems);
+                await printerService.PrintProcessedDataAsync(returnItems, await _printers.GetAsync());
 
                 return Ok("Items print successfully.");
             }

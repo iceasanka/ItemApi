@@ -46,6 +46,34 @@ namespace ItemApi.Data
             return rows.First();
         }
 
+        // Supplier Ledger "Mark as paid" (U052): the ticked returns are set against the ticked bills, the rest = one PAYMENT
+        public async Task<SupplierMarkPaidResult> MarkSupplierBillsPaidAsync(SupplierMarkPaidRequest r, int? userId)
+        {
+            var ids = new DataTable();
+            ids.Columns.Add("Id", typeof(int));
+            foreach (var id in r.LedgerIds.Distinct()) ids.Rows.Add(id);
+            var rows = await Database.SqlQueryRaw<SupplierMarkPaidResult>(
+                "EXEC dbo.z_sp_SupplierMarkPaid @SuppId = @SuppId, @TxnDate = @TxnDate, @Remark = @Remark, @UserId = @UserId, @Ids = @Ids",
+                new SqlParameter("@SuppId", r.SuppId),
+                new SqlParameter("@TxnDate", SqlDbType.Date) { Value = r.TxnDate.Date },
+                new SqlParameter("@Remark", SqlDbType.NVarChar, 500) { Value = Db(string.IsNullOrWhiteSpace(r.Remark) ? null : r.Remark.Trim()) },
+                new SqlParameter("@UserId", SqlDbType.Int) { Value = Db(userId) },
+                Tvp("@Ids", "dbo.z_tt_IdList", ids)).ToListAsync();
+            return rows.First();
+        }
+
+        // Supplier Ledger "Adjust balance to 0" (U053): balancing PAYMENT / PURCHASE added, nothing old changed
+        public async Task<SupplierAdjustBalanceResult> AdjustSupplierBalanceAsync(SupplierAdjustBalanceRequest r, int? userId)
+        {
+            var rows = await Database.SqlQueryRaw<SupplierAdjustBalanceResult>(
+                "EXEC dbo.z_sp_SupplierAdjustBalance @SuppId = @SuppId, @TxnDate = @TxnDate, @Remark = @Remark, @UserId = @UserId",
+                new SqlParameter("@SuppId", r.SuppId),
+                new SqlParameter("@TxnDate", SqlDbType.Date) { Value = r.TxnDate.Date },
+                new SqlParameter("@Remark", SqlDbType.NVarChar, 500) { Value = Db(string.IsNullOrWhiteSpace(r.Remark) ? null : r.Remark.Trim()) },
+                new SqlParameter("@UserId", SqlDbType.Int) { Value = Db(userId) }).ToListAsync();
+            return rows.First();
+        }
+
         // Delete a ledger entry. A cheque payment goes with its cheque; a bill that is paid stays (z_sp_DeleteSupplierLedger).
         public async Task<bool> DeleteLedgerAsync(int ledgerId)
         {

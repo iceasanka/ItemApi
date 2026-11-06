@@ -1,11 +1,9 @@
 ﻿
-using BarTender;
+using ItemApi.Data;
 using ItemApi.Models;
 using ItemApi.Service;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
-using System.Text;
 using ItemApi.Interface;
 using Microsoft.Data.SqlClient;
 
@@ -16,187 +14,83 @@ namespace ItemApi.Controllers
     [ApiController]
     public class UtilController : ControllerBase
     {
-        private PrinterService printerService;
         private readonly IChequeCreateRepository _repository;
-        private readonly AppSettings _appSettings;
-        public UtilController(IOptions<AppSettings> appSettings, IChequeCreateRepository repository)
+        private readonly AppDbContext _context;
+        private readonly PrinterConfig _printers;
+        public UtilController(IChequeCreateRepository repository, AppDbContext context, PrinterConfig printers)
         {
-            _appSettings = appSettings.Value;
-            printerService = new PrinterService();
+            _printers = printers;
             _repository = repository;
+            _context = context;
         }
 
+
+        // GET: api/Util/BackupRunning — any signed-in user: the daily / "Back up now" backup is running now
+        // (the back office shows "Backup in progress - please wait" on every page while it runs). { running, db, since }
+        [HttpGet("BackupRunning")]
+        public IActionResult BackupRunning([FromServices] DbBackupService backup) =>
+            Ok(new { running = backup.Running, db = backup.RunningDb, since = backup.RunningSince });
 
         [HttpPost("print")]
         public async Task<ActionResult> Print([FromBody] PrintRequest data)
         {
+            // Cash Management > Print (all the data): the bill printer of Settings > Printers
             try
             {
-                // Extract data for the Cash Table
-                List<Dictionary<string, object>> cashData = data.CashTable.Rows;
-                decimal cashTotal = data.CashTable.Total;
-
-                // Extract data for the Credit Table
-                List<Dictionary<string, object>> creditData = data.CreditTable.Rows;
-                decimal creditTotal = data.CreditTable.Total;
-
-                // Extract data for the Debit Table
-                List<Dictionary<string, object>> debitData = data.DebitTable.Rows;
-                decimal debitTotal = data.DebitTable.Total;
-
-                // Calculate the total cash balance
-                decimal totalCashBalance = data.TotalCashBalance;
-
-                // Call the PrinterService to print the combined data
-                PrinterService printerService = new PrinterService();
-                printerService.PrintCombinedData(cashData, cashTotal, creditData, creditTotal, debitData, debitTotal);
-
-                return Ok(new { message = "Print request processed successfully." });
+                var p = await _printers.GetAsync();
+                var slip = ReceiptSlip.CashManagement(data, p.BillChars, DateTime.Now);
+                await slip.PrintAsync(p.NeedBill(), "Cash management", p.BillEscPos);
+                return Ok(new { message = "Cash management printed." });
             }
             catch (Exception ex)
             {
-                return BadRequest(new { message = "Error processing print request.", error = ex.Message });
-            }
-        }
-
-        [HttpPost("printbarcode")]
-        public async Task<ActionResult> HandleSubmit([FromBody] PrintBarcodeRequest request)
-        {
-            try
-            {
-                ItemWithDetails itemDetails = request.ItemDetails;
-
-                PrintBarCode barPrint = new PrintBarCode();
-                barPrint.Item_Code = itemDetails.Item_Code;
-                barPrint.Barcode = itemDetails.Barcode;
-                barPrint.Descrip = itemDetails.Descrip;
-                barPrint.ERet_Price = itemDetails.ERet_Price.ToString("0.00");
-                barPrint.expireDate = DateTime.Parse(request.expireDate).ToString("dd-MM-yyyy");
-                barPrint.mrDate = DateTime.Parse(request.mrDate).ToString("dd-MM-yyyy");
-                barPrint.printerName = _appSettings.PrinterZebra;
-                barPrint.printTemplatePath = _appSettings.StickerExpireDatePrint;
-                barPrint.lblCount = request.LabelCount; 
-
-                await PrintLocalAgent(PrintJobType.BarCode, barPrint);
-                return Ok(new { message = "BarCode Print request processed successfully." });
-            }
-            catch (Exception ex)
-            {
-
-                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
-            }
-
-        }
-
-        public async Task<ActionResult> PrintLocalAgent<T>(PrintJobType type, T payload)
-        {
-            using var client = new HttpClient();
-
-            var request = new
-            {
-                Type = type,
-                Data = payload
-            };
-
-            var json = JsonSerializer.Serialize(request);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            var response = await client.PostAsync(
-                "http://localhost:9001/print/",
-                content
-            );
-
-            if (!response.IsSuccessStatusCode)
-                return StatusCode(500, "Print agent failed");
-
-            return Ok(new { message = "Print request sent." });
-        }
-
-
-
-        [HttpPost("printprice")]
-        public async Task<ActionResult> PrintPrice([FromBody] PrintItem item)
-        {
-            try
-            {
-                item.printerName = _appSettings.PrinterName;
-                item.printTemplatePath = _appSettings.PricePrintTemplatePath;
-                item.printType = 1; // Price Print
-                item.printLanguage = item.printLanguage;
-                await PrintLocalAgent(PrintJobType.ItemLabel, item);
-                return Ok(new { message = "Print request processed successfully." });
-            }
-            catch (Exception ex)
-            {
-
-                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
-            }
-        }
-
-        [HttpPost("printDiscountPrice")]
-        public async Task<ActionResult> PrintDiscountPrice([FromBody] PrintItem item)
-        {
-            try
-            {
-                item.printerName = _appSettings.PrinterName;
-
-                if (!string.IsNullOrEmpty(item.tax3) && item.tax3 != "0")
-                    item.printTemplatePath = _appSettings.DiscountPrintTemplatePath;
-                else if (!string.IsNullOrEmpty(item.tax2) && item.tax2 != "0")
-                    item.printTemplatePath = _appSettings.DiscountPercentagePrintTemplatePath;
-                else
-                    item.printTemplatePath = string.Empty;
-
-                item.printType = 2; // Discount Print
-                item.printLanguage = item.printLanguage;
-                await PrintLocalAgent(PrintJobType.ItemLabel, item);
-                return Ok(new { message = "Print request processed successfully." });
-            }
-            catch (Exception ex)
-            {
-
-                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+                Serilog.Log.Error(ex, "Cash management print failed");
+                return BadRequest(new { message = $"Could not print: {ex.Message}" });
             }
         }
 
 
-        [HttpPost("printitempricelandscape")]
-        public async Task<ActionResult> PrintItemPriceLandscape([FromBody] PrintItem item)
-        {
-            try
-            {
-                item.printerName = _appSettings.PrinterName;
-                item.printTemplatePath = _appSettings.LandScapePricePrintTemplatePath;
-                item.printType = 3; // landscape Print
-                item.printLanguage = item.printLanguage;
-                await PrintLocalAgent(PrintJobType.ItemLabel, item);
-                return Ok(new { message = "Print request processed successfully." });
-            }
-            catch (Exception ex)
-            {
 
-                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
-            }
-        }
-
-
+        // Cheque Writer > Print Cheque: check -> save -> print -> Google sheet. No BarTender / LocalPrintAgent:
+        // Service/ChequePrinter.cs draws it on the general printer (Settings > Printers) with the layout of Cheque Writer > Cheque layout.
+        // Everything that can be checked is checked BEFORE the cheque is saved (it fits, the printer is there, its
+        // queue is empty). A print problem after the save does not undo the save: the answer says printed = false and
+        // the page offers "Print again" (api/ChequePrint/reprint).
         [HttpPost("printCheque")]
         public async Task<ActionResult> PrintCheque([FromBody] Cheque cheque)
         {
             try
             {
-                cheque.printerName = _appSettings.PrinterHP;
-                cheque.printTemplatePath = _appSettings.ChequePrintTemplatePath;
-                cheque.printType = 4; // Cheque Print
-
-                // saved before it is printed: a cheque the supplier ledger refuses (bill already paid, ...) is not printed
+                var printer = (await _printers.GetAsync()).General;   // empty = refused below (CheckPrinter)
                 if (await _repository.ChequeNumberExistsAsync(cheque.chequeNumber))
                     return Conflict(new { code = "DUPLICATE_CHEQUE_NUMBER", message = $"Cheque number {cheque.chequeNumber} already exists." });
                 var billsError = cheque.BillsError();
                 if (billsError != null)
                     return BadRequest(new { message = billsError });
 
-                // same as ChequeCreate/AddCheque: with a supplier it is also a PAYMENT in the supplier ledger (§6.19)
+                var layout = (await _context.GetChequeLayoutAsync()).Layout;
+                var data = new ChequePrintData
+                {
+                    Payee = cheque.payee ?? "",
+                    Amount = cheque.amount,
+                    AmountInWords = cheque.amountInWords ?? "",
+                    ChequeDate = cheque.chequeDate,
+                    AcPayee = cheque.acPayee,
+                };
+                var laid = ChequePrinter.Lay(layout, data);
+                if (laid.Problems.Count > 0)
+                    return BadRequest(new { message = "Not printed, not saved: " + string.Join(" ", laid.Problems) });
+                try
+                {
+                    ChequePrinter.CheckPrinter(printer);
+                }
+                catch (ChequePrintException ex)
+                {
+                    return BadRequest(new { message = ex.Message });
+                }
+
+                // with a supplier it is also a PAYMENT in the supplier ledger (§6.19); a cheque the ledger refuses
+                // (bill already paid, ...) is not printed
                 ChequeCreate chequeCreate;
                 try
                 {
@@ -208,37 +102,45 @@ namespace ItemApi.Controllers
                     return BadRequest(new { message = ex.Errors.Count > 0 ? ex.Errors[0].Message : ex.Message });
                 }
 
-                //Asanka  --ice uncomment
-                await PrintLocalAgent(PrintJobType.Cheque, cheque);
+                string? printError = null;
+                try
+                {
+                    await Task.Run(() => ChequePrinter.Print(printer, layout, laid, $"Cheque {cheque.chequeNumber}", test: false));
+                    Serilog.Log.Information("Cheque {No} printed (Rs {Amount}, {Date:yyyy-MM-dd})", cheque.chequeNumber, cheque.amount, cheque.chequeDate);
+                }
+                catch (Exception ex)
+                {
+                    printError = ex.Message;
+                    Serilog.Log.Error(ex, "Cheque {No} saved but not printed", cheque.chequeNumber);
+                }
 
-                //Asanka : Need to remove
-                //return Ok(new { message = "Print request processed successfully." });
-
-
-                bool isSyncSuccess = false;
-
+                // Google sheet (AsankaTemp) - a sheet problem does not make the cheque look unsaved / unprinted
+                string? syncError = null;
                 try
                 {
                     await _repository.SyncPrintedChequeAsync(chequeCreate);
-                    isSyncSuccess = true;
-                }
-                catch (Exception syncEx)
-                {
-                    return BadRequest(new { message = "Error Sync Printed Cheque.", error = syncEx.Message });
-                }
-
-                if (isSyncSuccess)
-                {
                     chequeCreate.IsSync = 1;
                     await _repository.UpdateChequeAsync(chequeCreate);
                 }
-               //Asanka message
+                catch (Exception syncEx)
+                {
+                    syncError = syncEx.Message;
+                    Serilog.Log.Error(syncEx, "Cheque {No}: Google sheet update failed", cheque.chequeNumber);
+                }
 
-                return Ok(new { message = "Print request processed successfully." });
+                return Ok(new
+                {
+                    message = printError == null ? $"Cheque {cheque.chequeNumber} printed." : $"Cheque {cheque.chequeNumber} was SAVED but did NOT print: {printError}",
+                    chequeNumber = cheque.chequeNumber,
+                    printed = printError == null,
+                    printError,
+                    syncError,
+                });
             }
             catch (Exception ex)
             {
-                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+                Serilog.Log.Error(ex, "printCheque failed");
+                return BadRequest(new { message = $"Could not write the cheque: {ex.Message}" });
             }
         }
 
@@ -248,16 +150,16 @@ namespace ItemApi.Controllers
         {
             try
             {
-                settlement.printerName = _appSettings.PrinterName;
-                settlement.printTemplatePath = _appSettings.SettlementTemplatePath;
-
-                await PrintLocalAgent(PrintJobType.Settlement, settlement);
-                return Ok(new { message = "Settlement Print request processed successfully." });
+                // the bill printer of Settings > Printers (no BarTender, no LocalPrintAgent)
+                var p = await _printers.GetAsync();
+                var slip = ReceiptSlip.Settlement(settlement, p.BillChars, DateTime.Now);
+                await slip.PrintAsync(p.NeedBill(), "Cashier settlement", p.BillEscPos);
+                return Ok(new { message = "Settlement printed." });
             }
             catch (Exception ex)
             {
-
-                return BadRequest(new { message = "Error creating BarTender application.", error = ex.Message });
+                Serilog.Log.Error(ex, "Settlement print failed");
+                return BadRequest(new { message = $"Could not print the settlement: {ex.Message}" });
             }
         }
 

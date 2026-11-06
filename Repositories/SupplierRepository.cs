@@ -14,11 +14,6 @@ namespace ItemApi.Repositories
             _context = context;
         }
 
-        public async Task<IEnumerable<Supplier>> GetAllSuppliersAsync()
-        {
-            return await _context.Suppliers.ToListAsync();
-        }
-
         public async Task<IEnumerable<Supplier>> SearchSuppliersAsync(string query)
         {
             //return await _context.Suppliers

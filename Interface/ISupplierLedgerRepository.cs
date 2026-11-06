@@ -14,5 +14,7 @@ namespace ItemApi.Interface
         Task<List<SupplierPaymentDueRow>> GetPaymentsDueAsync(DateTime? toDate, int? suppId);
         Task<List<SupplierLedgerOverviewRow>> GetOverviewAsync();
         Task<List<SupplierLedgerMonthRow>> GetMonthlyAsync(int? suppId, int months);
+        Task<SupplierMarkPaidResult> MarkPaidAsync(SupplierMarkPaidRequest request, int? userId);
+        Task<SupplierAdjustBalanceResult> AdjustBalanceAsync(SupplierAdjustBalanceRequest request, int? userId);
     }
 }

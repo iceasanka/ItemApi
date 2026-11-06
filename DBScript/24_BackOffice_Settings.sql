@@ -94,6 +94,8 @@ BEGIN
                       WHEN ValueType = 'number' AND @Value LIKE N'%[0-9]%' AND @Value NOT LIKE N'%[^0-9.]%'
                            AND LEN(@Value) - LEN(REPLACE(@Value, N'.', N'')) <= 1 AND LEN(@Value) <= 12
                            AND LEFT(@Value, 1) <> N'.' AND RIGHT(@Value, 1) <> N'.' THEN 1
+                      WHEN ValueType = 'printer' AND LEN(LTRIM(RTRIM(@Value))) BETWEEN 1 AND 100 THEN 1   -- U050
+                      WHEN ValueType = 'folder' AND LEN(LTRIM(RTRIM(@Value))) BETWEEN 3 AND 200 THEN 1    -- U051
                       ELSE 0 END
     FROM dbo.z_tb_Setting WHERE SettingKey = @SettingKey;
     RETURN @ok;

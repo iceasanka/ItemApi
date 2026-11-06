@@ -9,7 +9,7 @@ namespace ItemApi.Controllers
 {
     // Barcode labels straight to the Zebra as ZPL, with label layouts for each sticker size (back office
     // "Barcode labels" page). Docs/StockSystem.md §6.20, DBScript/16_BackOffice_LabelLayout.sql.
-    // The old barcode page (api/Util/printbarcode → LocalPrintAgent → BarTender) is separate and unchanged.
+    // (The old BarTender barcode page / api/Util/printbarcode was removed on 2026-11-05 - this is the only barcode print.)
     [Route("api/[controller]")]
     [ApiController]
     public class LabelController : ControllerBase
@@ -155,7 +155,7 @@ namespace ItemApi.Controllers
 
         // POST: api/Label/Price/Print { labelLayoutId, language, skip,
         //   items: [{ itemId, qty, style: AUTO|PRICE|DISCOUNT, price, discountAmount, discountPercent, name, sinhalaName }] }
-        // Price labels through the Windows printer driver. The old api/Util/printprice … routes are not changed.
+        // Price labels through the Windows printer driver (the old BarTender api/Util/printprice … routes were removed 2026-11-05).
         [HttpPost("Price/Print")]
         public async Task<IActionResult> PrintPrice([FromBody] PriceLabelRequest request)
         {

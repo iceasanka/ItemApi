@@ -97,7 +97,6 @@ builder.Services.AddScoped<IStockRepository, StockRepository>();
 builder.Services.AddScoped<IReturnRepository, ReturnRepository>();
 builder.Services.AddScoped<ISupplierRepository, SupplierRepository>();
 builder.Services.AddScoped<IGrnTempRepository, GrnTempRepository>();
-builder.Services.AddScoped<IPurchaseRepository, PurchaseRepository>();
 builder.Services.AddScoped<StockService>();
 
 builder.Services.AddScoped<IPosStockRepository, PosStockRepository>();
@@ -137,6 +136,9 @@ builder.Services.AddScoped<ISalaryCalculationService, SalaryCalculationService>(
 builder.Services.AddScoped<IDashboardRepository, DashboardRepository>();
 builder.Services.AddScoped<IDayReportRepository, DayReportRepository>();
 builder.Services.AddScoped<IChequePlannerRepository, ChequePlannerRepository>(); // Payments & Cash > Cheque Planner (U048)
+builder.Services.AddSingleton<DbBackupService>(); // Settings > Backup: daily database backup (default 11 PM) - U051
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DbBackupService>());
+builder.Services.AddScoped<PrinterConfig>(); // Settings > Printers: bill (thermal), general (cheques), sticker - U050
 builder.Services.AddScoped<IExportRepository, ExportRepository>();
 builder.Services.AddScoped<ILabelRepository, LabelRepository>();
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();

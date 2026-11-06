@@ -55,6 +55,25 @@ namespace ItemApi.Models
         public string? Value { get; set; }
     }
 
+    // Settings > Printers > Save (PUT api/Settings/Printers/{kind}, U051)
+    public class PrinterSaveRequest
+    {
+        public int? Conn { get; set; }         // 1 Windows printer, 2 COM port, 3 network (general: 1 only)
+        public string? Name { get; set; }      // Windows printer name
+        public string? Port { get; set; }      // COM3
+        public string? Address { get; set; }   // 192.168.1.50:9100
+        public int? Baud { get; set; }         // 9600 ... 115200 (COM port)
+        public string? Mode { get; set; }      // bill: driver | escpos (a Windows printer)
+        public int? Width { get; set; }        // bill: 48 / 42 / 32 characters a line
+    }
+
+    // Settings > Printers > Test print: the printer as picked on the page; no Conn / Name / Printer = the saved one
+    public class PrinterTestRequest : PrinterSaveRequest
+    {
+        public string? Kind { get; set; }      // bill | general | sticker
+        public string? Printer { get; set; }   // old: the Windows printer name
+    }
+
     // api/Sync/Settings → till zf_tb_Setting / zf_tb_UserSetting. LoginName null = the general value.
     public class SyncSetting
     {

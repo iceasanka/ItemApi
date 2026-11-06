@@ -852,7 +852,7 @@ UI: Lovable Prompt 52. SQL: `Updates/U010_BackOffice_LabelLayout.sql` (full scri
 Code: `Controllers/LabelController.cs`, `Repositories/LabelRepository.cs`, `Service/ZplLabelBuilder.cs`,
 `Service/RawPrinter.cs` (same as TillService's).
 
-**The old barcode print is kept as it is**: BarcodePrint page → `POST api/Util/printbarcode` → LocalPrintAgent
+**The old barcode print was removed on 2026-11-05** (with the "Old system" menu: Barcode Print, Price Print, GRN). It was: BarcodePrint page → `POST api/Util/printbarcode` → LocalPrintAgent
 (localhost:9001) → BarTender `StickerExpireDatePrint.btw` on `AppSettings:PrinterZebra`. The new route needs neither
 BarTender nor LocalPrintAgent: ItemApi builds the label as ZPL and sends it RAW to the printer.
 
@@ -864,7 +864,7 @@ BarTender nor LocalPrintAgent: ItemApi builds the label as ZPL and sends it RAW 
   sheets / continuous media.
 - `Dpi` 203 / 300 / 600 (the print head, e.g. "ZDesigner ZP888 **203DPI**"). `Darkness` 0-30 or NULL.
 - Printer: `PrinterName` (Windows printer **on the API server**) → else `PrinterAddress` (`ip:9100`) → else
-  `AppSettings:PrinterZebra`. ItemApi in IIS: the printer must be installed for all users on the server (the app pool
+  the sticker printer of Settings > Printers (was `AppSettings:PrinterZebra`, §6.37). ItemApi in IIS: the printer must be installed for all users on the server (the app pool
   account opens it); a network Zebra by address avoids that.
 - What is printed: name (`Inv_Descrip`, else `Descrip` — the printer font has no Sinhala), barcode + its number,
   item code (`RefCode`) and price, MFD / EXP. Font sizes follow the label height; a name that does not fit gets the
@@ -898,7 +898,7 @@ Pages that come out the same are sent once with `^PQ` (100 labels of one item on
 UI: Lovable Prompt 53. SQL: same `U010` (layouts with `LabelKind = 2`). Code: `Service/PriceLabelRenderer.cs`,
 price part of `Repositories/LabelRepository.cs`, `api/Label/Price/*`.
 
-**The old price print is kept as it is** — PricePrint page → `api/Util/printprice` (`PricePrint.btw`),
+**The old price print was removed on 2026-11-05** (page and `api/Util` routes). It was: PricePrint page → `api/Util/printprice` (`PricePrint.btw`),
 `printDiscountPrice` (`DiscountPrint.btw` when `tax3` amount, else `DiscountPercentagePrint.btw` when `tax2` %),
 `printitempricelandscape` (`LandScapePricePrint.btw`) → LocalPrintAgent → BarTender → `AppSettings:PrinterName`
 (PegasusPR8003, 80 mm receipt printer). What the old one does, from the code and the templates' own previews:
@@ -934,7 +934,7 @@ Windows printer driver — the Pegasus as before, or an A4 laser with sheets of 
   (`price`, `discountAmount`, `discountPercent`, `name`, `sinhalaName`), only for that print.
 - Some items have English typed in `SinhalaDescrip`: the font follows the text, and "both" does not print the same
   name twice. A font that is not on the server is a 400 (Windows would print Sinhala as boxes).
-- Printer: layout `PrinterName` → else `AppSettings:PrinterName`. Errors (printer not found …) come back as 400.
+- Printer: layout `PrinterName` → else the bill printer of Settings > Printers (§6.37). Errors (printer not found …) come back as 400.
   ItemApi in IIS: the printer must be installed for all users on the server.
 
 | Method | Route | |
@@ -1399,6 +1399,21 @@ SQL: `26_BackOffice_TillPayments.sql` + a section of `02`. Code: `SupplierLedger
    till), the paid out reason ("Supplier <name>: <bill nos>"). → `z_tb_TillPayRequest` Status 0 + its lines. A bill /
    return can wait on one request only. The page lists the supplier's till payments (waiting / paid / cancelled);
    a waiting one can be cancelled.
+   Next to it, **Mark as paid** (no till, no cash; U052): for a bank transfer made straight from the account, or a data
+   correction to start a supplier from 0. `POST api/SupplierLedger/MarkPaid { suppId, txnDate, remark, ledgerIds }` →
+   `z_sp_SupplierMarkPaid`, one transaction: the ticked returns are set against the ticked bills (oldest return / bill
+   first, added to what they already pay; a return bigger than the bills keeps the rest), then what is still open on
+   the bills = ONE PAYMENT set against them (none when the returns cover them). The bills end at 0. Date, how it was
+   paid (bank transfer / data correction / other → the remark). Refused: a bill / return made by a cheque or waiting on
+   a till payment. Undo = delete the payment and edit the returns.
+   **Adjust to 0** (top of the supplier's ledger; U053): start a supplier fresh without deleting history.
+   POST api/SupplierLedger/AdjustBalance { suppId, txnDate, remark } → z_sp_SupplierAdjustBalance, one transaction
+   over the WHOLE ledger: payments / returns not set against a bill are set against the open bills (oldest first), then
+   bills still open = ONE adjustment PAYMENT, payments / returns still unused (balance below 0, e.g. cheques never linked
+   to a bill) = ONE adjustment PURCHASE that they pay. Old entries are not changed; the balance ends at 0, every bill is
+   paid, a new bill is open until paid. The dialog shows the balance, open bills, unused credits and what will be added.
+   Refused while a till payment is waiting. Undo = delete the adjustment PAYMENT; an adjustment PURCHASE: remove it from
+   the payments that pay it, then delete it. A cheque deleted later drops its links, so the adjustment bill opens again.
 2. **Till**: TillService downloads the waiting requests for it or any till every sync run (~30 s,
    `zf_tb_PayRequest`). The billing page shows **Pay supplier (n)** next to Menu → the list → **Pay** opens the Paid Out
    with the amount and reason filled in and locked; supervisor PIN, drawer check, slip and drawer as any paid out
@@ -1449,6 +1464,145 @@ from the sheet**: the Cheque Writer still writes each cheque to AsankaTemp and C
 | PUT | `api/ChequePlanner/day/{yyyy-mm-dd}` | `{ expectedCash, expectedCard, note }` — all empty = back to the average |
 | POST | `api/ChequePlanner/cheque` | planned cheque `{ date, supplierName, suppId, amount, note }` → `{ planId }` |
 | PUT / DELETE | `api/ChequePlanner/cheque/{planId}` | change / remove a planned cheque (written cheques are changed on Cheque Summary) |
+
+### 6.35 Cash Management settlement slip without BarTender (back office, 2026-11-05)
+Step 1 of taking BarTender / LocalPrintAgent out (step 2, the cheque: 6.36). Cash Management > **Print** (`api/Util/print`) is an ESC/POS slip the same way (`ReceiptSlip.CashManagement`: notes, cash in, cash out, balance, returned to cashier, cash to bank) - the old GDI print in `PrinterService` is removed.
+Cash Management → **Print Settlement** → `POST api/Util/printCashierSettlement` → ItemApi builds the slip
+(`Service/ReceiptSlip.cs`, same idea as TillService `Printing/ReceiptDoc.cs`) and sends it RAW to the receipt printer
+(`Service/RawPrinter.cs`). Before: LocalPrintAgent → BarTender `SettlementPrint.btw` (removed, with
+`AppSettings:SettlementTemplatePath`).
+- how: Settings > Printers > "Bill printer: how to print" (`Printer.BillMode`, §6.37) "driver" (default, since 2026-11-05 evening) = a normal Windows print through the printer's own driver in Courier New, as the old Cash Management print did (the raw ESC/POS slip did not come out on the shop's thermal printer). "escpos" = raw ESC/POS (an `ip:port` printer is always ESC/POS).
+- printer: the bill printer of Settings > Printers (`Printer.Bill`, §6.37);
+  paper `Printer.BillWidth` 48 (80 mm) / 32 (58 mm) characters a line.
+- slip: CASHIER SETTLEMENT, date + time, total cash balance, cashier cash, returned coins, total returned to
+  cashier, CASH TO BANK (big); feed + partial cut. Same values as the old template.
+- a printer problem now reaches the page (`{ message: "Could not print the settlement: ..." }`, 400) instead of a
+  message box on the server.
+- test: VirtualReceiptPrinter (`D:\1DEV\VirtualReceiptPrinter`, port 9100) with the Windows printer `VirtualPOS_9100`
+  (raw TCP port 127.0.0.1:9100) - choose `VirtualPOS_9100` as the bill printer.
+
+### 6.36 Cheque printing without BarTender - preview, layout, test print (back office Cheque Writer, 2026-11-05, U049)
+Step 2 of taking BarTender / LocalPrintAgent out. ItemApi has **no BarTender left** (COM reference removed from
+`ItemApi.csproj` - `dotnet build` works again; template settings, `PrintJobType`, `PrintLocalAgent` removed). LocalPrintAgent
+is not called by anything any more.
+Code: `Service/ChequePrinter.cs`, `Controllers/ChequePrintController.cs`, `Models/ChequeLayout.cs`,
+`Data/AppDbContext.ChequeLayout.cs`; `api/Util/printCheque`. SQL: `Updates/U049_BackOffice_ChequeLayout.sql`
+(full script `29_BackOffice_ChequeLayout.sql`). UI: Cheque Writer (preview card, Cheque layout dialog, print again).
+
+**Layout** (`z_tb_ChequeLayout`, one row, JSON; `PrevLayoutJson` = the one before the last save, for undo; no row = the
+defaults in `Models/ChequeLayout.cs`). All mm on the cheque as you read it: X from the left edge, Y from the top edge, to
+the top of the capitals; date digits X = box centre. Defaults measured from the old `ChqPrint.btw` (its preview picture
+and the positions stored in it): page 3.5 x 7 in (88.9 x 177.8 mm) portrait, cheque fed short edge first, text turned
+90 degrees (reads bottom to top), Arial 11 pt; payee 15.5 / 20.4, words 20.2 / 30.6 (line 2: 10 / 38.6), amount
+123.2 / 38.6 (format `0.00` as the template), date top 8.6, D D M M Y Y centres 124.3, 130.2, 136.1, 143.2, 160.7,
+167.7 (year = last two digits, "20" printed on the cheque). Plus a shift of the whole print (offset X / Y), font, bold,
+amount prefix / suffix, rotation 90 / 270 / 0. Save / undo: admin only.
+
+**Printing** (the general printer of Settings > Printers, §6.37; `System.Drawing` PrintDocument): custom paper of the page size, positions from the
+paper's edge (the printer's unprintable margin is taken off), the cheque turned onto the page. The preview picture
+(`POST api/ChequePrint/preview` -> png + problems) is drawn by the same `Draw` code.
+
+**Safety - `POST api/Util/printCheque`** checks BEFORE saving, and saves / prints nothing when:
+- the payee, the amount or the words do not fit (words wrap to line 2; anything left over = refused), amount <= 0, no
+  payee / words, font not installed;
+- the printer is not installed, or old jobs wait in its queue and cannot be removed (they are removed first, as
+  LocalPrintAgent did - an old job would print on this cheque);
+- duplicate cheque number / bills problem (as before).
+Then save -> print -> Google sheet. A print error after the save does not undo it: `{ printed: false, printError }`, the
+page shows "Cheque N is saved but did NOT print" with **Print cheque N again** (`POST api/ChequePrint/reprint` - only for
+a saved cheque with the same number, amount and date). A Google sheet error no longer makes the answer 400 (the cheque
+WAS saved and printed): `{ syncError }`, shown as a warning.
+
+**Before the first real cheque**: Cheque Writer > Cheque layout > Test print (plain paper cut to cheque size, or a
+photocopy of a cheque, put in like a cheque; prints the outlines too) > hold it on a real cheque > move the whole print or
+single parts > test again > Save. Then print one real cheque and check it.
+
+**A/C Payee Only** (2026-11-06): a tick under Payee Name on Cheque Writer, default **no** (back to no after each cheque /
+Clear). Ticked = `acPayee: true` on printCheque / preview / reprint, and the cheque prints "A/C Payee Only" between two
+slanting lines in the top-left corner. Its place is in the layout (`AcPayeeX` / `AcPayeeY` = centre, `AcPayeeFontPt`;
+defaults 22 / 10 mm, 8 pt; Cheque layout > "A/C Payee Only" row - the layout's sample shows it ticked). Print only - not
+saved with the cheque (no DB change).
+
+| Method | Route | |
+|---|---|---|
+| GET | `api/ChequePrint/layout` | `{ layout, saved, hasPrevious, updatedAt, updatedBy, printer }` |
+| GET | `api/ChequePrint/layout/defaults` | the measured defaults |
+| PUT | `api/ChequePrint/layout` | save (admin) |
+| POST | `api/ChequePrint/layout/undo` | back to the layout before the last save (admin) |
+| POST | `api/ChequePrint/preview` | `{ payee, amount, amountInWords, chequeDate, layout? }` -> `{ image, problems }` |
+| POST | `api/ChequePrint/test` | test print with outlines (layout being adjusted or the saved one); nothing saved |
+| POST | `api/ChequePrint/reprint` | `{ chequeNumber, payee, amount, amountInWords, chequeDate }` |
+
+### 6.37 Printers on Settings (back office Settings > Printers, 2026-11-05, U050)
+The printers are chosen on **Settings > Printers** (admins), not in `appsettings.json` any more (`PrinterName`,
+`PrinterHP`, `PrinterZebra`, `ReceiptPrinter`, `ReceiptCharsPerLine`, `ReceiptPrintMode` removed from `AppSettings`).
+Each one is a dropdown of the printers installed on the server where ItemApi runs, with **Test print**.
+
+| Setting (`z_tb_Setting`) | Label | Used for |
+|---|---|---|
+| `Printer.Bill` (printer) | Bill printer (thermal) | Cash Management print (all the data) and the cash to bank (settlement) slip (§6.35), return item slips (`PrinterService`, was hard-coded PegasusPR8003), price labels when the layout has no printer |
+| `Printer.BillMode` (choice) | Bill printer: how to print | `driver` (default) = normal Windows print through the driver; `escpos` = ESC/POS commands |
+| `Printer.BillWidth` (choice) | Bill printer: paper | `48` = 80 mm (default) / `32` = 58 mm characters a line |
+| `Printer.General` (printer) | General printer | cheques (Cheque Writer, §6.36) |
+| `Printer.Sticker` (printer) | Sticker printer | barcode labels (Zebra) when the layout has no printer / address |
+
+- None chosen at first (default empty): printing says "No bill printer (thermal) is chosen - choose it on Settings >
+  Printers" (cheques: refused before the save). `VirtualPOS_9100` (VirtualReceiptPrinter) can be chosen to test.
+- New value type `printer` (`z_fn_SettingValueOk`: a name of 1 to 100 letters); `PUT api/Settings/{key}` also refuses a
+  printer that is not installed. Code: `Service/PrinterConfig.cs` (read once per request).
+- `GET api/Settings/Printers` -> `{ installed, bill, general, sticker }`; `POST api/Settings/Printers/Test
+  { kind: bill | general | sticker, printer }` -> a short test page (bill: a character ruler to check the width;
+  sticker: a small ZPL label).
+- The settings also reach the tills with the rest (harmless, not used there).
+
+**Connection (U051, 2026-11-06).** As on the till's printer settings, the bill and sticker printers can be connected
+three ways - `Printer.BillConn` / `Printer.StickerConn`: `1` Windows printer (default, as before), `2` COM port (Epson
+TM Virtual Port Driver or a serial cable, `...Port` e.g. `COM3`, `...Baud` 38400), `3` network (`...Address`
+`ip:port`, 9100 when left out). The general printer (cheques) stays a Windows printer (drawn through its driver).
+- `Service/PrinterConfig.cs` `PrinterTarget` (`Conn`, `Name`, `Port`, `Address`, `Baud`, `SendRawAsync`), raw output
+  `Service/RawPrinter.cs` (`SendToSerialAsync`, `ListComPorts`; package `System.IO.Ports`).
+- Bill printer on a COM port / network: always ESC/POS (`BillMode` only applies to a Windows printer). Cash
+  Management / settlement slips (`ReceiptSlip.PrintAsync(PrinterTarget, ...)`), return slips (the same lines as
+  ESC/POS) and the test page work on all three. Price labels are drawn through a Windows driver: with a COM / network
+  bill printer, set a Windows printer on the price label layout.
+- Sticker printer on a COM port / network: the ZPL goes there (a layout's own printer / address still wins).
+- The Windows printer name is kept when another connection is chosen (switching back keeps it).
+- `GET api/Settings/Printers` -> `{ installed, comPorts, baudRates, bill: { conn, name, port, address, baud, mode,
+  width }, general, sticker }`; `PUT api/Settings/Printers/{kind}` saves one printer at once (nothing picked for the
+  connection = cleared); `POST api/Settings/Printers/Test { kind, conn, name, port, address, baud, mode, width }`
+  tests the printer as picked on the page, before it is saved. `BillWidth` also allows `42` (80 mm, 42 characters).
+
+### 6.38 Daily database backup (back office Settings > Backup, 2026-11-06, U051)
+ItemApi backs up the databases itself every day - no SQL Agent (Express has none) or Windows task needed.
+- **When:** every day at `Backup.Time` (default `23:00`, choices 6 PM to 11:30 PM) while the server and ItemApi are
+  on (`Service/DbBackupService.cs`, a hosted service that looks every minute). Server off at that time = no backup
+  that day (the next is at the time the next day). A failed daily backup is tried again 30 minutes later, at most
+  3 times a day. `Backup.Enabled` (default on) turns it off.
+- **What:** a full backup of the `DefaultConnection` database (easyway) **only**. Not `PosConnection`, and not the till
+  database `z_pos_fnt_db`: every till PC backs up its own (TillService `Backup/TillBackupWorker.cs`, appsettings
+  `Backup`, default `D:\IRMBackup\z_pos_fnt_db_daily.bak`, same daily-overwrite rules; a till that is off at the time
+  backs up 2 minutes after it starts next; till Menu → Settings → Backup: last backup, Back up now, on / off, time,
+  folder - saving needs the supervisor PIN, kept in `backup.json` on the till). A till running on the back office
+  PC therefore puts both files in `D:\IRMBackup`.
+- **Where:** `Backup.Folder` on the SQL Server computer (SQL Server writes the file; its service account needs write
+  access), empty = `D:\IRMBackup`. The folder is made when missing (`xp_create_subdir`). One file, **overwritten every
+  day**: `<folder>\easyway_daily.bak`.
+- **Safe overwrite:** when ItemApi can see the folder (same computer) the backup is written as `<db>_daily_new.bak`,
+  checked (`WITH CHECKSUM` + `RESTORE VERIFYONLY`) and only then moved over yesterday's file - a failed backup keeps
+  the last good one. When it cannot see the folder (SQL Server on another PC) it is written over the file directly.
+- **Rights:** the ItemApi SQL login needs `db_backupoperator` on the database (or `sysadmin`).
+- **Log:** `z_tb_DbBackup` (every try: database, file, start / end, size, ok / failed + message, daily or "Back up
+  now" + user), kept 90 days. `Ok` NULL = running, or ItemApi stopped during it.
+- **Page:** Settings > Backup shows the last backup (green), failed / none / older than a day (red / amber), **Back up
+  now**, the daily switch, the time, the folder (with the file names) and the last 30 tries.
+  `GET api/Settings/Backup`, `POST api/Settings/Backup/Run` (202; 409 when one is running; the page looks again every
+  3 s while it runs).
+- **Please wait:** while a backup runs every back office page shows "Database backup in progress - please wait"
+  (`components/BackupBanner.tsx` in `AppLayout`, `GET api/Util/BackupRunning` for any signed-in user, every 30 s, every
+  3 s while it runs). The till billing page shows the same for the till's own backup (`/sync/status` `backupRunning`).
+- New value type `folder` (`z_fn_SettingValueOk`: 3 to 200 letters; ItemApi checks it is a full path `D:\...` or
+  `\\server\share\...`).
+- Copy the file to another disk / PC now and then: a backup on the same disk does not survive the disk.
 
 ---
 

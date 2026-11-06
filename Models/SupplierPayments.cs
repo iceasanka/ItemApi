@@ -38,6 +38,45 @@ namespace ItemApi.Models
         public string? ReferenceId { get; set; }
     }
 
+    // POST api/SupplierLedger/MarkPaid (U052): the ticked bills (and returns) of a supplier → the bills end at 0
+    public class SupplierMarkPaidRequest
+    {
+        public int SuppId { get; set; }
+        public DateTime TxnDate { get; set; }
+        public string? Remark { get; set; }
+        // bills (PURCHASE) and returns (RETURN) of the supplier
+        public List<int> LedgerIds { get; set; } = new();
+    }
+
+    // z_sp_SupplierMarkPaid: the new PAYMENT (null when the returns covered the bills), what it paid, the returns used
+    public class SupplierMarkPaidResult
+    {
+        public int? PaymentLedgerId { get; set; }
+        public string? ReferenceId { get; set; }
+        public decimal Paid { get; set; }
+        public decimal ReturnsUsed { get; set; }
+    }
+
+    // POST api/SupplierLedger/AdjustBalance (U053): balancing entries so the supplier's balance is 0 (history kept)
+    public class SupplierAdjustBalanceRequest
+    {
+        public int SuppId { get; set; }
+        public DateTime TxnDate { get; set; }
+        public string? Remark { get; set; }
+    }
+
+    // z_sp_SupplierAdjustBalance: credits set against bills, the adjustment PAYMENT / PURCHASE added (ids null = none)
+    public class SupplierAdjustBalanceResult
+    {
+        public decimal Matched { get; set; }
+        public int? PaymentLedgerId { get; set; }
+        public string? PaymentRef { get; set; }
+        public decimal PaymentAmount { get; set; }
+        public int? PurchaseLedgerId { get; set; }
+        public string? PurchaseRef { get; set; }
+        public decimal PurchaseAmount { get; set; }
+    }
+
     // z_Sp_GetSupplierLedger: one ledger line with the running balance
     public class SupplierLedgerRow
     {

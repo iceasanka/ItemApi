@@ -16,12 +16,6 @@ namespace ItemApi.Models
         [JsonPropertyName("payee")]
         public string payee { get; set; }
 
-        public string? printerName { get; set; }
-
-        public string? printTemplatePath { get; set; }
-
-        public int printType { get; set; }
-
         [JsonPropertyName("payeeId")]
         public int? payeeId { get; set; }
 
@@ -38,6 +32,10 @@ namespace ItemApi.Models
 
         [JsonPropertyName("chequeNumber")]
         public int chequeNumber { get; set; }
+
+        // print "A/C Payee Only" on the cheque (default no) - print only, not saved
+        [JsonPropertyName("acPayee")]
+        public bool acPayee { get; set; }
 
         // why the picked bills cannot go with this cheque (null = fine) — AddCheque and printCheque
         public string? BillsError()

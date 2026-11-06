@@ -18,9 +18,11 @@ namespace ItemApi.Controllers
         private readonly IReturnListRepository _repository;
         private readonly IItemzRepository _itemz;
         private readonly IStockLedgerRepository _stock;
+        private readonly PrinterConfig _printers;
 
-        public ReturnListController(IReturnListRepository repository, IItemzRepository itemz, IStockLedgerRepository stock)
+        public ReturnListController(IReturnListRepository repository, IItemzRepository itemz, IStockLedgerRepository stock, PrinterConfig printers)
         {
+            _printers = printers;
             _repository = repository;
             _itemz = itemz;
             _stock = stock;
@@ -103,7 +105,7 @@ namespace ItemApi.Controllers
                 var prn = await _repository.ToPrnAsync(request);
                 string? printError = null;
                 if (request.Print)
-                    printError = PrintSlip(await _repository.GetByIdsAsync(request.Ids, 3), prn.PrnNo);
+                    printError = await PrintSlipAsync(await _repository.GetByIdsAsync(request.Ids, 3), prn.PrnNo, await _printers.GetAsync());
                 return Ok(new { prn.PrnNo, prn.Lines, prn.Qty, prn.Amount, prn.Posted, printed = request.Print && printError == null, printError });
             });
 
@@ -115,17 +117,18 @@ namespace ItemApi.Controllers
                 if (request?.Ids == null || request.Ids.Count == 0) return BadRequest(new { message = "Select the items to print." });
                 var rows = await _repository.GetByIdsAsync(request.Ids, null);
                 if (rows.Count == 0) rows = await _repository.GetByIdsAsync(request.Ids, 3);
-                var error = PrintSlip(rows, rows.Select(r => r.PrnNo).FirstOrDefault(p => p != null));
+                var error = await PrintSlipAsync(rows, rows.Select(r => r.PrnNo).FirstOrDefault(p => p != null), await _printers.GetAsync());
                 return error == null ? Ok(new { message = "Printed." }) : BadRequest(new { message = error });
             });
 
         // the old return slip layout (PrinterService) with the new rows; null = printed
-        private static string? PrintSlip(List<ReturnListRow> rows, string? prnNo)
+        private static async Task<string?> PrintSlipAsync(List<ReturnListRow> rows, string? prnNo, Printers printers)
         {
             if (rows.Count == 0) return "Nothing to print.";
+            if (!printers.BillTarget.IsSet) return "No bill printer (thermal) is chosen - choose it on Settings > Printers.";
             try
             {
-                new PrinterService().PrintProcessedData(rows.Select(r => new ReturnItem
+                await new PrinterService().PrintProcessedDataAsync(rows.Select(r => new ReturnItem
                 {
                     Item_Code = string.IsNullOrEmpty(r.Barcode) ? (r.RefCode ?? r.ItemId.ToString()) : r.Barcode,
                     Descrip = (prnNo != null && r == rows[0] ? $"{prnNo} {r.SuppName}\n" : "") + r.Descrip,
@@ -133,7 +136,7 @@ namespace ItemApi.Controllers
                     Cost_Price = r.CostPrice ?? 0,
                     ERet_Price = r.SellPrice ?? 0,
                     Qty = (double)r.Qty,
-                }).ToList());
+                }).ToList(), printers);
                 return null;
             }
             catch (Exception ex)

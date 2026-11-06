@@ -104,6 +104,38 @@ namespace ItemApi.Controllers
                 return CreatedAtAction(nameof(GetLedgerBySuppId), new { suppId = result.SuppId }, result);
             });
 
+        // POST: api/SupplierLedger/MarkPaid { suppId, txnDate, remark, ledgerIds } — "Mark as paid" (U052): the ticked
+        // returns are set against the ticked bills, what is still open = one PAYMENT; the bills end at 0.
+        // → { paymentLedgerId (null = the returns covered the bills), referenceId, paid, returnsUsed }
+        [HttpPost("MarkPaid")]
+        public Task<IActionResult> MarkPaid([FromBody] SupplierMarkPaidRequest request) =>
+            Run(async () =>
+            {
+                if (request == null || request.SuppId <= 0)
+                    return BadRequest(new { message = "Invalid supplier." });
+                if (request.LedgerIds == null || request.LedgerIds.Count == 0)
+                    return BadRequest(new { message = "Tick at least one bill." });
+                if (request.Remark?.Length > 500)
+                    return BadRequest(new { message = "Remark: at most 500 letters." });
+                var me = ItemApi.Service.AuthTokenService.UserId(User);
+                return Ok(await _repository.MarkPaidAsync(request, me > 0 ? me : null));
+            });
+
+        // POST: api/SupplierLedger/AdjustBalance { suppId, txnDate, remark } — "Adjust balance to 0" (U053): unused
+        // payments / returns are set against open bills, then one adjustment PAYMENT (bills still open) and / or one
+        // adjustment PURCHASE (credits still unused) is added. Nothing old is changed; the balance ends at 0.
+        [HttpPost("AdjustBalance")]
+        public Task<IActionResult> AdjustBalance([FromBody] SupplierAdjustBalanceRequest request) =>
+            Run(async () =>
+            {
+                if (request == null || request.SuppId <= 0)
+                    return BadRequest(new { message = "Invalid supplier." });
+                if (request.Remark?.Length > 500)
+                    return BadRequest(new { message = "Remark: at most 500 letters." });
+                var me = ItemApi.Service.AuthTokenService.UserId(User);
+                return Ok(await _repository.AdjustBalanceAsync(request, me > 0 ? me : null));
+            });
+
         // PUT: api/SupplierLedger/{ledgerId} — allocations null = the bills it pays stay as they are
         [HttpPut("{ledgerId:int}")]
         public Task<IActionResult> UpdateLedger(int ledgerId, [FromBody] SupplierLedger ledger) =>

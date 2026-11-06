@@ -1,10 +1,12 @@
 using System.ComponentModel;
+using System.IO.Ports;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
 namespace ItemApi.Service
 {
-    // Sends ready-made printer bytes (ZPL) to the printer, bypassing the driver's page layout.
+    // Sends ready-made printer bytes (ESC/POS, ZPL) to the printer, bypassing the driver's page layout:
+    // a Windows printer (spooler, RAW), a COM port (Epson TM Virtual Port Driver / serial cable) or a network "ip:port".
     // Same as TillService/Printing/RawPrinter.cs.
     public static class RawPrinter
     {
@@ -62,6 +64,41 @@ namespace ItemApi.Service
                 throw new IOException($"Printer {address} did not answer");
             }
         }
+
+        // COM ports on this server (Settings > Printers drop-down): COM1, COM2, ... in number order
+        public static List<string> ListComPorts() =>
+            SerialPort.GetPortNames().Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(p => p.Length > 3 && int.TryParse(p.AsSpan(3), out var n) ? n : 999).ToList();
+
+        // COM port, e.g. "COM3". The baud rate only matters on a real serial cable (the Epson virtual port ignores it).
+        public static Task SendToSerialAsync(string portName, int baudRate, byte[] data, TimeSpan timeout) =>
+            Task.Run(() =>
+            {
+                portName = portName.Trim();
+                using var port = new SerialPort(portName, baudRate > 0 ? baudRate : 38400, Parity.None, 8, StopBits.One)
+                {
+                    Handshake = Handshake.None,
+                    WriteTimeout = (int)timeout.TotalMilliseconds,
+                    DtrEnable = true
+                };
+                try
+                {
+                    port.Open();
+                }
+                catch (Exception ex)
+                {
+                    throw new IOException($"{portName} could not be opened: {ex.Message}");
+                }
+                try
+                {
+                    port.Write(data, 0, data.Length);
+                    port.BaseStream.Flush();
+                }
+                catch (TimeoutException)
+                {
+                    throw new IOException($"The printer on {portName} did not take the print (write timed out) - is it on?");
+                }
+            });
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private class DOCINFOW

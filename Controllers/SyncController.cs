@@ -26,9 +26,12 @@ namespace ItemApi.Controllers
 
         public const string TerminalKeyHeader = "X-Terminal-Key";
 
-        public SyncController(ISyncRepository repository, IHubContext<SalesHub> salesHub, IConfiguration config)
+        private readonly IServiceScopeFactory _scopes;
+
+        public SyncController(ISyncRepository repository, IHubContext<SalesHub> salesHub, IConfiguration config, IServiceScopeFactory scopes)
         {
             _repository = repository;
+            _scopes = scopes;
             _salesHub = salesHub;
             _livePush = config.GetValue("Dashboard:LivePush", true);
             _terminalKey = config["Sync:TerminalKey"];
@@ -147,6 +150,47 @@ namespace ItemApi.Controllers
             catch (SqlException ex) when (ex.Number >= 50000)
             {
                 return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // GET: api/Sync/CashSettlement/123?terminalId=1   header X-Terminal-Key = Sync:TerminalKey
+        // A Cash Management slip scanned on the till (barcode CS-<till>-123): its counted cash (day end) and the cash
+        // returned to the till (opening cash). 404 not found / a db without U055; 400 another till's slip or cancelled.
+        // Whether it was already used on this till is checked by the till itself (its own Z / opening cash).
+        [AllowAnonymous]
+        [HttpGet("CashSettlement/{settlementId:int}")]
+        public async Task<IActionResult> CashSettlement(int settlementId, [FromQuery] int terminalId,
+                                                        [FromServices] ItemApi.Data.AppDbContext db)
+        {
+            if (string.IsNullOrEmpty(_terminalKey))
+                return StatusCode(403, new { message = "Set Sync:TerminalKey on the back office API (and the same key on each till)." });
+            var sent = Request.Headers[TerminalKeyHeader].ToString();
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(sent), Encoding.UTF8.GetBytes(_terminalKey)))
+                return StatusCode(403, new { message = "Wrong terminal key (Sync:TerminalKey)." });
+
+            try
+            {
+                var s = await db.GetCashSettlementAsync(settlementId);
+                if (s == null)
+                    return NotFound(new { message = $"Cash slip {settlementId} not found on the back office." });
+                if (s.TerminalId != terminalId)
+                    return BadRequest(new { message = $"Cash slip {settlementId} is for till {s.TerminalCode}, not this till." });
+                if (s.Status != 1)
+                    return BadRequest(new { message = $"Cash slip {settlementId} was cancelled on the back office." });
+                return Ok(new TillCashSettlement
+                {
+                    SettlementId = s.SettlementId, TerminalId = s.TerminalId, TerminalCode = s.TerminalCode,
+                    CountedCash = s.CountedCash, ReturnedCash = s.ReturnedCash, BankCash = s.BankCash,
+                    ZNo = s.ZNo, Status = s.Status, OpeningUsed = s.OpeningUsed, CreatedAt = s.CreatedAt
+                });
+            }
+            catch (SqlException ex) when (ex.Number == 2812)
+            {
+                return NotFound(new { message = "The back office has no cash slips yet (run U055)." });
             }
             catch (Exception ex)
             {
@@ -332,7 +376,9 @@ namespace ItemApi.Controllers
 
             try
             {
-                return Ok(await _repository.SubmitZReportAsync(z));
+                var result = await _repository.SubmitZReportAsync(z);
+                UpdateTakingsSheetLater(z.BusinessDate.Date);
+                return Ok(result);
             }
             catch (SqlException ex) when (ex.Number >= 50000)
             {
@@ -342,6 +388,38 @@ namespace ItemApi.Controllers
             {
                 return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
             }
+        }
+
+        // A Z report arrived: the day's Avg_Cash (cash to bank of every Z: the Cash Management slip scanned at its day
+        // end (U055), else counted cash - opening cash, else cash sales + paid in - paid out) and Card (card sales) of
+        // all tills go to the cheque Google
+        // sheet. In the background with its own scope: the till never waits for Google, and a sheet failure (no row
+        // for the day, no credential, Google down) never fails the Z - only logged.
+        private void UpdateTakingsSheetLater(DateTime day)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = _scopes.CreateScope();
+                    var sp = scope.ServiceProvider;
+                    var db = sp.GetRequiredService<ItemApi.Data.AppDbContext>();
+                    var locationId = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppSettings>>().Value.LocationId;
+                    var t = await db.GetDayTakingsAsync(day, locationId);
+                    if (t.ZCount == 0)
+                        return;
+                    bool done = await sp.GetRequiredService<ItemApi.Service.IGoogleSheetService>()
+                        .UpdateDayTakingsAsync(day, t.BankCash, t.Card);
+                    if (done)
+                        Log.Information($"Takings sheet {day:yyyy-MM-dd}: Avg_Cash {t.BankCash:N2} ({t.SlipZCount} of {t.ZCount} Z from a cash slip, {t.CountedZCount} counted on the till), Card {t.Card:N2}");
+                    else
+                        Log.Warning($"Takings sheet: no row for {day:yyyy-MM-dd} (month block / day not in the sheet)");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Takings sheet {day:yyyy-MM-dd} not updated: {ex.Message}");
+                }
+            });
         }
 
         // ─── Z reports (back office) ─────────────────────────────────────────────

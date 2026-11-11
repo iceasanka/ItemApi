@@ -309,6 +309,11 @@ namespace ItemApi.Models
         public decimal? ChequeAmount { get; set; }
         // card machine settlement typed at day end (till U045); null = not entered / older TillService
         public decimal? CardSettlement { get; set; }
+        // drawer cash counted at day end (till U054); null = not entered / older TillService
+        public decimal? CountedCash { get; set; }
+        // Cash Management slip (z_tb_CashSettlement, U055) scanned on the day end screen: linked to this Z, its cash
+        // to bank goes to the cheque sheet. null = counted cash typed by hand / older TillService
+        public int? SettlementId { get; set; }
         public List<ZReportSubmitItem> Items { get; set; } = new();
     }
 
@@ -362,5 +367,21 @@ namespace ItemApi.Models
         public DateTime? ToDate { get; set; }
         public int? TerminalId { get; set; }
         public int? Status { get; set; }
+    }
+}
+
+namespace ItemApi.Models
+{
+    // A day's money for the cheque Google sheet (AppDbContext.GetDayTakingsAsync): BankCash = cash to bank of every Z
+    // (its Cash Management slip's cash to bank; else counted cash - opening cash; a Z not counted: cash sales + paid in
+    // - paid out), Card = card sales.
+    public class DayTakings
+    {
+        public int ZCount { get; set; }
+        public int CountedZCount { get; set; }
+        // Z's whose cash to bank came from a Cash Management slip (U055)
+        public int SlipZCount { get; set; }
+        public decimal BankCash { get; set; }
+        public decimal Card { get; set; }
     }
 }

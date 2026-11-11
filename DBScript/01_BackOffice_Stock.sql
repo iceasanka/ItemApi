@@ -315,6 +315,9 @@ GO
 -- cashier at day end. Difference = CardSettlement - CardAmount. NULL = not entered (or a till without U045).
 IF COL_LENGTH('dbo.z_tb_ZReport', 'CardSettlement') IS NULL
     ALTER TABLE dbo.z_tb_ZReport ADD CardSettlement DECIMAL(18,2) NULL;
+-- counted cash at day end (U054)
+IF COL_LENGTH('dbo.z_tb_ZReport', 'CountedCash') IS NULL
+    ALTER TABLE dbo.z_tb_ZReport ADD CountedCash DECIMAL(18,2) NULL;
 GO
 
 IF OBJECT_ID('dbo.z_tb_ZReportItem', 'U') IS NULL

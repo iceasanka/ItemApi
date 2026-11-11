@@ -203,7 +203,58 @@ namespace ItemApi.Data
                 Tvp("@Items", "dbo.z_tt_ZReportItem", items),
                 new SqlParameter("@CardSettlement", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = Db(z.CardSettlement) }).ToListAsync();
 
+            // counted cash (U054): stored on the Z the proc just saved; a db without the column skips it
+            if (z.CountedCash != null)
+                await Database.ExecuteSqlRawAsync(
+                    "IF COL_LENGTH('dbo.z_tb_ZReport', 'CountedCash') IS NOT NULL " +
+                    "EXEC sp_executesql N'UPDATE dbo.z_tb_ZReport SET CountedCash = @C WHERE TerminalId = @T AND ZNo = @Z', " +
+                    "N'@C DECIMAL(18,2), @T INT, @Z INT', @C = @C, @T = @T, @Z = @Z",
+                    new SqlParameter("@C", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = z.CountedCash.Value },
+                    new SqlParameter("@T", z.TerminalId),
+                    new SqlParameter("@Z", z.ZNo));
+
+            // Cash Management slip scanned at day end (U055): linked to this Z (a problem is only logged)
+            if (z.SettlementId is int settlementId && rows.Count > 0)
+                await LinkCashSettlementAsync(settlementId, z.TerminalId, z.ZNo);
+
             return rows.FirstOrDefault();
+        }
+
+        // The cheque sheet's day: cash to bank and card sales of every Z of the day (U054). Per Z, the first there is:
+        //   1. the Cash Management slip linked to the Z (U055): its cash to bank - the cash that really goes to the bank;
+        //   2. counted cash - opening cash when the cashier counted;
+        //   3. cash sales + paid in - paid out (what should be in the drawer without the opening cash).
+        // ZCount 0 = no Z that day. SlipZCount = Z's with a slip.
+        public async Task<DayTakings> GetDayTakingsAsync(DateTime day, int locationId)
+        {
+            var has = (await Database.SqlQueryRaw<int>(
+                "SELECT CASE WHEN COL_LENGTH('dbo.z_tb_ZReport', 'CountedCash') IS NULL THEN 0 ELSE 1 END + " +
+                "       CASE WHEN OBJECT_ID('dbo.z_tb_CashSettlement', 'U') IS NULL THEN 0 ELSE 2 END AS Value").ToListAsync())[0];
+            string counted = (has & 1) != 0 ? "z.CountedCash" : "CAST(NULL AS DECIMAL(18,2))";
+            string slip = (has & 2) != 0
+                ? "(SELECT TOP 1 s.BankCash FROM dbo.z_tb_CashSettlement s WHERE s.TerminalId = z.TerminalId AND s.ZNo = z.ZNo AND s.Status = 1)"
+                : "CAST(NULL AS DECIMAL(18,2))";
+            var rows = await Database.SqlQueryRaw<DayTakings>(
+                "SELECT COUNT(*) AS ZCount, " +
+                "  ISNULL(SUM(CASE WHEN x.SlipBank IS NOT NULL THEN x.SlipBank " +
+                "                  WHEN x.Counted IS NOT NULL THEN x.Counted - ISNULL(x.Opening, 0) " +
+                "                  ELSE x.CashAmount + ISNULL(x.PaidIn, 0) - ISNULL(x.PaidOut, 0) END), 0) AS BankCash, " +
+                "  SUM(CASE WHEN x.SlipBank IS NULL AND x.Counted IS NOT NULL THEN 1 ELSE 0 END) AS CountedZCount, " +
+                "  SUM(CASE WHEN x.SlipBank IS NOT NULL THEN 1 ELSE 0 END) AS SlipZCount, " +
+                "  ISNULL(SUM(x.CardAmount), 0) AS Card " +
+                $"FROM (SELECT z.CashAmount, z.CardAmount, {counted} AS Counted, {slip} AS SlipBank, " +
+                "             m.Opening, m.PaidIn, m.PaidOut " +
+                "FROM dbo.z_tb_ZReport z " +
+                "LEFT JOIN (SELECT TerminalId, ZNo, " +
+                "                  SUM(CASE WHEN Kind = 1 THEN Amount ELSE 0 END) AS Opening, " +
+                "                  SUM(CASE WHEN Kind = 2 THEN Amount ELSE 0 END) AS PaidIn, " +
+                "                  SUM(CASE WHEN Kind = 3 THEN Amount ELSE 0 END) AS PaidOut " +
+                "           FROM dbo.z_tb_CashMovement WHERE Status = 1 GROUP BY TerminalId, ZNo) m " +
+                "       ON m.TerminalId = z.TerminalId AND m.ZNo = z.ZNo " +
+                "WHERE z.LocationId = @LocationId AND z.BusinessDate = @Day) x",
+                new SqlParameter("@LocationId", locationId),
+                new SqlParameter("@Day", SqlDbType.Date) { Value = day.Date }).ToListAsync();
+            return rows.FirstOrDefault() ?? new DayTakings();
         }
 
         public async Task<ZReportResult?> ReconcileZReportAsync(int terminalId, int zNo)

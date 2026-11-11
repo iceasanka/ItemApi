@@ -1,7 +1,7 @@
 Windows Registry Editor Version 5.00
 
-; Back office PC - Chrome: no notifications, no other bars over the pages. Unlike the till, Chrome still saves
-; passwords and asks where to save downloads. Allowed for the back office: print / PDF windows (Z report, stock take,
+; Back office PC - Chrome: no notifications, no other bars over the pages. Passwords are left to Chrome
+; (saved with Remember me); downloads ask where to save. Allowed for the back office: print / PDF windows (Z report, stock take,
 ; quotation / invoice), several CSV / Excel downloads in a row, and Copy barcode (GRN).
 ; BEFORE running: change http://192.168.1.5 below (3 places) to the address the back office opens on in Chrome.
 ;   No port = every port on that PC. Add more sites as "2", "3" ... in each list.
@@ -11,9 +11,10 @@ Windows Registry Editor Version 5.00
 ; (Microsoft Edge instead of Chrome: use BackOffice-Edge-Policy.reg)
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]
-; passwords: Chrome offers "Save password?" and fills the saved one; no "password found in a data breach" warning
-"PasswordManagerEnabled"=dword:00000001
-"PasswordLeakDetectionEnabled"=dword:00000000
+; passwords: NOT set by this policy - Chrome saves / fills them as its own setting (Remember me on the sign in page).
+; The two lines below only remove a value an older run of this file (or the till file) left behind.
+"PasswordManagerEnabled"=-
+"PasswordLeakDetectionEnabled"=-
 ; no address / card suggestions under the search and amount fields
 "AutofillAddressEnabled"=dword:00000000
 "AutofillCreditCardEnabled"=dword:00000000

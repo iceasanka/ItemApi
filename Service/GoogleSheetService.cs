@@ -118,6 +118,51 @@
             }
         }
 
+        // After the tills' Z reports of a day reach the back office: that day's row gets Avg_Cash (C) = the cash to bank
+        // (counted cash - opening cash, all tills) and Card (D) = card sales. Total (E) is the sheet's own formula,
+        // never written. Same month block / day row as the cheques (A = month date, B = day of month).
+        public async Task<bool> UpdateDayTakingsAsync(DateTime date, decimal cash, decimal card)
+        {
+            var response = await _service.Spreadsheets.Values.Get(_spreadsheetId, $"{_sheetName}!A1:N1000").ExecuteAsync();
+            var rows = response.Values;
+            if (rows == null || rows.Count == 0)
+                return false;
+
+            int monthStart = -1;
+            for (int i = 0; i < rows.Count; i++)
+                if (rows[i].Count > 0 && DateTime.TryParse(rows[i][0]?.ToString(), out var m) && m.Month == date.Month && m.Year == date.Year)
+                {
+                    monthStart = i;
+                    break;
+                }
+            if (monthStart == -1)
+                return false;
+
+            int target = -1;
+            for (int i = monthStart + 2; i < rows.Count; i++)
+            {
+                // the next month's block starts: the day is not in this one
+                if (i > monthStart + 2 && rows[i].Count > 0 && DateTime.TryParse(rows[i][0]?.ToString(), out _))
+                    break;
+                if (rows[i].Count > 1 && int.TryParse(rows[i][1]?.ToString(), out int day) && day == date.Day)
+                {
+                    target = i;
+                    break;
+                }
+            }
+            if (target == -1)
+                return false;
+
+            var valueRange = new ValueRange
+            {
+                Values = new List<IList<object>> { new List<object> { (double)Math.Round(cash, 2), (double)Math.Round(card, 2) } }
+            };
+            var update = _service.Spreadsheets.Values.Update(valueRange, _spreadsheetId, $"{_sheetName}!C{target + 1}:D{target + 1}");
+            update.ValueInputOption = SpreadsheetsResource.ValuesResource.UpdateRequest.ValueInputOptionEnum.USERENTERED;
+            await update.ExecuteAsync();
+            return true;
+        }
+
         // Helper method to update a single cell
         private async Task UpdateCellAsync(string range, string value)
         {

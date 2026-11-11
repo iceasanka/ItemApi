@@ -15,7 +15,8 @@ namespace ItemApi.Service
     // Width = characters per line in the normal font (80 mm paper: 48, 58 mm paper: 32).
     public class ReceiptSlip
     {
-        private record SlipLine(string Text, SlipAlign Align, bool Bold, bool Tall, bool Wide);
+        // BarcodeHeight > 0 = Text is printed as a CODE128 barcode that many dots high (8 dots = 1 mm), centred
+        private record SlipLine(string Text, SlipAlign Align, bool Bold, bool Tall, bool Wide, int BarcodeHeight = 0);
 
         private readonly List<SlipLine> _lines = new();
 
@@ -31,6 +32,16 @@ namespace ItemApi.Service
         }
 
         public void Divider(char c = '-') => Line(new string(c, Width));
+
+        // CODE128 barcode, centred, no text under it (the caller prints the code where it wants it). Same as the till's
+        // ReceiptDoc.Barcode. Skipped when the data can't be a barcode that fits: the slip still prints.
+        public void Barcode(string? data, int heightDots = 64)
+        {
+            data = data?.Trim() ?? "";
+            if (data.Length is 0 or > 20 || !Code128.CanEncode(data) || data.Contains('{'))
+                return;
+            _lines.Add(new SlipLine(data, SlipAlign.Center, false, false, false, Math.Clamp(heightDots, 16, 160)));
+        }
 
         // "Cashier cash                15,000.00" - the right part is never cut, the left part is when both don't fit
         public void LeftRight(string left, string right, bool bold = false, bool tall = false, bool wide = false)
@@ -51,6 +62,15 @@ namespace ItemApi.Service
             foreach (var l in _lines)
             {
                 b.AddRange(new byte[] { 0x1B, 0x61, (byte)l.Align });                               // ESC a  alignment
+                if (l.BarcodeHeight > 0)
+                {
+                    b.AddRange(new byte[] { 0x1D, 0x68, (byte)l.BarcodeHeight });                   // GS h  bar height in dots
+                    b.AddRange(new byte[] { 0x1D, 0x77, 2 });                                       // GS w  thinnest bar 2 dots
+                    b.AddRange(new byte[] { 0x1D, 0x48, 0 });                                       // GS H  no text under the bars
+                    b.AddRange(new byte[] { 0x1D, 0x6B, 73, (byte)(l.Text.Length + 2), 0x7B, 0x42 });   // GS k 73 n {B  CODE128 set B
+                    b.AddRange(Encoding.ASCII.GetBytes(l.Text));                                    // the printer feeds the paper itself
+                    continue;
+                }
                 b.AddRange(new byte[] { 0x1B, 0x45, (byte)(l.Bold ? 1 : 0) });                     // ESC E  bold
                 b.AddRange(new byte[] { 0x1D, 0x21, (byte)((l.Wide ? 0x10 : 0) | (l.Tall ? 0x01 : 0)) });   // GS !  size
                 b.AddRange(Encoding.ASCII.GetBytes(l.Text));
@@ -116,7 +136,7 @@ namespace ItemApi.Service
                 : widthIn100 * 0.254f - 8;
             var em = FontEmMm(printableMm);
             var lineMm = em * 1.2f;
-            var heightMm = _lines.Sum(l => lineMm * (l.Tall ? 2 : 1)) + 25;   // + feed past the cutter
+            var heightMm = _lines.Sum(l => LineHeightMm(l, lineMm)) + 25;   // + feed past the cutter
             doc.DefaultPageSettings.PaperSize = new PaperSize("Slip", widthIn100, Math.Max(100, (int)Math.Ceiling(heightMm / 0.254f)));
 
             var next = 0;
@@ -133,9 +153,12 @@ namespace ItemApi.Service
                     while (next < _lines.Count)
                     {
                         var l = _lines[next];
-                        var h = lineMm * (l.Tall ? 2 : 1);
+                        var h = LineHeightMm(l, lineMm);
                         if (y + h > bottom && y > 1f) break;   // next page
-                        DrawLine(g, l, y, em);
+                        if (l.BarcodeHeight > 0)
+                            DrawBarcode(g, l, y, printableMm);
+                        else
+                            DrawLine(g, l, y, em);
                         y += h;
                         next++;
                     }
@@ -154,6 +177,28 @@ namespace ItemApi.Service
 
         // Width characters of Courier New (a character is 0.6 of the font size wide) across the printable width
         private float FontEmMm(float printableMm) => Math.Clamp(printableMm * 0.96f / (Width * 0.6f), 1.8f, 4.5f);   // a small margin on the right
+
+        // a barcode: its height (8 dots = 1 mm) + 2 mm room under it; a text line: one or two lines high
+        private static float LineHeightMm(SlipLine l, float lineMm) =>
+            l.BarcodeHeight > 0 ? l.BarcodeHeight / 8f + 2f : lineMm * (l.Tall ? 2 : 1);
+
+        // CODE128 drawn as rectangles, centred: the thinnest bar 0.25 mm (2 dots at 203 dpi, as GS w 2), thinner when
+        // the code would not fit the paper with a 3 mm quiet zone on each side
+        private static void DrawBarcode(Graphics g, SlipLine l, float y, float printableMm)
+        {
+            var widths = Code128.Widths(l.Text);
+            var modules = widths.Sum();
+            var moduleMm = Math.Min(0.25f, (printableMm - 6f) / modules);
+            var x = Math.Max(0f, (printableMm - modules * moduleMm) / 2f);
+            var height = l.BarcodeHeight / 8f;
+            for (int i = 0; i < widths.Count; i++)
+            {
+                var w = widths[i] * moduleMm;
+                if (i % 2 == 0)   // bars at even places, spaces between
+                    g.FillRectangle(Brushes.Black, x, y, w, height);
+                x += w;
+            }
+        }
 
         private void DrawLine(Graphics g, SlipLine l, float y, float em)
         {
@@ -186,12 +231,23 @@ namespace ItemApi.Service
             return doc;
         }
 
-        // Cash Management > Print - notes counted, cash in, cash out, the balance and what goes back to the cashier
-        public static ReceiptSlip CashManagement(PrintRequest r, int width, DateTime now)
+        // Cash Management > Print - notes counted, cash in, cash out, the balance and what goes back to the cashier.
+        // slip = a saved cash slip (U055): its number, till and cashier on top, its barcode at the end - scanned on that
+        // till at day end (counted cash) and at the next opening cash (the cash returned).
+        public static ReceiptSlip CashManagement(PrintRequest r, int width, DateTime now, CashSettlementRow? slip = null)
         {
             var doc = new ReceiptSlip(width);
-            doc.Line("CASH MANAGEMENT", SlipAlign.Center, bold: true, tall: true);
+            doc.Line(slip == null ? "CASH MANAGEMENT" : "CASH SLIP", SlipAlign.Center, bold: true, tall: true);
+            if (slip?.Status == 0)
+                doc.Line("*** CANCELLED - DO NOT SCAN ***", SlipAlign.Center, bold: true);
             doc.LeftRight($"Date: {now:yyyy-MM-dd}", $"Time: {now:HH:mm}");
+            if (slip != null)
+            {
+                doc.LeftRight($"Slip: {slip.SettlementId}", $"Till: {slip.TerminalCode}", bold: true);
+                if (!string.IsNullOrEmpty(slip.CashierId))
+                    doc.Line($"Cashier: {slip.CashierName ?? slip.CashierId}");
+                doc.Line($"Counted: {slip.CreatedAt:yyyy-MM-dd HH:mm}{(string.IsNullOrEmpty(slip.CreatedBy) ? "" : " by " + slip.CreatedBy)}");
+            }
             doc.Divider('=');
 
             doc.Line("TOTAL CASH", bold: true);
@@ -221,6 +277,15 @@ namespace ItemApi.Service
             doc.Divider();
             doc.LeftRight("CASH TO BANK", Money(r.FinalCashBalance), bold: true, tall: true);
             doc.Divider('=');
+            if (slip != null && slip.Status == 1)
+            {
+                doc.Line();
+                doc.Line($"Scan on till {slip.TerminalCode}:", SlipAlign.Center, bold: true);
+                doc.Line($"Day end  - counted {Money(slip.CountedCash)}", SlipAlign.Center);
+                doc.Line($"Opening  - cash {Money(slip.ReturnedCash)}", SlipAlign.Center);
+                doc.Barcode(slip.Barcode, 64);
+                doc.Line(slip.Barcode, SlipAlign.Center, bold: true);
+            }
             return doc;
         }
 
@@ -248,7 +313,7 @@ namespace ItemApi.Service
         private static string Plain(decimal n) => n.ToString("0.##", CultureInfo.InvariantCulture);
 
         // the rows arrive as JSON (System.Text.Json gives JsonElement for object values)
-        private static decimal Num(Dictionary<string, object> row, string key)
+        public static decimal Num(Dictionary<string, object> row, string key)
         {
             var v = Find(row, key);
             return v switch

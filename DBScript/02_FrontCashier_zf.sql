@@ -503,6 +503,12 @@ GO
 -- NULL = not entered.
 IF COL_LENGTH('dbo.zf_tb_ZReport', 'CardSettlement') IS NULL
     ALTER TABLE dbo.zf_tb_ZReport ADD CardSettlement DECIMAL(18,2) NULL;
+-- counted cash at day end (U054)
+IF COL_LENGTH('dbo.zf_tb_ZReport', 'CountedCash') IS NULL
+    ALTER TABLE dbo.zf_tb_ZReport ADD CountedCash DECIMAL(18,2) NULL;
+-- back office cash slip scanned at day end (U055): its counted cash; the back office links it to the Z
+IF COL_LENGTH('dbo.zf_tb_ZReport', 'SettlementId') IS NULL
+    ALTER TABLE dbo.zf_tb_ZReport ADD SettlementId INT NULL;
 GO
 
 -- Settings (2026-10-27, Docs/StockSystem.md 6.28): a copy of the back office z_tb_Setting / z_tb_UserSetting, the

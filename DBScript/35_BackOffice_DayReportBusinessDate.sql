@@ -26,9 +26,9 @@ GO
 IF OBJECT_ID('dbo.z_fn_DayZs', 'IF') IS NOT NULL DROP FUNCTION dbo.z_fn_DayZs;
 GO
 -- The Zs of a business day: the till's day end balance, whenever it was done.
---   Closed Z (in z_tb_ZReport): its BusinessDate (the till: the day of its first bill / cash, U044).
---   Z still open (no day end yet): the day of its first bill or cash movement - the same rule, so a Z started
---   yesterday stays on yesterday before and after its day end.
+--   Closed Z (in z_tb_ZReport): its BusinessDate = the day it was balanced (U058; a day end before 06:00 = the day before).
+--   Z still open (no day end yet): the day (06:00 to 06:00) of its LAST bill or cash movement (U058) - the day it
+--   will get at its day end if it is balanced today.
 -- FromAt / ToAt: the Z's time on the till (from the till's previous day end to this one; open Z: no end) - for rows
 -- that carry no Z no (No Sale drawer log; old void / abandoned rows).
 CREATE FUNCTION dbo.z_fn_DayZs (@Date DATE, @LocationId INT, @TerminalId INT)
@@ -48,18 +48,18 @@ RETURN
            CAST(NULL AS DATETIME) AS ToAt
     FROM (SELECT s.TerminalId, s.ZNo FROM dbo.z_tb_SalesInvoice s
           WHERE s.LocationId = @LocationId AND s.ZNo IS NOT NULL
-            AND s.InvDate >= CAST(@Date AS DATETIME) AND s.InvDate < DATEADD(DAY, 1, CAST(@Date AS DATETIME))
+            AND s.InvDate >= DATEADD(HOUR, 6, CAST(@Date AS DATETIME)) AND s.InvDate < DATEADD(HOUR, 30, CAST(@Date AS DATETIME))
             AND (@TerminalId IS NULL OR s.TerminalId = @TerminalId)
           UNION
           SELECT m.TerminalId, m.ZNo FROM dbo.z_tb_CashMovement m
           WHERE m.LocationId = @LocationId AND m.ZNo IS NOT NULL
-            AND m.CreatedAt >= CAST(@Date AS DATETIME) AND m.CreatedAt < DATEADD(DAY, 1, CAST(@Date AS DATETIME))
+            AND m.CreatedAt >= DATEADD(HOUR, 6, CAST(@Date AS DATETIME)) AND m.CreatedAt < DATEADD(HOUR, 30, CAST(@Date AS DATETIME))
             AND (@TerminalId IS NULL OR m.TerminalId = @TerminalId)) o
     WHERE NOT EXISTS (SELECT 1 FROM dbo.z_tb_ZReport z WHERE z.TerminalId = o.TerminalId AND z.ZNo = o.ZNo)
       AND NOT EXISTS (SELECT 1 FROM dbo.z_tb_SalesInvoice s
-                      WHERE s.TerminalId = o.TerminalId AND s.ZNo = o.ZNo AND s.InvDate < CAST(@Date AS DATETIME))
+                      WHERE s.TerminalId = o.TerminalId AND s.ZNo = o.ZNo AND s.InvDate >= DATEADD(HOUR, 30, CAST(@Date AS DATETIME)))
       AND NOT EXISTS (SELECT 1 FROM dbo.z_tb_CashMovement m
-                      WHERE m.TerminalId = o.TerminalId AND m.ZNo = o.ZNo AND m.CreatedAt < CAST(@Date AS DATETIME));
+                      WHERE m.TerminalId = o.TerminalId AND m.ZNo = o.ZNo AND m.CreatedAt >= DATEADD(HOUR, 30, CAST(@Date AS DATETIME)));
 GO
 
 IF OBJECT_ID('dbo.z_sp_DayReportTills', 'P') IS NOT NULL DROP PROCEDURE dbo.z_sp_DayReportTills;

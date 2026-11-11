@@ -1,3 +1,4 @@
+using ItemApi.Common;
 using ItemApi.Hubs;
 using ItemApi.Interface;
 using ItemApi.Models;
@@ -376,8 +377,15 @@ namespace ItemApi.Controllers
 
             try
             {
+                // dated by the day end (ZDay), whatever date the till gave it - a Z opened the night before and
+                // balanced the next night belongs to the next day
+                var tillDate = z.BusinessDate.Date;
+                if (z.ClosedAt is DateTime closedAt)
+                    z.BusinessDate = ZDay.FromDayEnd(closedAt, z.OpenedAt);
                 var result = await _repository.SubmitZReportAsync(z);
                 UpdateTakingsSheetLater(z.BusinessDate.Date);
+                if (tillDate != z.BusinessDate.Date)
+                    UpdateTakingsSheetLater(tillDate, clearIfNone: true);   // the till's date may have this Z on the sheet
                 return Ok(result);
             }
             catch (SqlException ex) when (ex.Number >= 50000)
@@ -395,31 +403,40 @@ namespace ItemApi.Controllers
         // all tills go to the cheque Google
         // sheet. In the background with its own scope: the till never waits for Google, and a sheet failure (no row
         // for the day, no credential, Google down) never fails the Z - only logged.
-        private void UpdateTakingsSheetLater(DateTime day)
+        // clearIfNone: a Z moved off this day (dated by its day end) - write 0 when no Z is left on it
+        private void UpdateTakingsSheetLater(DateTime day, bool clearIfNone = false)
         {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    using var scope = _scopes.CreateScope();
-                    var sp = scope.ServiceProvider;
-                    var db = sp.GetRequiredService<ItemApi.Data.AppDbContext>();
-                    var locationId = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppSettings>>().Value.LocationId;
-                    var t = await db.GetDayTakingsAsync(day, locationId);
-                    if (t.ZCount == 0)
-                        return;
-                    bool done = await sp.GetRequiredService<ItemApi.Service.IGoogleSheetService>()
-                        .UpdateDayTakingsAsync(day, t.BankCash, t.Card);
-                    if (done)
-                        Log.Information($"Takings sheet {day:yyyy-MM-dd}: Avg_Cash {t.BankCash:N2} ({t.SlipZCount} of {t.ZCount} Z from a cash slip, {t.CountedZCount} counted on the till), Card {t.Card:N2}");
-                    else
-                        Log.Warning($"Takings sheet: no row for {day:yyyy-MM-dd} (month block / day not in the sheet)");
+                    await WriteTakingsSheetAsync(day, clearIfNone);
                 }
                 catch (Exception ex)
                 {
                     Log.Error($"Takings sheet {day:yyyy-MM-dd} not updated: {ex.Message}");
                 }
             });
+        }
+
+        // the day's row of the cheque sheet from the Zs dated that day; returns what was done
+        private async Task<string> WriteTakingsSheetAsync(DateTime day, bool clearIfNone)
+        {
+            using var scope = _scopes.CreateScope();
+            var sp = scope.ServiceProvider;
+            var db = sp.GetRequiredService<ItemApi.Data.AppDbContext>();
+            var locationId = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AppSettings>>().Value.LocationId;
+            var t = await db.GetDayTakingsAsync(day, locationId);
+            if (t.ZCount == 0 && !clearIfNone)
+                return "no Z - not changed";
+            bool done = await sp.GetRequiredService<ItemApi.Service.IGoogleSheetService>()
+                .UpdateDayTakingsAsync(day, t.BankCash, t.Card);
+            var what = $"Avg_Cash {t.BankCash:N2} ({t.SlipZCount} of {t.ZCount} Z from a cash slip, {t.CountedZCount} counted on the till), Card {t.Card:N2}";
+            if (done)
+                Log.Information($"Takings sheet {day:yyyy-MM-dd}: {what}");
+            else
+                Log.Warning($"Takings sheet: no row for {day:yyyy-MM-dd} (month block / day not in the sheet)");
+            return done ? what : "no row for this day in the sheet";
         }
 
         // ─── Z reports (back office) ─────────────────────────────────────────────

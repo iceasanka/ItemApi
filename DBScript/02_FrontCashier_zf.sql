@@ -1476,7 +1476,8 @@ BEGIN
 END
 GO
 
--- Cashier day end: totals the open Z from the local bills and closes it. The next bill opens a new Z.
+-- Cashier day end: totals the open Z from the local bills and closes it, dated the day end day (U058). The next bill
+-- opens a new Z.
 -- @CardSettlement = the card machine settlement total typed by the cashier (U045), NULL = not entered.
 CREATE PROCEDURE dbo.zf_sp_CloseZ
     @CashierId      VARCHAR(20) = NULL,
@@ -1506,6 +1507,10 @@ BEGIN
         -- rules here must match z_sp_ReconcileZReport on the back office
         UPDATE z SET
             ClosedAt     = GETDATE(),
+            -- dated by the day end (U058): a Z opened the night before is on the day it is balanced; a day end
+            -- before 06:00 counts for the day before, never before the day it opened (same rule as ItemApi ZDay)
+            BusinessDate = CASE WHEN CAST(z.OpenedAt AS DATE) > CAST(DATEADD(HOUR, -6, GETDATE()) AS DATE)
+                                THEN CAST(z.OpenedAt AS DATE) ELSE CAST(DATEADD(HOUR, -6, GETDATE()) AS DATE) END,
             CashierId    = ISNULL(@CashierId, z.CashierId),
             InvoiceCount = (SELECT COUNT(*) FROM dbo.zf_tb_Invoice WHERE ZNo = @ZNo),
             LineCount    = (SELECT COUNT(*) FROM dbo.zf_tb_Invoice i JOIN dbo.zf_tb_InvoiceItem it ON it.InvoiceNo = i.InvoiceNo

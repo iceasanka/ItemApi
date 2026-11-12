@@ -34,19 +34,23 @@ namespace ItemApi.Controllers
             if (p == null)
                 return BadRequest(new { message = "Enter the phone number as 10 digits, e.g. 0771234567." });
             var member = await _db.GetLoyaltyMemberAsync(p);
-            return Ok(new LoyaltyLookup { Found = member != null, Member = member, Settings = await _db.GetLoyaltySettingsAsync() });
+            return Ok(new LoyaltyLookup
+            {
+                Found = member != null, Member = member, Settings = await _db.GetLoyaltySettingsAsync(),
+                Wallet = await _db.GetWalletLookupAsync(p),   // the customer wallet (U059), its own on / off
+            });
         });
 
         // POST: api/Loyalty/Member { phone, name, terminalId, cashierId } — a new member from a till (Menu > Add loyalty
-        // member), only while loyalty is on → the member
+        // member), only while loyalty points or the customer wallet is on → the member
         [AllowAnonymous]
         [HttpPost("Member")]
         public Task<IActionResult> AddMemberFromTill([FromBody] LoyaltyAddMemberRequest req) => Run(async () =>
         {
             if (req == null || req.TerminalId is null or <= 0)
                 return BadRequest(new { message = "TerminalId is required." });
-            if (!(await _db.GetLoyaltySettingsAsync()).Enabled)
-                return BadRequest(new { message = "Loyalty points are switched off on the back office." });
+            if (!(await _db.GetLoyaltySettingsAsync()).Enabled && !(await _db.GetWalletSettingsAsync()).Enabled)
+                return BadRequest(new { message = "Loyalty points and the customer wallet are switched off on the back office." });
             return await AddMember(req, req.TerminalId, Cut(req.CashierId, 50));
         });
 

@@ -35,6 +35,8 @@ namespace ItemApi.Models
         public bool Found { get; set; }
         public LoyaltyMember? Member { get; set; }
         public LoyaltySettings Settings { get; set; } = new();
+        // customer wallet (U059; null = no wallet on this back office): its settings and this member's balance
+        public WalletLookup? Wallet { get; set; }
     }
 
     public class LoyaltyMemberList

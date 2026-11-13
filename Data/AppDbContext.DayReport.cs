@@ -25,15 +25,66 @@ namespace ItemApi.Data
             DayQuery<DayBill>("z_sp_DayReportBills", date, locationId, terminalId);
 
         // bank transfer / cheque payments of the bills dated from..to (both included); payType null = both (U042)
-        public async Task<List<DayBankChequeRow>> GetDayBankChequeAsync(DateTime from, DateTime to, int locationId, int? terminalId, int? payType)
+        // status null = all, 0 = pending only, 1 = received only (U060)
+        public async Task<List<DayBankChequeRow>> GetDayBankChequeAsync(DateTime from, DateTime to, int locationId, int? terminalId, int? payType, int? status)
         {
             return await Database.SqlQueryRaw<DayBankChequeRow>(
-                "EXEC dbo.z_sp_DayReportBankCheque @From = @From, @To = @To, @LocationId = @LocationId, @TerminalId = @TerminalId, @PayType = @PayType",
+                "EXEC dbo.z_sp_DayReportBankCheque @From = @From, @To = @To, @LocationId = @LocationId, @TerminalId = @TerminalId, @PayType = @PayType, @Status = @Status",
                 new SqlParameter("@From", SqlDbType.Date) { Value = from.Date },
                 new SqlParameter("@To", SqlDbType.Date) { Value = to.Date },
                 new SqlParameter("@LocationId", locationId),
                 new SqlParameter("@TerminalId", SqlDbType.Int) { Value = (object?)terminalId ?? DBNull.Value },
-                new SqlParameter("@PayType", SqlDbType.Int) { Value = (object?)payType ?? DBNull.Value }).ToListAsync();
+                new SqlParameter("@PayType", SqlDbType.Int) { Value = (object?)payType ?? DBNull.Value },
+                new SqlParameter("@Status", SqlDbType.Int) { Value = (object?)status ?? DBNull.Value }).ToListAsync();
+        }
+
+        // ticked bank transfer / cheque lines → received on receivedDate (note), or back to pending (U060). → lines changed
+        public async Task<int> SetBankChequeStatusAsync(BankChequeStatusRequest req, int locationId, int? userId)
+        {
+            // column order = dbo.z_tt_BankChequeKey
+            var keys = new DataTable();
+            keys.Columns.Add("InvoiceId", typeof(int));
+            keys.Columns.Add("LineNum", typeof(int));
+            foreach (var k in req.Lines.DistinctBy(k => (k.InvoiceId, k.LineNum)))
+                keys.Rows.Add(k.InvoiceId, k.LineNum);
+
+            return (await Database.SqlQueryRaw<BankChequeStatusResult>(
+                "EXEC dbo.z_sp_BankChequeSetStatus @Received = @Received, @ReceivedDate = @ReceivedDate, @Note = @Note, @UserId = @UserId, @LocationId = @LocationId, @Keys = @Keys",
+                new SqlParameter("@Received", SqlDbType.Bit) { Value = req.Received },
+                new SqlParameter("@ReceivedDate", SqlDbType.Date) { Value = (object?)req.ReceivedDate?.Date ?? DBNull.Value },
+                new SqlParameter("@Note", SqlDbType.NVarChar, 200) { Value = (object?)req.Note?.Trim() ?? DBNull.Value },
+                new SqlParameter("@UserId", SqlDbType.Int) { Value = (object?)userId ?? DBNull.Value },
+                new SqlParameter("@LocationId", locationId),
+                new SqlParameter("@Keys", SqlDbType.Structured) { TypeName = "dbo.z_tt_BankChequeKey", Value = keys })
+                .ToListAsync()).FirstOrDefault()?.Changed ?? 0;
+        }
+
+        // the till's lines: Z zNo (any status) + its earlier lines still pending (U060)
+        public Task<List<TillBankChequeLine>> GetTillBankChequeAsync(int terminalId, int? zNo) =>
+            Database.SqlQueryRaw<TillBankChequeLine>(
+                "EXEC dbo.z_sp_TillBankCheque @TerminalId = @TerminalId, @ZNo = @ZNo",
+                new SqlParameter("@TerminalId", terminalId),
+                new SqlParameter("@ZNo", SqlDbType.Int) { Value = (object?)zNo ?? DBNull.Value }).ToListAsync();
+
+        // the till marks its lines (by bill no) received / back to pending (U060) → lines changed
+        public async Task<int> SetTillBankChequeStatusAsync(TillBankChequeStatusRequest req)
+        {
+            // column order = dbo.z_tt_TillBankChequeKey
+            var keys = new DataTable();
+            keys.Columns.Add("InvoiceNo", typeof(string));
+            keys.Columns.Add("LineNum", typeof(int));
+            foreach (var k in req.Lines.DistinctBy(k => (k.InvoiceNo.Trim(), k.LineNum)))
+                keys.Rows.Add(k.InvoiceNo.Trim(), k.LineNum);
+
+            return (await Database.SqlQueryRaw<BankChequeStatusResult>(
+                "EXEC dbo.z_sp_TillBankChequeSetStatus @TerminalId = @TerminalId, @CashierId = @CashierId, @Received = @Received, @ReceivedDate = @ReceivedDate, @Note = @Note, @Keys = @Keys",
+                new SqlParameter("@TerminalId", req.TerminalId),
+                new SqlParameter("@CashierId", SqlDbType.VarChar, 50) { Value = (object?)req.CashierId?.Trim() ?? DBNull.Value },
+                new SqlParameter("@Received", SqlDbType.Bit) { Value = req.Received },
+                new SqlParameter("@ReceivedDate", SqlDbType.Date) { Value = (object?)req.ReceivedDate?.Date ?? DBNull.Value },
+                new SqlParameter("@Note", SqlDbType.NVarChar, 200) { Value = (object?)req.Note?.Trim() ?? DBNull.Value },
+                new SqlParameter("@Keys", SqlDbType.Structured) { TypeName = "dbo.z_tt_TillBankChequeKey", Value = keys })
+                .ToListAsync()).FirstOrDefault()?.Changed ?? 0;
         }
 
         // null = no such bill

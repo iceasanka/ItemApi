@@ -198,6 +198,10 @@ namespace ItemApi.Service
                 if (Math.Abs(l.CostChangePct.Value) >= CostChangeCheckPct)
                     AddIssue(l, $"{MatchNote}cost {l.UnitCost:0.00} is {l.CostChangePct:+0.#;-0.#}% from our cost {it.CostPrice:0.00} - right item? right qty?");
             }
+            // a case / line total read as the cost of one: a loss on every one sold (GRN Entry stops the commit too)
+            var sell = l.Mrp > 0 ? l.Mrp : it.RetailPrice;
+            if (l.UnitCost > 0 && sell > 0 && l.UnitCost > sell)
+                AddIssue(l, $"{MatchNote}cost {l.UnitCost:0.00} is above the sell price {sell:0.00} - case price? check the qty.");
             if (l.Mrp > 0 && it.RetailPrice > 0 && l.Mrp != it.RetailPrice)
                 AddIssue(l, $"{MatchNote}MRP {l.Mrp:0.00}, our price {it.RetailPrice:0.00}.");
         }

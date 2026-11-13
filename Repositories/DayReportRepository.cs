@@ -107,11 +107,25 @@ namespace ItemApi.Repositories
         }
 
         // bank transfer / cheque payments for matching with the bank statement (U042)
-        public async Task<List<DayBankChequeRow>> GetBankChequeAsync(DateTime from, DateTime to, int? terminalId, int? payType)
+        public async Task<List<DayBankChequeRow>> GetBankChequeAsync(DateTime from, DateTime to, int? terminalId, int? payType, int? status)
         {
             try
             {
-                return await _context.GetDayBankChequeAsync(from, to, _locationId, terminalId, payType);
+                return await _context.GetDayBankChequeAsync(from, to, _locationId, terminalId, payType, status);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        // received / pending of bank transfer & cheque lines (U060)
+        public async Task<int> SetBankChequeStatusAsync(BankChequeStatusRequest request, int? userId)
+        {
+            try
+            {
+                return await _context.SetBankChequeStatusAsync(request, _locationId, userId);
             }
             catch (Exception ex)
             {

@@ -199,6 +199,79 @@ namespace ItemApi.Controllers
             }
         }
 
+        // GET: api/Sync/BankCheque?terminalId=2&zNo=21   header X-Terminal-Key = Sync:TerminalKey  (U060)
+        // Till Menu > Bank & cheque: the till's bank transfer / cheque lines with their received status - every line of
+        // Z zNo + the lines of its earlier Zs still pending (last year). 404 = a db without U060.
+        [AllowAnonymous]
+        [HttpGet("BankCheque")]
+        public async Task<IActionResult> TillBankCheque([FromQuery] int terminalId, [FromQuery] int? zNo,
+                                                        [FromServices] ItemApi.Data.AppDbContext db)
+        {
+            var refused = CheckTerminalKey();
+            if (refused != null)
+                return refused;
+            try
+            {
+                return Ok(await db.GetTillBankChequeAsync(terminalId, zNo));
+            }
+            catch (SqlException ex) when (ex.Number == 2812)
+            {
+                return NotFound(new { message = "The back office has no bank & cheque status yet (run U060)." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/Sync/BankCheque/Status { terminalId, cashierId, received, receivedDate, note, lines: [{ invoiceNo, lineNum }] }
+        // header X-Terminal-Key (U060): the cashier marks the till's lines received (the cheque was brought / the transfer
+        // is in) or back to pending. → { changed }. 400 = the proc's checks (bill not uploaded yet, date before the bill).
+        [AllowAnonymous]
+        [HttpPost("BankCheque/Status")]
+        public async Task<IActionResult> TillBankChequeStatus([FromBody] TillBankChequeStatusRequest request,
+                                                              [FromServices] ItemApi.Data.AppDbContext db)
+        {
+            var refused = CheckTerminalKey();
+            if (refused != null)
+                return refused;
+            if (request == null || request.TerminalId <= 0 || request.Lines.Count == 0)
+                return BadRequest(new { message = "Tick at least one bank transfer or cheque." });
+            if (request.Received && request.ReceivedDate == null)
+                return BadRequest(new { message = "Pick the date it was received." });
+            if (request.Note?.Trim().Length > 200)
+                return BadRequest(new { message = "Note: at most 200 letters." });
+            try
+            {
+                var n = await db.SetTillBankChequeStatusAsync(request);
+                Serilog.Log.Information("Bank & cheque status from till {TerminalId} ({CashierId}): {Count} lines -> {Status}",
+                    request.TerminalId, request.CashierId, n, request.Received ? "received" : "pending");
+                return Ok(new { changed = n });
+            }
+            catch (SqlException ex) when (ex.Number == 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (SqlException ex) when (ex.Number == 2812)
+            {
+                return NotFound(new { message = "The back office has no bank & cheque status yet (run U060)." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        private IActionResult? CheckTerminalKey()
+        {
+            if (string.IsNullOrEmpty(_terminalKey))
+                return StatusCode(403, new { message = "Set Sync:TerminalKey on the back office API (and the same key on each till)." });
+            var sent = Request.Headers[TerminalKeyHeader].ToString();
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(sent), Encoding.UTF8.GetBytes(_terminalKey)))
+                return StatusCode(403, new { message = "Wrong terminal key (Sync:TerminalKey)." });
+            return null;
+        }
+
         // GET: api/Sync/Settings?terminalId=1 — general settings and users' own values (§6.28), the whole list every
         // time (a few rows); the till replaces its copy. No secrets in it, so no terminal key.
         [AllowAnonymous]

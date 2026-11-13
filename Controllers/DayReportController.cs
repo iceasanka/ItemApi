@@ -1,4 +1,6 @@
+using ItemApi.Models;
 using ItemApi.Interface;
+using ItemApi.Service;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ItemApi.Controllers
@@ -10,10 +12,12 @@ namespace ItemApi.Controllers
     public class DayReportController : ControllerBase
     {
         private readonly IDayReportRepository _repository;
+        private readonly PrinterConfig _printers;
 
-        public DayReportController(IDayReportRepository repository)
+        public DayReportController(IDayReportRepository repository, PrinterConfig printers)
         {
             _repository = repository;
+            _printers = printers;
         }
 
         // GET: api/DayReport?date=2026-10-22&terminalId=   (no date = today, no terminalId = all tills)
@@ -89,13 +93,16 @@ namespace ItemApi.Controllers
             }
         }
 
-        // GET: api/DayReport/BankCheque?from=2026-11-01&to=2026-11-03&terminalId=&payType=
+        // GET: api/DayReport/BankCheque?from=2026-11-01&to=2026-11-03&terminalId=&payType=&status=
         // Every bank transfer (payType 5) / cheque (payType 6) payment of the bills dated from..to (both included, at most
         // 366 days), voided bills left out, refund bills negative. No payType = both. No dates = today.
+        // status (U060): none = all, 0 = pending only, 1 = received only.
         [HttpGet("BankCheque")]
         public async Task<IActionResult> BankCheque([FromQuery] DateTime? from, [FromQuery] DateTime? to,
-                                                    [FromQuery] int? terminalId, [FromQuery] int? payType)
+                                                    [FromQuery] int? terminalId, [FromQuery] int? payType, [FromQuery] int? status)
         {
+            if (status is not (null or 0 or 1))
+                return BadRequest(new { message = "Status must be 0 (pending) or 1 (received)." });
             var f = (from ?? to ?? DateTime.Today).Date;
             var t = (to ?? from ?? DateTime.Today).Date;
             if (t < f)
@@ -107,7 +114,36 @@ namespace ItemApi.Controllers
 
             try
             {
-                return Ok(await _repository.GetBankChequeAsync(f, t, terminalId, payType));
+                return Ok(await _repository.GetBankChequeAsync(f, t, terminalId, payType, status));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/DayReport/BankCheque/Status { received, receivedDate, note, lines: [{ invoiceId, lineNum }] } (U060)
+        // received true = the cheque was handed over / the transfer reached the bank on receivedDate (marking again
+        // changes the date / note); false = back to pending. → { changed }
+        [HttpPost("BankCheque/Status")]
+        public async Task<IActionResult> BankChequeStatus([FromBody] BankChequeStatusRequest request)
+        {
+            if (request == null || request.Lines.Count == 0)
+                return BadRequest(new { message = "Tick at least one bank transfer or cheque." });
+            if (request.Received && request.ReceivedDate == null)
+                return BadRequest(new { message = "Pick the date it was received." });
+            if (request.Note?.Trim().Length > 200)
+                return BadRequest(new { message = "Note: at most 200 letters." });
+
+            try
+            {
+                var me = AuthTokenService.UserId(User);
+                return Ok(new { changed = await _repository.SetBankChequeStatusAsync(request, me > 0 ? me : null) });
+            }
+            catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.Number == 50000)
+            {
+                // the proc's own checks (date before the bill, not a bank / cheque line ...)
+                return BadRequest(new { message = ex.Message });
             }
             catch (Exception ex)
             {
@@ -132,6 +168,36 @@ namespace ItemApi.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
+        // POST: api/DayReport/Bill/T01-00000038/Print?shop=... → the bill copy straight on the bill printer (thermal) of
+        // Settings > Printers, no print preview. shop = the name on top (the page's shop name).
+        [HttpPost("Bill/{invoiceNo}/Print")]
+        public async Task<IActionResult> PrintBill(string invoiceNo, [FromQuery] string? shop)
+        {
+            if (string.IsNullOrWhiteSpace(invoiceNo))
+                return BadRequest(new { message = "Bill number is required." });
+
+            try
+            {
+                var bill = await _repository.GetBillAsync(invoiceNo.Trim());
+                if (bill == null)
+                    return NotFound(new { message = $"Bill {invoiceNo} is not on the back office (not uploaded yet, or a wrong number)." });
+                var p = await _printers.GetAsync();
+                var slip = ReceiptSlip.BillCopy(bill, p.BillChars, shop, DateTime.Now);
+                await slip.PrintAsync(p.NeedBill(), "Bill copy " + bill.InvoiceNo, p.BillEscPos);
+                return Ok(new { message = $"Bill {bill.InvoiceNo} sent to the bill printer." });
+            }
+            catch (InvalidOperationException ex)
+            {
+                // no bill printer chosen, or it is not installed on the server
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Bill copy {Bill} not printed", invoiceNo);
+                return StatusCode(500, new { message = $"Not printed: {ex.Message}" });
             }
         }
     }

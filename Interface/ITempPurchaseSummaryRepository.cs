@@ -14,5 +14,8 @@ namespace ItemApi.Interface
         // 2 committed (refused)
         Task<int> DeleteDraftAsync(string grnNo);
         Task<List<TempPurchaseSummary>> SearchAsync(TempPurchaseSummarySearchRequest request);
+
+        // lines of a GRN not yet committed whose cost looks wrong (above the sell price, or far from our cost now)
+        Task<List<GrnCostCheckLine>> GetCostChecksAsync(string grnNo);
     }
 }

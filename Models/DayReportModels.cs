@@ -224,6 +224,68 @@ namespace ItemApi.Models
         public int PayType { get; set; }
         public decimal Amount { get; set; }
         public string? RefNo { get; set; }
+        // U060: received (the cheque handed over / the transfer in the bank) or pending; z_tb_BankChequeStatus
+        public bool Received { get; set; }
+        public DateTime? ReceivedDate { get; set; }
+        public string? ReceivedNote { get; set; }
+        public string? ReceivedBy { get; set; }
+        public DateTime? MarkedAt { get; set; }
+    }
+
+    // POST api/DayReport/BankCheque/Status (U060): the ticked payment lines → received on ReceivedDate, or back to pending
+    public class BankChequeStatusRequest
+    {
+        public bool Received { get; set; }
+        public DateTime? ReceivedDate { get; set; }
+        public string? Note { get; set; }
+        public List<BankChequeKey> Lines { get; set; } = new();
+    }
+
+    // GET api/Sync/BankCheque (U060, z_sp_TillBankCheque): a till's bank transfer / cheque line with its status
+    public class TillBankChequeLine
+    {
+        public string InvoiceNo { get; set; } = "";
+        public int LineNum { get; set; }
+        public int ZNo { get; set; }
+        public int InvType { get; set; }
+        public DateTime InvDate { get; set; }
+        public string? CashierId { get; set; }
+        public int PayType { get; set; }
+        public decimal Amount { get; set; }
+        public string? RefNo { get; set; }
+        public bool Received { get; set; }
+        public DateTime? ReceivedDate { get; set; }
+        public string? ReceivedNote { get; set; }
+        public string? ReceivedBy { get; set; }
+    }
+
+    // POST api/Sync/BankCheque/Status (U060): the till marks its lines (by bill no) received / back to pending
+    public class TillBankChequeStatusRequest
+    {
+        public int TerminalId { get; set; }
+        public string? CashierId { get; set; }
+        public bool Received { get; set; }
+        public DateTime? ReceivedDate { get; set; }
+        public string? Note { get; set; }
+        public List<TillBankChequeKey> Lines { get; set; } = new();
+    }
+
+    public class TillBankChequeKey
+    {
+        public string InvoiceNo { get; set; } = "";
+        public int LineNum { get; set; }
+    }
+
+    // z_sp_BankChequeSetStatus → lines changed
+    public class BankChequeStatusResult
+    {
+        public int Changed { get; set; }
+    }
+
+    public class BankChequeKey
+    {
+        public int InvoiceId { get; set; }
+        public int LineNum { get; set; }
     }
 
     // ─── upload from the tills (POST api/Sync/CashMovements) ────────────────────

@@ -55,6 +55,44 @@ namespace ItemApi.Service
             Line(left + new string(' ', Math.Max(1, max - left.Length - right.Length)) + right, SlipAlign.Left, bold, tall, wide);
         }
 
+        // A table: 1 cell = a line, 2 cells = label + value (LeftRight), more = the first column takes what the right-aligned
+        // columns leave; when that is too narrow the first cell gets a line of its own and the rest go right under it.
+        // A head row is followed by a divider.
+        public void Table(IReadOnlyList<(IReadOnlyList<string> Cells, bool Bold, bool Head)> rows)
+        {
+            var clean = rows.Select(r => (Cells: r.Cells.Select(c => ToPrintable(c).Trim()).ToList(), r.Bold, r.Head))
+                            .Where(r => r.Cells.Any(c => c.Length > 0)).ToList();
+            var n = clean.Count == 0 ? 0 : clean.Max(r => r.Cells.Count);
+            var widths = new int[Math.Max(n, 1)];
+            foreach (var r in clean.Where(r => r.Cells.Count == n && n > 2))
+                for (var i = 1; i < n; i++)
+                    widths[i] = Math.Max(widths[i], r.Cells[i].Length);
+            var first = Width - widths.Skip(1).Sum() - (n - 1);
+            foreach (var (cells, bold, head) in clean)
+            {
+                if (cells.Count == 1)
+                    Line(cells[0], bold: bold || head);
+                else if (cells.Count == 2 || n <= 2)
+                    LeftRight(cells[0], string.Join(" ", cells.Skip(1)), bold: bold || head);
+                else if (cells.Count < n)
+                    LeftRight(string.Join(" ", cells.Take(cells.Count - 1).Where(c => c.Length > 0)), cells[^1], bold: bold || head);
+                else
+                {
+                    var right = string.Join(" ", cells.Skip(1).Select((c, i) => c.PadLeft(widths[i + 1])));
+                    if (first >= 6)
+                        Line((cells[0].Length > first ? cells[0][..first] : cells[0].PadRight(first)) + " " + right, bold: bold || head);
+                    else
+                    {
+                        if (cells[0].Length > 0)
+                            Line(cells[0], bold: bold || head);
+                        Line(right, SlipAlign.Right, bold: bold || head);
+                    }
+                }
+                if (head)
+                    Divider();
+            }
+        }
+
         // ESC/POS (Epson standard - understood by practically every receipt printer), then feed and a partial cut
         public byte[] ToEscPos(int feedLines = 4, bool cut = true)
         {
@@ -289,6 +327,47 @@ namespace ItemApi.Service
             return doc;
         }
 
+        // Day Reports > Bill copy > Print 80mm - a copy of an uploaded bill on the bill printer, no print preview
+        public static ReceiptSlip BillCopy(DayBillDetail b, int width, string? shop, DateTime now)
+        {
+            var doc = new ReceiptSlip(width);
+            if (!string.IsNullOrWhiteSpace(shop))
+                doc.Line(shop.Trim(), SlipAlign.Center, bold: true, tall: true);
+            doc.Line("***** COPY *****", SlipAlign.Center, bold: true);
+            doc.Line($"{(b.InvType == 2 ? "REFUND " : "")}{b.InvoiceNo}{(b.Status == 9 ? " - VOIDED" : "")}", SlipAlign.Center, bold: true);
+            doc.LeftRight($"{b.InvDate:yyyy-MM-dd HH:mm}", $"{b.TerminalCode} Z{b.ZNo}");
+            var cashier = b.CashierName ?? b.CashierId;
+            if (!string.IsNullOrWhiteSpace(cashier))
+                doc.Line($"Cashier: {cashier}");
+            doc.Divider();
+            foreach (var l in b.Lines)
+            {
+                doc.Line((l.Name ?? l.RefCode ?? l.ItemId.ToString()) + (l.PriceType == 2 ? " (W)" : ""));
+                doc.LeftRight($"  {Qty(l.Qty)} x {Money(l.UnitPrice)}" + (l.Discount != 0 ? $"  -{Money(l.Discount)}" : ""), Money(l.Amount));
+            }
+            doc.Divider();
+            if (b.ItemDiscount != 0)
+                doc.LeftRight("Item discounts", Money(b.ItemDiscount));
+            doc.LeftRight("Sub total", Money(b.GrossAmount));
+            if (b.Discount != 0)
+                doc.LeftRight("Bill discount", Money(b.Discount));
+            doc.LeftRight(b.InvType == 2 ? "REFUND" : "TOTAL", Money(b.NetAmount), bold: true, tall: true);
+            foreach (var p in b.Payments)
+                doc.LeftRight(PayName(p.PayType) + (string.IsNullOrWhiteSpace(p.RefNo) ? "" : " " + p.RefNo.Trim()), Money(p.Amount));
+            doc.LeftRight("Lines / qty", $"{b.Lines.Count} / {Qty(b.TotalQty)}");
+            doc.Divider();
+            doc.Line($"Copy printed {now:yyyy-MM-dd HH:mm}", SlipAlign.Center);
+            return doc;
+        }
+
+        private static string Qty(decimal n) => n.ToString("0.###", CultureInfo.InvariantCulture);
+
+        // PayType 1 cash, 2 card, 3 credit, 4 voucher, 5 bank transfer, 6 cheque
+        private static string PayName(int payType) => payType switch
+        {
+            1 => "Cash", 2 => "Card", 3 => "Credit", 4 => "Voucher", 5 => "Bank transfer", 6 => "Cheque", _ => $"Pay {payType}",
+        };
+
         private static void Section(ReceiptSlip doc, string title, TableData table, string textKey, string totalLabel)
         {
             doc.Line();
@@ -343,6 +422,10 @@ namespace ItemApi.Service
             if (string.IsNullOrEmpty(text))
                 return "";
             var sb = new StringBuilder(text.Length);
+            // dashes, dots and quotes the pages use, as plain ASCII rather than '?'
+            text = text.Replace('–', '-').Replace('—', '-').Replace('−', '-').Replace('·', '-')
+                       .Replace('‘', '\'').Replace('’', '\'').Replace('“', '"').Replace('”', '"')
+                       .Replace(' ', ' ').Replace("…", "...");
             foreach (var ch in text.Normalize(NormalizationForm.FormD))
             {
                 if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)

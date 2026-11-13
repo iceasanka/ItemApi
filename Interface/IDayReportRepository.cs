@@ -10,6 +10,7 @@ namespace ItemApi.Interface
         Task<DayBillDetail?> GetBillAsync(string invoiceNo);
         Task<DayLoss> GetLossAsync(DateTime date, int? terminalId);
         Task<DayAbandoned> GetAbandonedAsync(DateTime date, int? terminalId);
-        Task<List<DayBankChequeRow>> GetBankChequeAsync(DateTime from, DateTime to, int? terminalId, int? payType);
+        Task<List<DayBankChequeRow>> GetBankChequeAsync(DateTime from, DateTime to, int? terminalId, int? payType, int? status);
+        Task<int> SetBankChequeStatusAsync(BankChequeStatusRequest request, int? userId);
     }
 }

@@ -154,13 +154,23 @@ namespace ItemApi.Controllers
             }
         }
 
-        // POST: api/TempPurchaseSummary/Commit/GRN00000001?userId=...
+        // POST: api/TempPurchaseSummary/Commit/GRN00000001?userId=...&confirmCostCheck=false
         // Posts the GRN lines into stock (z_sp_PostGrn, +Qty) and sets Status = 2. A GRN can only be committed once.
+        // A line whose cost looks wrong (above the sell price, or far from our cost now) stops the commit with 409
+        // { costCheck: true, lines } until it is corrected or committed again with confirmCostCheck=true - a wrong cost
+        // goes into the item cost and every bill's profit after it.
         [HttpPost("Commit/{grnNo}")]
-        public async Task<IActionResult> Commit([FromRoute] string grnNo, [FromQuery] string? userId)
+        public async Task<IActionResult> Commit([FromRoute] string grnNo, [FromQuery] string? userId,
+            [FromQuery] bool confirmCostCheck = false)
         {
             try
             {
+                if (!confirmCostCheck)
+                {
+                    var checks = await _repository.GetCostChecksAsync(grnNo);
+                    if (checks.Count > 0)
+                        return Conflict(new { message = $"{checks.Count} line(s) of {grnNo} have a cost to check.", costCheck = true, lines = checks });
+                }
                 var lines = await _stockLedgerRepository.PostGrnAsync(grnNo, userId);
                 return Ok(new { message = "Commit successful.", data = grnNo, lines });
             }

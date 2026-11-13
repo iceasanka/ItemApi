@@ -153,6 +153,48 @@ namespace ItemApi.Repositories
             }
         }
 
+        // Costs to check before a GRN goes to stock. Cost = the line's cost a piece (what the stock batch takes).
+        //   - above the sell price (the line's, else the item's retail price): a loss on every one sold
+        //   - 2x or more / a third or less of our cost now: a case / line total taken as the cost a piece, or the reverse
+        // Free-only lines (no cost) are not checked.
+        private const decimal CostCheckHighTimes = 2m, CostCheckLowTimes = 3m;
+
+        public async Task<List<GrnCostCheckLine>> GetCostChecksAsync(string grnNo)
+        {
+            try
+            {
+                var rows = await _context.Database.SqlQueryRaw<GrnCostCheckLine>(@"
+                    SELECT x.LineNum, x.ItemId, x.Descrip, x.Qty, x.Cost, x.SellPrice, x.OurCost, CAST('' AS NVARCHAR(200)) AS Reason
+                    FROM (SELECT ROW_NUMBER() OVER (ORDER BY p.Idx) AS LineNum, p.ItemId, i.Descrip,
+                                 CAST(ISNULL(p.Qty, 0) AS DECIMAL(18,2)) AS Qty, CAST(ISNULL(p.CostPrice, 0) AS DECIMAL(18,2)) AS Cost,
+                                 CAST(ISNULL(NULLIF(p.SellPrice, 0), NULLIF(d.RetailPrice, 0)) AS DECIMAL(18,2)) AS SellPrice,
+                                 CAST(NULLIF(d.CostPrice, 0) AS DECIMAL(18,2)) AS OurCost
+                          FROM dbo.z_tb_TempPurchase p
+                          LEFT JOIN dbo.z_tb_Item i    ON i.ItemId = p.ItemId
+                          LEFT JOIN dbo.z_tb_ItemDet d ON d.ItemId = p.ItemId AND d.LocationId = p.LocationId
+                          WHERE p.GrnNo = {0} AND p.LocationId = {1} AND ISNULL(p.Status, 0) <> 2) x
+                    WHERE x.Cost > 0
+                      AND (x.Cost > x.SellPrice OR x.Cost >= x.OurCost * {2} OR x.Cost * {3} <= x.OurCost)
+                    ORDER BY x.LineNum;", grnNo, _locationId, CostCheckHighTimes, CostCheckLowTimes).ToListAsync();
+
+                foreach (var r in rows)
+                {
+                    var why = new List<string>();
+                    if (r.SellPrice > 0 && r.Cost > r.SellPrice)
+                        why.Add($"cost {r.Cost:0.00} is above the sell price {r.SellPrice:0.00}");
+                    if (r.OurCost > 0 && (r.Cost >= r.OurCost * CostCheckHighTimes || r.Cost * CostCheckLowTimes <= r.OurCost))
+                        why.Add($"cost {r.Cost:0.00} is {r.Cost / r.OurCost:0.#}x our cost now {r.OurCost:0.00}");
+                    r.Reason = string.Join("; ", why) + " - a case / line total entered as the cost of one?";
+                }
+                return rows;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
         public async Task<List<TempPurchaseSummary>> SearchAsync(TempPurchaseSummarySearchRequest request)
         {
             try

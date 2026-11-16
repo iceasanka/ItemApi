@@ -98,6 +98,32 @@ namespace ItemApi.Controllers
             });
         }
 
+        // ---- Settings > Scanner (GRN Scan, U061) ---------------------------------------------------------------------------
+
+        // GET: api/Settings/Scanners → { devices: [{ id, name }], error } — the WIA scanners on the API server. The scanner
+        // and the DPI / page size / colour are saved as ordinary settings (PUT api/Settings/Scanner.Device ...).
+        [HttpGet("Scanners")]
+        public async Task<IActionResult> Scanners()
+        {
+            // diagnostics: how ItemApi runs and what WIA sees (shown on the page when no scanner is found)
+            try
+            {
+                var all = await GrnScanner.ListAsync();
+                var scanners = all.Where(d => d.IsScanner).ToList();
+                return Ok(new { devices = scanners, error = (string?)null, diagnostics = ScannerDiagnostics.Get(all) });
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Scanners could not be listed");
+                return Ok(new
+                {
+                    devices = new List<ScannerDevice>(),
+                    error = ex is GrnScanException ? ex.Message : "Scanners could not be listed: " + ex.Message,
+                    diagnostics = ScannerDiagnostics.Get(new List<ScannerDevice>()),
+                });
+            }
+        }
+
         // PUT: api/Settings/Printers/bill { conn, name, port, address, baud, mode, width } — the whole printer at once.
         // Nothing picked (no name / port / address for the connection) = the printer is cleared.
         [HttpPut("Printers/{kind}")]

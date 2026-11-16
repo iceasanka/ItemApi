@@ -1305,8 +1305,8 @@ Goal: a photo of a supplier invoice becomes a GRN draft. **Step 1 — read**: no
 matched, nothing saved to a GRN. Code: `Controllers/GrnScanController.cs`, `Service/GrnScanReader.cs`,
 `Models/GrnScanModels.cs`.
 
-- `POST api/GrnScan/Read` (multipart: `files` = 1–4 photos of ONE invoice, pages in order, JPG / PNG / WEBP / HEIC,
-  10 MB each; `supplierId` optional, only echoed for now) → `{ model, images, ms, supplierId, header: { supplierName,
+- `POST api/GrnScan/Read` (multipart: `files` = 1–4 photos of ONE invoice, pages in order, JPG / PNG / WEBP / HEIC (BMP / TIFF since U061),
+  25 MB each (was 10; made small before Gemini, U061); `supplierId` optional, only echoed for now) → `{ model, images, ms, supplierId, header: { supplierName,
   invoiceNo, invoiceDate, vatNo, pageText, totalGross, totalDiscount, netTotal }, lines: [...], check, inputTokens,
   outputTokens, savedAs }`. 400 / 502 / 504 `{ message }`.
 - Each line as printed: `supplierCode` (the supplier's own code — the key for matching in step 2), `description`,
@@ -1386,6 +1386,22 @@ GRN is committed; all = also those committed; `grnStatus` = the GRN summary Stat
 since then apply, the picks stay), **Flush selected** = `POST api/GrnScan/Scans/Flush { scanIds }` (the rows and
 their photo folders are deleted; saved matches and GRNs stay). `MakeDraft` with `scanId` marks the scan Status 1 +
 GrnNo.
+
+**Scan + smaller pages** (2026-11-16, U061; `Service/GrnScanner.cs`, `Service/GrnScanImage.cs`, Settings > Scanner):
+- Why: 3 pages scanned at 300 DPI / phone photos (5–15 MB each) failed - Gemini takes at most 20 MB in one request
+  (base64 adds a third), IIS 30 MB by default. Gemini scales every image down itself, so more pixels read no better.
+- Every page (photo or scan) is made small in `Read` before Gemini: upright (EXIF), long side down to
+  `GrnScan.ImageSize` (default 2400 px = A4 at ~200 DPI), `GrnScan.ImageColor` gray (default; JPEG 88) / color /
+  bw (Otsu, 1-bit PNG - faint or shaded print disappears on phone photos, clean scans only). A small JPEG / PNG in
+  colour is sent as it came. Test: a 300 DPI A4 page 8.9 MB → 515 KB gray. Also BMP / TIFF taken (made JPEG).
+  The page also shrinks a photo over 2 MB before uploading (long side 3200, JPEG 0.92).
+- Scan: the scanner on the server where ItemApi runs (WIA, as the printers of §6.37), chosen on Settings > Scanner
+  (`GET api/Settings/Scanners`, `Scanner.Device`, `Scanner.Dpi` 150 / 200 / 300, `Scanner.Source` flatbed / feeder).
+  `GET api/GrnScan/Scanner` → `{ ready, feeder, dpi, imageSize, imageColor }` (the page shows **Scan** when ready);
+  `POST api/GrnScan/Scan?maxPages=` → `{ pages: [{ data (base64), mimeType, ext, ... }], cameBytes, ms }` - flatbed one
+  page a click, feeder every page in it; the page adds them to its pages (photos and scans mixed, up to 4, each can be
+  removed) and sends them with `Read`. One scan at a time. ItemApi in IIS: the app pool must run as a user who sees
+  the scanner.
 
 Next step (not built): 4. photos from the mobile app.
 

@@ -25,28 +25,40 @@ namespace ItemApi.Controllers
             _store = store;
         }
 
-        // POST: api/GrnScan/Read (multipart: files = 1-4 photos of ONE invoice, pages in order; supplierId)
-        // → { model, images, ms, supplierId, header, lines: [{ ..., qty, freeTotal, unitCost, amountDiff, status, issues,
-        //     itemId, matchedBy, item, suggestions, costChangePct }], check, inputTokens, outputTokens, savedAs }.
-        // Without supplierId the lines are read only (not matched).
+        // POST: api/GrnScan/Read (multipart: files = 1-4 pages of ONE invoice, in order - photos and / or scanned pages;
+        // supplierId) → { model, images, ms, supplierId, header, lines: [{ ..., qty, freeTotal, unitCost, amountDiff,
+        //     status, issues, itemId, matchedBy, item, suggestions, costChangePct }], check, inputTokens, outputTokens, savedAs }.
+        // Without supplierId the lines are read only (not matched). Every page is made small first (Settings > Scanner:
+        // GrnScan.ImageSize / ImageColor, U061) - 3-4 big pages were more than Gemini takes in one request.
         [HttpPost("Read")]
-        [RequestSizeLimit(50 * 1024 * 1024)]
-        public async Task<IActionResult> Read([FromForm] List<IFormFile> files, [FromForm] int? supplierId, CancellationToken ct)
+        [RequestSizeLimit(110 * 1024 * 1024)]
+        [RequestFormLimits(MultipartBodyLengthLimit = 110 * 1024 * 1024)]
+        public async Task<IActionResult> Read([FromForm] List<IFormFile> files, [FromForm] int? supplierId,
+            [FromServices] ItemApi.Data.AppDbContext db, CancellationToken ct)
         {
             files = files?.Where(f => f.Length > 0).ToList() ?? new List<IFormFile>();
             if (files.Count == 0) return BadRequest(new { message = "Choose a photo of the invoice." });
             if (files.Count > GrnScanReader.MaxImages) return BadRequest(new { message = $"At most {GrnScanReader.MaxImages} pages at a time." });
 
+            var cfg = await GrnScanConfig.LoadAsync(db);
             var images = new List<(byte[] Data, string MimeType, string FileName)>();
+            long came = 0;
             foreach (var f in files)
             {
                 var type = GrnScanReader.ImageType(f.FileName);
-                if (type == null) return BadRequest(new { message = $"{f.FileName}: send a JPG, PNG, WEBP or HEIC photo." });
-                if (f.Length > GrnScanReader.MaxImageBytes) return BadRequest(new { message = $"{f.FileName}: a photo must be 10 MB or smaller." });
+                if (type == null) return BadRequest(new { message = $"{f.FileName}: send a JPG, PNG, WEBP, HEIC, BMP or TIFF image." });
+                if (f.Length > GrnScanReader.MaxImageBytes)
+                    return BadRequest(new { message = $"{f.FileName}: a page must be {GrnScanReader.MaxImageBytes / 1024 / 1024} MB or smaller." });
                 using var ms = new MemoryStream();
                 await f.CopyToAsync(ms, ct);
-                images.Add((ms.ToArray(), type, f.FileName));
+                came += ms.Length;
+                var page = GrnScanImage.Prepare(ms.ToArray(), type, Path.GetExtension(f.FileName), cfg.MaxSide, cfg.Color);
+                if (page.MimeType is "image/bmp" or "image/tiff")   // Gemini does not take these: it had to be converted
+                    return BadRequest(new { message = $"{f.FileName}: this image could not be opened - send it as a JPG or PNG." });
+                images.Add((page.Data, page.MimeType, Path.ChangeExtension(f.FileName, page.Ext)));
             }
+            Log.Information("GrnScan: {Pages} page(s), {Came} KB came, {Sent} KB to Gemini (long side {Side}, {Color})",
+                images.Count, came / 1024, images.Sum(i => (long)i.Data.Length) / 1024, cfg.MaxSide, cfg.Color);
             return await Run(async () =>
             {
                 var result = await _reader.ReadAsync(images, supplierId, ct);
@@ -55,6 +67,40 @@ namespace ItemApi.Controllers
                 // kept (z_tb_GrnScan), so the matching can go on another day without reading again
                 result.ScanId = await _store.AddAsync(result, supplierId, User.CurrentUserId());
                 return Ok(result);
+            });
+        }
+
+        // GET: api/GrnScan/Scanner → { ready, feeder, dpi, imageSize, imageColor } - whether the page shows Scan
+        [HttpGet("Scanner")]
+        public async Task<IActionResult> Scanner([FromServices] ItemApi.Data.AppDbContext db)
+        {
+            var c = await GrnScanConfig.LoadAsync(db);
+            return Ok(new { ready = c.Device.Length > 0, feeder = c.Feeder, dpi = c.Dpi, imageSize = c.MaxSide, imageColor = c.Color });
+        }
+
+        // POST: api/GrnScan/Scan?maxPages=4 — scan on the scanner of Settings > Scanner (flatbed: one page; feeder: every
+        // page in it, up to maxPages), each page made small as for Read → { pages: [{ data (base64), mimeType, ext, width,
+        // height, bytes }], cameBytes, ms }. The page adds them to its pages; they go to Gemini with Read.
+        [HttpPost("Scan")]
+        public async Task<IActionResult> Scan([FromQuery] int? maxPages, [FromServices] ItemApi.Data.AppDbContext db, CancellationToken ct)
+        {
+            return await Run(async () =>
+            {
+                var cfg = await GrnScanConfig.LoadAsync(db);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var raw = await GrnScanner.ScanAsync(cfg, Math.Clamp(maxPages ?? GrnScanReader.MaxImages, 1, GrnScanReader.MaxImages), ct);
+                var pages = raw.Select(r => GrnScanImage.Prepare(r, "image/bmp", ".bmp", cfg.MaxSide, cfg.Color)).ToList();
+                if (pages.Any(p => p.MimeType is not ("image/jpeg" or "image/png")))
+                    throw new GrnScanException("The scanner sent an image that could not be opened.", 502);
+                var came = raw.Sum(r => (long)r.Length);
+                Log.Information("GrnScan: scanned {Pages} page(s) at {Dpi} DPI, {Came} KB → {Kept} KB in {Ms} ms",
+                    pages.Count, cfg.Dpi, came / 1024, pages.Sum(p => (long)p.Data.Length) / 1024, sw.ElapsedMilliseconds);
+                return Ok(new
+                {
+                    pages = pages.Select(p => new { data = Convert.ToBase64String(p.Data), mimeType = p.MimeType, ext = p.Ext, width = p.Width, height = p.Height, bytes = p.Data.Length }),
+                    cameBytes = came,
+                    ms = sw.ElapsedMilliseconds,
+                });
             });
         }
 

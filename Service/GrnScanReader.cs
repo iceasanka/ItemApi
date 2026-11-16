@@ -20,12 +20,15 @@ namespace ItemApi.Service
     public class GrnScanReader
     {
         public const int MaxImages = 4;
-        public const long MaxImageBytes = 10 * 1024 * 1024;
+        // as sent by the page; every page is made small before Gemini (GrnScanImage, U061)
+        public const long MaxImageBytes = 25 * 1024 * 1024;
         private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/";
         private static readonly Dictionary<string, string> ImageTypes = new(StringComparer.OrdinalIgnoreCase)
         {
             [".jpg"] = "image/jpeg", [".jpeg"] = "image/jpeg", [".png"] = "image/png", [".webp"] = "image/webp",
-            [".heic"] = "image/heic", [".heif"] = "image/heif"
+            [".heic"] = "image/heic", [".heif"] = "image/heif",
+            // a scan saved by the scanner's own software: always turned into a JPEG / PNG before Gemini (GrnScanImage)
+            [".bmp"] = "image/bmp", [".tif"] = "image/tiff", [".tiff"] = "image/tiff"
         };
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 

@@ -57,6 +57,14 @@ namespace ItemApi.Data
             (await Database.SqlQueryRaw<GrnScanDeletedRow>("EXEC dbo.z_sp_GrnScanDeleteMap @MapId = @MapId",
                 new SqlParameter("@MapId", mapId)).ToListAsync()).FirstOrDefault()?.Deleted ?? 0;
 
+        // the items get the supplier (U062): those with none, and with replace also those with another
+        public async Task<GrnScanItemSupplierResult> GrnScanSetItemSupplierAsync(int suppId, IEnumerable<int> itemIds, bool replace) =>
+            (await Database.SqlQueryRaw<GrnScanItemSupplierResult>(
+                "EXEC dbo.z_sp_GrnScanSetItemSupplier @SuppId = @SuppId, @Ids = @Ids, @Replace = @Replace",
+                new SqlParameter("@SuppId", suppId),
+                Tvp("@Ids", "dbo.z_tt_IdList", IdTable(itemIds.Distinct())),
+                new SqlParameter("@Replace", replace)).ToListAsync()).FirstOrDefault() ?? new GrnScanItemSupplierResult();
+
         public async Task<GrnScanDraftResult> GrnScanMakeDraftAsync(int suppId, string? refNo, string? remark, bool allowSameRef, IEnumerable<GrnScanDraftRow> rows)
         {
             // column order = dbo.z_tt_GrnScanDraftLine

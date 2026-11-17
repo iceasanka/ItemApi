@@ -157,10 +157,20 @@ namespace ItemApi.Controllers
                 return await Run(async () =>
                 {
                     var userId = User.CurrentUserId(request.UserId);
-                    var (d, saved) = await _matcher.MakeDraftAsync(request, userId);
+                    var (d, saved, sup, notSet) = await _matcher.MakeDraftAsync(request, userId);
                     if (request.ScanId > 0)
                         await _store.MarkDraftAsync(request.ScanId.Value, d.GrnNo, userId);
-                    return Ok(new { message = $"{d.GrnNo} made - open it on GRN Entry to check and commit.", grnNo = d.GrnNo, lines = d.Lines, qty = d.Qty, amount = d.Amount, matchesSaved = saved });
+                    var note = notSet ? " Item suppliers NOT set (run U062 on the db)."
+                        : sup == null ? ""
+                        : $" Item supplier set on {sup.Filled + sup.Replaced} item(s)" +
+                          (sup.Replaced > 0 ? $" ({sup.Replaced} changed from another supplier)" : "") +
+                          (sup.Other > 0 ? $"; {sup.Other} kept their other supplier" : "") + ".";
+                    return Ok(new
+                    {
+                        message = $"{d.GrnNo} made - open it on GRN Entry to check and commit." + note,
+                        grnNo = d.GrnNo, lines = d.Lines, qty = d.Qty, amount = d.Amount, matchesSaved = saved,
+                        itemSupplier = sup, itemSupplierNotSet = notSet
+                    });
                 }, rethrowSameInvoice: true);
             }
             catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.State == 2)

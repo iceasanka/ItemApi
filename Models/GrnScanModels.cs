@@ -180,7 +180,19 @@ namespace ItemApi.Models
         public string? SellPrice { get; set; }
         // true = make it even when this invoice no of the supplier is already on another GRN
         public bool AllowSameInvoice { get; set; }
+        // true = the GRN's items with no supplier get this supplier (z_tb_Item.SupId, U062);
+        // ReplaceItemSupplier = also the items set to another supplier
+        public bool SetItemSupplier { get; set; }
+        public bool ReplaceItemSupplier { get; set; }
         public List<GrnScanDraftLine> Lines { get; set; } = new();
+    }
+
+    // z_sp_GrnScanSetItemSupplier answer: items that had no supplier / had another (changed) / have another (left)
+    public class GrnScanItemSupplierResult
+    {
+        public int Filled { get; set; }
+        public int Replaced { get; set; }
+        public int Other { get; set; }
     }
 
     public class GrnScanDraftLine

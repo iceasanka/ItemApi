@@ -122,7 +122,9 @@ namespace ItemApi.Service
         // Qty = bought + free, FreeQty = the free ones. A free line (nothing bought, e.g. "2 free" printed on a line of its
         // own) goes onto the bought line of the same item and lowers its cost; with no bought line of that item it is a
         // line of its own at the item's cost now, amount 0 (what the paper prints for it is not paid).
-        public async Task<(GrnScanDraftResult Draft, int MatchesSaved)> MakeDraftAsync(GrnScanDraftRequest r, int? userId)
+        // SetItemSupplier: then the GRN's items get its supplier (none = always; another one = ReplaceItemSupplier only).
+        // ItemSupplier null = not asked; NotSet = asked but failed (a db without U062) - the GRN is made anyway.
+        public async Task<(GrnScanDraftResult Draft, int MatchesSaved, GrnScanItemSupplierResult? ItemSupplier, bool NotSet)> MakeDraftAsync(GrnScanDraftRequest r, int? userId)
         {
             if (r.Lines.Count == 0) throw new GrnScanException("Choose the lines to put on the GRN.");
             var mrp = string.Equals(r.SellPrice, "mrp", StringComparison.OrdinalIgnoreCase);
@@ -182,7 +184,20 @@ namespace ItemApi.Service
                 SupplierId = r.SupplierId,
                 Lines = r.Lines.Select(l => new GrnScanSaveLine { SupplierCode = l.SupplierCode, Description = l.Description, ItemId = l.ItemId, CaseSize = l.CaseSize }).ToList()
             }, userId);
-            return (draft, saved);
+
+            GrnScanItemSupplierResult? sup = null;
+            var notSet = false;
+            if (r.SetItemSupplier)
+            {
+                try
+                {
+                    sup = await _db.GrnScanSetItemSupplierAsync(r.SupplierId, r.Lines.Select(l => l.ItemId), r.ReplaceItemSupplier);
+                    // the suggestions favour the supplier's own items: take the new suppliers now
+                    if (sup.Filled + sup.Replaced > 0) lock (CacheLock) _cache = null;
+                }
+                catch (Microsoft.Data.SqlClient.SqlException) { notSet = true; }
+            }
+            return (draft, saved, sup, notSet);
         }
 
         // ─── price checks of a matched line ───

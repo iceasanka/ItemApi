@@ -1228,6 +1228,11 @@ the PIN. "0" hides the button (and closes the view if it was open).
 billing page. Old TillService / page keep working after the till script (no settings come down until the new
 TillService; the rule stays off).
 
+**Quick item buttons** (2026-11-17, U064): `Till.QuickItems` (general, value type `list` - its own editor on Settings
+> Till, `src/components/settings/QuickItemsSetting.tsx`): up to 8 buttons, stored as `code=text|code=text` (200
+letters). Each till shows them next to Menu (`src/lib/tillQuickItems.ts`); a click = that ref code scanned (`3*`
+typed first = 3), e.g. shopping bags. Same for all tills; they come down with the other settings.
+
 ### 6.29 Card machine — PAX A910 (ECR) on the till (billing page Menu → Card machine, 2026-10-27)
 SQL: `Updates/U024_Till_CardMachine.sql` (full script `02_FrontCashier_zf.sql`). Code: TillService `PaxA910Ecr/` (the
 C# rewrite of the old Java POS card code `edc.ecr` + `PAX-A910_JAVA.dll`, copied from
@@ -1402,6 +1407,14 @@ GrnNo.
   page a click, feeder every page in it; the page adds them to its pages (photos and scans mixed, up to 4, each can be
   removed) and sends them with `Read`. One scan at a time. ItemApi in IIS: the app pool must run as a user who sees
   the scanner.
+
+**Item supplier from the GRN** (2026-11-16, U062, `z_sp_GrnScanSetItemSupplier`): most items came over with no
+supplier (`z_tb_Item.SupId` NULL). Make GRN draft has **Set <supplier> as the supplier of items with none** (on by
+default, remembered on the PC): the GRN's items with no supplier get the GRN's supplier (`UDate` = now). **Also change
+items set to another supplier** (off, asked each time) replaces another supplier too. `MakeDraft` body
+`setItemSupplier`, `replaceItemSupplier` → `itemSupplier: { filled, replaced, other }` (other = kept their other
+supplier) and the counts in the message; a db without U062: the GRN is made, `itemSupplierNotSet` true. The
+suggestions favour the supplier's own items, so they get better as the suppliers are filled in.
 
 Next step (not built): 4. photos from the mobile app.
 
@@ -1619,6 +1632,36 @@ ItemApi backs up the databases itself every day - no SQL Agent (Express has none
 - New value type `folder` (`z_fn_SettingValueOk`: 3 to 200 letters; ItemApi checks it is a full path `D:\...` or
   `\\server\share\...`).
 - Copy the file to another disk / PC now and then: a backup on the same disk does not survive the disk.
+
+### 6.39 Order lists (back office Tools > Order Lists, 2026-11-17, U063)
+
+Items we order from another shop were listed by hand. Now each shop has a list kept on the system (Nandana, Serina,
+Naginda at first - rename, add, delete lists), printed with a blank qty column; the qty is written on the paper.
+Nothing is ordered through the system and there is no history: only the lists are kept, changed any time.
+- Tables `z_tb_OrderList` (name, order) and `z_tb_OrderListLine` (one of our items - once a list - or a text for
+  something not in our items, a note such as the pack, the order on the list). Procs `z_sp_OrderListGet` / `Save` /
+  `Delete` / `AddLine` / `UpdateLine` / `RemoveLine` / `MoveLine` (up / down) / `SortByName` (A-Z).
+- `api/OrderList` (`Controllers/OrderListController.cs`): `GET` lists with lines, `POST` / `PUT {id}` / `DELETE {id}`
+  a list, `POST {id}/Lines`, `PUT` / `DELETE Lines/{lineId}`, `POST Lines/{lineId}/Move?up=`, `POST {id}/SortByName`.
+- Print: **Thermal** `POST {id}/Print { spaced }` on the bill printer of Settings > Printers (§6.37) - name, Date ____,
+  one line an item with `______` on the right (long names wrap), `spaced` = an empty line under each to write on.
+  **A4** is the browser's print from the page (No, Item, Code, a wide Qty box per row; any printer).
+- Add from one search box (as Item Entry): ref no, barcode or name; Enter = the highlighted item, or an exact ref no / barcode at once
+  (also while the list is still loading).
+- The name printed can be changed on the page and is kept (`LineText` on an item line); cleared / the same as the
+  item's name = the item's own name, read each time (a renamed item prints the new name). A deactivated item stays on
+  the list, marked on the page.
+- Print spacing: A4 rows 6 mm; thermal one line an item (the `______` is the place to write), **Room to write**
+  (off by default) adds an empty line under each.
+- **Code lists** (second tab, `z_tb_OrderList.Kind` 2; Kind 1 = order list): item names with their ref codes (the
+  scale PLU is the ref code, §Exports) - **Scale** (on the wall by the scale) and **Cashier** (by the till) at first,
+  more can be added. Same lines (add / remove / name / note / move), **Sort A-Z** or **Sort by code**
+  (`SortByName?byCode=true`: shorter codes first, lines with no code last). Printed only on **A4 in two columns**
+  (browser print): CODE big and bold, then the name - like two thermal slips side by side. `POST api/OrderList`
+  takes `kind`; a list keeps its kind.
+- Code lists only: tick **Sinhala names** (`z_tb_OrderList.Sinhala`, `PUT api/OrderList/{id}/Sinhala`, saved on the
+  list) - each item prints its Sinhala name (`z_tb_Item.SinhalaDescrip`); an item with none prints its English name;
+  a name typed for the list is printed as typed. The page shows under each line what is printed.
 
 ---
 

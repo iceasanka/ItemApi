@@ -956,8 +956,8 @@ A barcode layout sent to a price route (or the other way round) is a 400. First 
 
 Items going back to a supplier (damaged, expired, not selling …) are collected in one list, on the **new** system.
 The old list (`z_tb_ReturnItem`, old item / supplier codes, `api/Return`, processed into the old `tb_Purchase`) is
-not used any more — the table and `api/Return` are left as they were so an old app build keeps working until it is
-updated.
+not used any more. `api/Return` was removed (2026-11-17) with the other old-system routes (§6.23); the table was
+dropped by U071.
 
 1. **Scan** — mobile app *Return Stock* (or the back office *Purchasing › Return Items* page): pick the supplier, scan
    the item (camera, typed code or name), qty, reason, **Add**. Scanning the same item again on the phone asks before adding 1. The
@@ -996,8 +996,8 @@ Procs: `z_sp_GetReturnList`, `z_sp_AddReturnListItem`, `z_sp_UpdateReturnListIte
 ### 6.23 Mobile app on the new system — Stock, GRN, Price Link (mobile app, 2026-10-23)
 SQL: `Updates/U017_BackOffice_MobileGrn.sql` (full script `20_BackOffice_MobileGrn.sql`). Code: `MobileGrnController`,
 `MobileGrnRepository`, `Data/AppDbContext.MobileGrn.cs`, `Models/MobileGrn.cs`; `ItemzController.UpdateRetailPrice`.
-Every app page now uses the new tables; the old routes the app used (`api/Items` price link / price, `api/Stocks`,
-`api/PosStock`, `api/PosCountedStock`, `api/GrnTemp`, `api/Return`) are left for old app builds only.
+Every app page now uses the new tables. The old routes the app used (`api/Items` price link / price, `api/Stocks`,
+`api/PosStock`, `api/PosCountedStock`, `api/GrnTemp`, `api/Return`, `api/Supplier`) and the posdb `PosConnection` were removed on 2026-11-17: an old app build no longer works for those pages. GRN Entry / Goods Return now show the stock from `StockLedger/Balance/{id}` (was the old `tb_stock`).
 
 **Stock page** — no new API: `Itemz/SearchByCode`, `StockLedger/Balance/{id}` + `ItemCard` (last 30 days),
 `Itemz/PriceLinks/{id}`, `Sync/Terminals`, `StockAdjustment/Reasons` + `Save` (one line, user `mobile`, remark
@@ -1607,7 +1607,7 @@ ItemApi backs up the databases itself every day - no SQL Agent (Express has none
   on (`Service/DbBackupService.cs`, a hosted service that looks every minute). Server off at that time = no backup
   that day (the next is at the time the next day). A failed daily backup is tried again 30 minutes later, at most
   3 times a day. `Backup.Enabled` (default on) turns it off.
-- **What:** a full backup of the `DefaultConnection` database (easyway) **only**. Not `PosConnection`, and not the till
+- **What:** a full backup of the `DefaultConnection` database (easyway) **only**. Not the till
   database `z_pos_fnt_db`: every till PC backs up its own (TillService `Backup/TillBackupWorker.cs`, appsettings
   `Backup`, default `D:\IRMBackup\z_pos_fnt_db_daily.bak`, same daily-overwrite rules; a till that is off at the time
   backs up 2 minutes after it starts next; till Menu → Settings → Backup: last backup, Back up now, on / off, time,

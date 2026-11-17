@@ -4,13 +4,12 @@ namespace ItemApi.Data
 {
     /// <summary>
     /// Single DbContext for every entity that lives on the "DefaultConnection" database.
-    /// Split into partial files under Data/AppDbContext.*.cs, one per domain area (Item, Return,
+    /// Split into partial files under Data/AppDbContext.*.cs, one per domain area (Itemz, Stock ledger,
     /// Salary, ...), so this stays a single EF unit-of-work (one connection, shared transactions,
     /// one place to configure the model) without becoming an unreadable monolith file.
     ///
     /// Consolidated from 19 separate one-DbSet-per-table DbContext classes that all pointed at the
-    /// same connection string. See Data/PosDbContext.cs for the one entity (PosStock) that lives on
-    /// the separate "PosConnection" database.
+    /// same connection string. (The old-system endpoints on tb_Item / tb_Stock / posdb were removed.)
     /// </summary>
     public partial class AppDbContext : DbContext
     {
@@ -20,14 +19,8 @@ namespace ItemApi.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            ConfigureItem(modelBuilder);
             ConfigureItemz(modelBuilder);
-            ConfigureStock(modelBuilder);
-            ConfigureReturn(modelBuilder);
-            ConfigureSupplier(modelBuilder);
             ConfigureSupplierz(modelBuilder);
-            ConfigurePosCountedStock(modelBuilder);
-            ConfigureGrnTemp(modelBuilder);
             ConfigureFileLocation(modelBuilder);
             ConfigureChequeCreate(modelBuilder);
             ConfigurePayee(modelBuilder);
@@ -49,14 +42,8 @@ namespace ItemApi.Data
         }
 
         // Implemented in the matching Data/AppDbContext.<Area>.cs file.
-        partial void ConfigureItem(ModelBuilder modelBuilder);
         partial void ConfigureItemz(ModelBuilder modelBuilder);
-        partial void ConfigureStock(ModelBuilder modelBuilder);
-        partial void ConfigureReturn(ModelBuilder modelBuilder);
-        partial void ConfigureSupplier(ModelBuilder modelBuilder);
         partial void ConfigureSupplierz(ModelBuilder modelBuilder);
-        partial void ConfigurePosCountedStock(ModelBuilder modelBuilder);
-        partial void ConfigureGrnTemp(ModelBuilder modelBuilder);
         partial void ConfigureFileLocation(ModelBuilder modelBuilder);
         partial void ConfigureChequeCreate(ModelBuilder modelBuilder);
         partial void ConfigurePayee(ModelBuilder modelBuilder);

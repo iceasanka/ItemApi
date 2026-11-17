@@ -4,7 +4,6 @@ namespace ItemApi.Models
 {
     // z_tb_ItemPriceLink — extra retail prices for the same item (DBScript/03_BackOffice_PriceLink.sql).
     // Read and written through procs only; not an EF entity.
-    // Not the old-system PriceLink (tb_PriceLink, ItemsController) — keep the two separate.
     public class ItemzPriceLink
     {
         public int PriceLinkId { get; set; }

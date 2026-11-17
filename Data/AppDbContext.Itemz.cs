@@ -7,8 +7,6 @@ using Serilog;
 namespace ItemApi.Data
 {
     // Itemz / ItemzDet (z_tb_Item, z_tb_ItemDet) — consolidated from the former ItemzContext.
-    // NOTE: this is a different table/entity family from Item (tb_Item) in AppDbContext.Item.cs —
-    // kept deliberately separate on the user's instruction, do not merge the two.
     public partial class AppDbContext
     {
         public DbSet<Itemz> Itemzs { get; set; }

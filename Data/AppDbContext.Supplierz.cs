@@ -6,7 +6,6 @@ namespace ItemApi.Data
 {
     // SupplierEntity (z_tb_Supplier) — consolidated from the former SupplierzContext.
     // Shared by AppDbContext.TempPurchaseSummary.cs (summary rows join against the supplier list).
-    // NOTE: not the same table/entity as Supplier (tb_Supplier) in AppDbContext.Supplier.cs.
     public partial class AppDbContext
     {
         public DbSet<SupplierEntity> SupplierEntities { get; set; }

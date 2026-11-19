@@ -14,6 +14,10 @@ namespace ItemApi.Models
         // NULL-able columns: rows made outside the Supplier page (e.g. U008 payees) can have NULL here
         public string? Phone { get; set; }
         public string? Phone2 { get; set; }
+        // U072: rep / ref phone, area manager phone, business registration (BR) number
+        public string? RefPhone { get; set; }
+        public string? AreaMgrPhone { get; set; }
+        public string? BrNo { get; set; }
         public string? AccNo { get; set; }
         public string? Bank { get; set; }
         public decimal DRate { get; set; }

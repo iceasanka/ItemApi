@@ -60,5 +60,23 @@ namespace ItemApi.Data
         {
             return await SupplierEntities.ToListAsync();
         }
+
+        // U073 setting Cheque.SupplierContacts: a supplier's cheque prints only with Ref phone + Area manager phone filled in
+        public async Task<bool> ChequeNeedsSupplierContactsAsync()
+        {
+            var v = await Database
+                .SqlQueryRaw<string>("SELECT ISNULL(Value, DefaultValue) AS Value FROM dbo.z_tb_Setting WHERE SettingKey = 'Cheque.SupplierContacts'")
+                .ToListAsync();
+            return v.FirstOrDefault() == "1";
+        }
+
+        // the contact numbers the supplier still lacks for a cheque (empty = can print)
+        public static List<string> MissingChequeContacts(SupplierEntity s)
+        {
+            var missing = new List<string>();
+            if (string.IsNullOrWhiteSpace(s.RefPhone)) missing.Add("Ref phone");
+            if (string.IsNullOrWhiteSpace(s.AreaMgrPhone)) missing.Add("Area manager phone");
+            return missing;
+        }
     }
 }

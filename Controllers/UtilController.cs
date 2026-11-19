@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using ItemApi.Interface;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 
 
 namespace ItemApi.Controllers
@@ -30,6 +31,11 @@ namespace ItemApi.Controllers
         [HttpGet("BackupRunning")]
         public IActionResult BackupRunning([FromServices] DbBackupService backup) =>
             Ok(new { running = backup.Running, db = backup.RunningDb, since = backup.RunningSince });
+
+        // GET: api/Util/ChequeRules — any signed-in user: the Cheque page checks these before Print (U073)
+        [HttpGet("ChequeRules")]
+        public async Task<IActionResult> ChequeRules() =>
+            Ok(new { supplierContactsRequired = await _context.ChequeNeedsSupplierContactsAsync() });
 
         [HttpPost("print")]
         public async Task<ActionResult> Print([FromBody] PrintRequest data)
@@ -67,6 +73,21 @@ namespace ItemApi.Controllers
                 var billsError = cheque.BillsError();
                 if (billsError != null)
                     return BadRequest(new { message = billsError });
+
+                // U073 (Settings > Cheques): no print until the supplier's Ref phone and Area manager phone are in
+                if ((cheque.suppId ?? 0) > 0 && await _context.ChequeNeedsSupplierContactsAsync())
+                {
+                    var supp = await _context.SupplierEntities.AsNoTracking().FirstOrDefaultAsync(s => s.SuppId == cheque.suppId);
+                    var missing = supp == null ? new List<string>() : AppDbContext.MissingChequeContacts(supp);
+                    if (missing.Count > 0)
+                        return BadRequest(new
+                        {
+                            code = "SUPPLIER_CONTACTS_MISSING",
+                            suppId = supp!.SuppId,
+                            missing,
+                            message = $"Not printed, not saved: fill in {string.Join(" and ", missing)} of {supp.SuppName} first.",
+                        });
+                }
 
                 var layout = (await _context.GetChequeLayoutAsync()).Layout;
                 var data = new ChequePrintData

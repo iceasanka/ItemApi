@@ -76,6 +76,9 @@ namespace ItemApi.Models
         public decimal PaidIn { get; set; }
         public decimal PaidOut { get; set; }
         public decimal ExpectedCash { get; set; }
+        // drawer cash counted at day end (U054, z_tb_ZReport.CountedCash; null = not counted). Cash short / over =
+        // CountedCash - ExpectedCash. Filled by DayReportRepository, not by the proc
+        [NotMapped] public decimal? CountedCash { get; set; }
         // false = the till sent no cash in / out for this Z (none made, or a till without U018)
         public bool HasCashMovements { get; set; }
         public int Status { get; set; }
@@ -230,6 +233,18 @@ namespace ItemApi.Models
         public string? ReceivedNote { get; set; }
         public string? ReceivedBy { get; set; }
         public DateTime? MarkedAt { get; set; }
+        // U074: reference corrected on the back office - the till's reference before the first edit, last edit by / at
+        public string? OrigRefNo { get; set; }
+        public string? RefEditedBy { get; set; }
+        public DateTime? RefEditedAt { get; set; }
+    }
+
+    // POST api/DayReport/BankCheque/Ref (U074): correct the reference / cheque no of one line (empty = none)
+    public class BankChequeRefRequest
+    {
+        public int InvoiceId { get; set; }
+        public int LineNum { get; set; }
+        public string? RefNo { get; set; }
     }
 
     // POST api/DayReport/BankCheque/Status (U060): the ticked payment lines → received on ReceivedDate, or back to pending

@@ -151,6 +151,31 @@ namespace ItemApi.Controllers
             }
         }
 
+        // POST: api/DayReport/BankCheque/Ref { invoiceId, lineNum, refNo } (U074)
+        // Correct the transfer reference / cheque no of one line (empty = none); the change is logged. → { changed }
+        [HttpPost("BankCheque/Ref")]
+        public async Task<IActionResult> BankChequeRef([FromBody] BankChequeRefRequest request)
+        {
+            if (request == null || request.InvoiceId <= 0 || request.LineNum <= 0)
+                return BadRequest(new { message = "Pick a bank transfer or cheque." });
+            if (request.RefNo?.Trim().Length > 30)
+                return BadRequest(new { message = "Reference / cheque no: at most 30 letters." });
+
+            try
+            {
+                var me = AuthTokenService.UserId(User);
+                return Ok(new { changed = await _repository.SetBankChequeRefAsync(request, me > 0 ? me : null) });
+            }
+            catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.Number == 50000)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Internal Server Error", error = ex.Message });
+            }
+        }
+
         // GET: api/DayReport/Bill/T01-00000038 → the bill with its lines and payments (bill copy)
         [HttpGet("Bill/{invoiceNo}")]
         public async Task<IActionResult> Bill(string invoiceNo)

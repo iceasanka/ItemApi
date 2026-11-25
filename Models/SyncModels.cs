@@ -77,6 +77,13 @@ namespace ItemApi.Models
         [NotMapped]
         public string? TerminalCode { get; set; }
 
+        // Z search and GET ZReport/{terminalId}/{zNo}: drawer cash counted at day end (U054, null = not counted) and what should be in the drawer
+        // (opening cash + cash sales + paid in - paid out). Cash short / over = CountedCash - ExpectedCash
+        [NotMapped]
+        public decimal? CountedCash { get; set; }
+        [NotMapped]
+        public decimal? ExpectedCash { get; set; }
+
         [NotMapped]
         public List<ZReportItem>? Items { get; set; }
 
@@ -375,6 +382,14 @@ namespace ItemApi.Models
     // A day's money for the cheque Google sheet (AppDbContext.GetDayTakingsAsync): BankCash = cash to bank of every Z
     // (its Cash Management slip's cash to bank; else counted cash - opening cash; a Z not counted: cash sales + paid in
     // - paid out), Card = card sales.
+    // AppDbContext.GetZCashCountsAsync: counted / expected drawer cash of one Z
+    public class ZCashCount
+    {
+        public int ZId { get; set; }
+        public decimal? CountedCash { get; set; }
+        public decimal ExpectedCash { get; set; }
+    }
+
     public class DayTakings
     {
         public int ZCount { get; set; }

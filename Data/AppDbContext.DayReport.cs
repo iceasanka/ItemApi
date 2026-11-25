@@ -59,6 +59,17 @@ namespace ItemApi.Data
                 .ToListAsync()).FirstOrDefault()?.Changed ?? 0;
         }
 
+        // correct the reference / cheque no of one bank transfer / cheque line (U074) → 1 changed, 0 same as before
+        public async Task<int> SetBankChequeRefAsync(BankChequeRefRequest req, int locationId, int? userId) =>
+            (await Database.SqlQueryRaw<BankChequeStatusResult>(
+                "EXEC dbo.z_sp_BankChequeSetRef @InvoiceId = @InvoiceId, @LineNum = @LineNum, @RefNo = @RefNo, @UserId = @UserId, @LocationId = @LocationId",
+                new SqlParameter("@InvoiceId", req.InvoiceId),
+                new SqlParameter("@LineNum", req.LineNum),
+                new SqlParameter("@RefNo", SqlDbType.VarChar, 30) { Value = (object?)req.RefNo?.Trim() ?? DBNull.Value },
+                new SqlParameter("@UserId", SqlDbType.Int) { Value = (object?)userId ?? DBNull.Value },
+                new SqlParameter("@LocationId", locationId))
+                .ToListAsync()).FirstOrDefault()?.Changed ?? 0;
+
         // the till's lines: Z zNo (any status) + its earlier lines still pending (U060)
         public Task<List<TillBankChequeLine>> GetTillBankChequeAsync(int terminalId, int? zNo) =>
             Database.SqlQueryRaw<TillBankChequeLine>(

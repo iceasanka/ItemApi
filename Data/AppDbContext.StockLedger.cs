@@ -257,6 +257,28 @@ namespace ItemApi.Data
             return rows.FirstOrDefault() ?? new DayTakings();
         }
 
+        // Z list: counted cash (U054) and expected drawer cash = opening + cash sales + paid in - paid out, per Z.
+        // A db without the CountedCash column gives null counted cash.
+        public async Task<List<ZCashCount>> GetZCashCountsAsync(IReadOnlyCollection<int> zIds)
+        {
+            if (zIds.Count == 0) return new();
+            var has = (await Database.SqlQueryRaw<int>(
+                "SELECT CASE WHEN COL_LENGTH('dbo.z_tb_ZReport', 'CountedCash') IS NULL THEN 0 ELSE 1 END AS Value").ToListAsync())[0];
+            string counted = has == 1 ? "z.CountedCash" : "CAST(NULL AS DECIMAL(18,2))";
+            string ids = string.Join(",", zIds.Distinct());   // ints only
+            return await Database.SqlQueryRaw<ZCashCount>(
+                $"SELECT z.ZId, {counted} AS CountedCash, " +
+                "       CAST(ISNULL(m.Opening, 0) + z.CashAmount + ISNULL(m.PaidIn, 0) - ISNULL(m.PaidOut, 0) AS DECIMAL(18,2)) AS ExpectedCash " +
+                "FROM dbo.z_tb_ZReport z " +
+                "LEFT JOIN (SELECT TerminalId, ZNo, " +
+                "                  SUM(CASE WHEN Kind = 1 THEN Amount ELSE 0 END) AS Opening, " +
+                "                  SUM(CASE WHEN Kind = 2 THEN Amount ELSE 0 END) AS PaidIn, " +
+                "                  SUM(CASE WHEN Kind = 3 THEN Amount ELSE 0 END) AS PaidOut " +
+                "           FROM dbo.z_tb_CashMovement WHERE Status = 1 GROUP BY TerminalId, ZNo) m " +
+                "       ON m.TerminalId = z.TerminalId AND m.ZNo = z.ZNo " +
+                $"WHERE z.ZId IN ({ids})").ToListAsync();
+        }
+
         public async Task<ZReportResult?> ReconcileZReportAsync(int terminalId, int zNo)
         {
             var rows = await Database.SqlQueryRaw<ZReportResult>(

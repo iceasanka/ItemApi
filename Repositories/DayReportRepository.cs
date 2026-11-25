@@ -23,7 +23,7 @@ namespace ItemApi.Repositories
         {
             try
             {
-                return new DayReport
+                var report = new DayReport
                 {
                     Date = date.Date,
                     TerminalId = terminalId,
@@ -31,6 +31,12 @@ namespace ItemApi.Repositories
                     ZReports = await _context.GetDayZReportsAsync(date, _locationId, terminalId),
                     CashMovements = await _context.GetDayCashMovementsAsync(date, _locationId, terminalId)
                 };
+                // counted cash at day end (U054) of each Z
+                var counted = (await _context.GetZCashCountsAsync(report.ZReports.Select(z => z.ZId).ToList()))
+                    .ToDictionary(c => c.ZId, c => c.CountedCash);
+                foreach (var z in report.ZReports)
+                    z.CountedCash = counted.GetValueOrDefault(z.ZId);
+                return report;
             }
             catch (Exception ex)
             {
@@ -126,6 +132,20 @@ namespace ItemApi.Repositories
             try
             {
                 return await _context.SetBankChequeStatusAsync(request, _locationId, userId);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error: {ex.Message}");
+                throw;
+            }
+        }
+
+        // correct a bank transfer / cheque reference (U074)
+        public async Task<int> SetBankChequeRefAsync(BankChequeRefRequest request, int? userId)
+        {
+            try
+            {
+                return await _context.SetBankChequeRefAsync(request, _locationId, userId);
             }
             catch (Exception ex)
             {

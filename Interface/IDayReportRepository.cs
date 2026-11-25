@@ -12,5 +12,6 @@ namespace ItemApi.Interface
         Task<DayAbandoned> GetAbandonedAsync(DateTime date, int? terminalId);
         Task<List<DayBankChequeRow>> GetBankChequeAsync(DateTime from, DateTime to, int? terminalId, int? payType, int? status);
         Task<int> SetBankChequeStatusAsync(BankChequeStatusRequest request, int? userId);
+        Task<int> SetBankChequeRefAsync(BankChequeRefRequest request, int? userId);
     }
 }

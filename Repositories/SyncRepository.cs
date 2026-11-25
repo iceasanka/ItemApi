@@ -266,6 +266,10 @@ namespace ItemApi.Repositories
                                  }).ToListAsync();
 
                 z.Details = await _context.GetZReportDetailsAsync(terminalId, zNo, _locationId);
+
+                // counted cash at day end (U054) and what should be in the drawer
+                var cash = (await _context.GetZCashCountsAsync(new[] { z.ZId })).FirstOrDefault();
+                if (cash != null) { z.CountedCash = cash.CountedCash; z.ExpectedCash = cash.ExpectedCash; }
                 return z;
             }
             catch (Exception ex)
@@ -301,7 +305,13 @@ namespace ItemApi.Repositories
                                   .Take(500)
                                   .ToListAsync();
 
-                return list.Select(x => { x.z.TerminalCode = x.Code; return x.z; }).ToList();
+                var cash = (await _context.GetZCashCountsAsync(list.Select(x => x.z.ZId).ToList())).ToDictionary(c => c.ZId);
+                return list.Select(x =>
+                {
+                    x.z.TerminalCode = x.Code;
+                    if (cash.TryGetValue(x.z.ZId, out var c)) { x.z.CountedCash = c.CountedCash; x.z.ExpectedCash = c.ExpectedCash; }
+                    return x.z;
+                }).ToList();
             }
             catch (Exception ex)
             {

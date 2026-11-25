@@ -35,6 +35,33 @@ namespace ItemApi.Data
                 new SqlParameter("@LocationId", locationId),
                 new SqlParameter("@Inactive", inactive)).ToListAsync();
 
+        // Discount items (DBScript U075)
+        public Task<List<RptDiscountItemRow>> GetRptDiscountItemsAsync(DateTime from, DateTime to, int locationId = 1) =>
+            Database.SqlQueryRaw<RptDiscountItemRow>(
+                "EXEC dbo.z_sp_RptDiscountItems @FromDate = @FromDate, @ToDate = @ToDate, @LocationId = @LocationId",
+                new SqlParameter("@FromDate", SqlDbType.Date) { Value = from.Date },
+                new SqlParameter("@ToDate", SqlDbType.Date) { Value = to.Date },
+                new SqlParameter("@LocationId", locationId)).ToListAsync();
+
+        public Task<List<RptDiscountLineRow>> GetRptDiscountLinesAsync(DateTime from, DateTime to, int itemId, int locationId = 1) =>
+            Database.SqlQueryRaw<RptDiscountLineRow>(
+                "EXEC dbo.z_sp_RptDiscountLines @FromDate = @FromDate, @ToDate = @ToDate, @ItemId = @ItemId, @LocationId = @LocationId",
+                new SqlParameter("@FromDate", SqlDbType.Date) { Value = from.Date },
+                new SqlParameter("@ToDate", SqlDbType.Date) { Value = to.Date },
+                new SqlParameter("@ItemId", itemId),
+                new SqlParameter("@LocationId", locationId)).ToListAsync();
+
+        public Task<List<RptDiscountSetupRow>> GetRptDiscountSetupAsync(int locationId = 1) =>
+            Database.SqlQueryRaw<RptDiscountSetupRow>("EXEC dbo.z_sp_RptDiscountSetup @LocationId = @LocationId",
+                new SqlParameter("@LocationId", locationId)).ToListAsync();
+
+        // clears DiscountPercent / DiscountAmount of the items; returns the ones changed with their old values
+        public Task<List<RptDiscountCleared>> ClearItemDiscountsAsync(IEnumerable<int> ids, int locationId = 1) =>
+            Database.SqlQueryRaw<RptDiscountCleared>(
+                "EXEC dbo.z_sp_RptDiscountClear @Ids = @Ids, @LocationId = @LocationId",
+                Tvp("@Ids", "dbo.z_tt_IdList", IdTable(ids)),
+                new SqlParameter("@LocationId", locationId)).ToListAsync();
+
         // returns how many items changed
         public async Task<int> SetItemsActiveAsync(IEnumerable<int> ids, bool active, int locationId = 1) =>
             (await Database.SqlQueryRaw<RptChanged>(

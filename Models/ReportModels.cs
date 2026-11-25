@@ -80,6 +80,90 @@ namespace ItemApi.Models
         public int Status { get; set; }
     }
 
+    // Discount items (DBScript U075 / 46_BackOffice_DiscountReport.sql)
+
+    // z_sp_RptDiscountItems: one item sold with a discount in the range (discounted lines only; AllQty = every line)
+    public class RptDiscountItemRow
+    {
+        public int ItemId { get; set; }            // 0 = other items typed on the till
+        public string? RefCode { get; set; }
+        public string? Barcode { get; set; }
+        public string? Descrip { get; set; }
+        public string? CatName { get; set; }
+        public string? SuppName { get; set; }
+        public int Bills { get; set; }
+        public decimal Qty { get; set; }
+        public decimal AllQty { get; set; }
+        public decimal Gross { get; set; }
+        public decimal ItemDisc { get; set; }
+        public decimal BillDisc { get; set; }     // the item's share of bill discounts
+        public decimal TotalDisc { get; set; }
+        public decimal Net { get; set; }
+        public decimal? Cost { get; set; }        // NULL = a line's cost is not known
+        public decimal? Profit { get; set; }
+        public decimal DiscPct { get; set; }
+        public decimal? RetailPrice { get; set; }
+        public decimal? SetPercent { get; set; }  // discount set on the item now
+        public decimal? SetAmount { get; set; }
+        public bool NoDiscount { get; set; }
+    }
+
+    // z_sp_RptDiscountLines: the discounted lines of one item
+    public class RptDiscountLineRow
+    {
+        public int InvoiceId { get; set; }
+        public string InvoiceNo { get; set; } = "";
+        public int InvType { get; set; }          // 2 = refund (amounts negative)
+        public DateTime InvDate { get; set; }
+        public string? TerminalCode { get; set; }
+        public string? CashierId { get; set; }
+        public string? CashierName { get; set; }
+        public int LineNum { get; set; }
+        public string? LineDescrip { get; set; }
+        public decimal Qty { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal Gross { get; set; }
+        public decimal ItemDisc { get; set; }
+        public decimal BillDisc { get; set; }
+        public decimal Net { get; set; }
+        public decimal BillDiscount { get; set; }
+        public decimal BillNet { get; set; }
+    }
+
+    // z_sp_RptDiscountSetup: active item with a discount set now (or marked no discount)
+    public class RptDiscountSetupRow
+    {
+        public int ItemId { get; set; }
+        public string? RefCode { get; set; }
+        public string? Barcode { get; set; }
+        public string? Descrip { get; set; }
+        public string? CatName { get; set; }
+        public string? SuppName { get; set; }
+        public decimal RetailPrice { get; set; }
+        public decimal? CostPrice { get; set; }
+        public decimal? SetPercent { get; set; }
+        public decimal? SetAmount { get; set; }
+        public bool NoDiscount { get; set; }
+        public decimal UnitDisc { get; set; }     // what the till takes off one unit
+        public decimal PriceAfter { get; set; }
+        public bool Capped { get; set; }          // the set discount is more than price - cost (or no cost) - the till gives less
+        public decimal StockQty { get; set; }
+        public DateTime? Edited { get; set; }
+    }
+
+    // z_sp_RptDiscountClear: an item whose discount was cleared, with the old values
+    public class RptDiscountCleared
+    {
+        public int ItemId { get; set; }
+        public decimal? OldPercent { get; set; }
+        public decimal? OldAmount { get; set; }
+    }
+
+    public class RptIdsRequest
+    {
+        public List<int> Ids { get; set; } = new();
+    }
+
     public class RptItemStatusRequest
     {
         public List<int> Ids { get; set; } = new();

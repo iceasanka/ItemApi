@@ -11,6 +11,7 @@ namespace ItemApi.Controllers
     //   Period report  - sales, profit, payments taken, paid in / out, supplier bills and payments, stock in, per day / month
     //   Payments       - every cheque, supplier transfer, till paid in / out and bank / cheque bill in a date range
     //   Stock health   - minus / zero stock, items not sold or not moved for a long time; deactivate unused items
+    //   Discount items - items sold with an item / bill discount, their bills, and the discounts set on items (U075)
     [Route("api/[controller]")]
     [ApiController]
     public class ReportController : ControllerBase
@@ -52,6 +53,52 @@ namespace ItemApi.Controllers
         public Task<IActionResult> StockHealth([FromQuery] bool inactive = false) =>
             Run(async () => Ok(await _db.GetRptStockHealthAsync(inactive)));
 
+        // GET api/Report/DiscountItems?from=2026-11-01&to=2026-11-30 - items sold with an item / bill discount (U075)
+        [HttpGet("DiscountItems")]
+        public Task<IActionResult> DiscountItems([FromQuery] DateTime from, [FromQuery] DateTime to) =>
+            Run(async () =>
+            {
+                if (to < from)
+                    return BadRequest(new { message = "The To date is before the From date." });
+                if ((to - from).TotalDays > 3700)
+                    return BadRequest(new { message = "Up to 10 years." });
+                return Ok(await _db.GetRptDiscountItemsAsync(from, to));
+            }, "U075");
+
+        // GET api/Report/DiscountLines?from=..&to=..&itemId=123 - the discounted bill lines of one item (0 = other items)
+        [HttpGet("DiscountLines")]
+        public Task<IActionResult> DiscountLines([FromQuery] DateTime from, [FromQuery] DateTime to, [FromQuery] int itemId) =>
+            Run(async () =>
+            {
+                if (to < from)
+                    return BadRequest(new { message = "The To date is before the From date." });
+                if (itemId < 0)
+                    return BadRequest(new { message = "Pick an item." });
+                return Ok(await _db.GetRptDiscountLinesAsync(from, to, itemId));
+            }, "U075");
+
+        // GET api/Report/DiscountSetup - active items with a discount set now (or marked no discount)
+        [HttpGet("DiscountSetup")]
+        public Task<IActionResult> DiscountSetup() =>
+            Run(async () => Ok(await _db.GetRptDiscountSetupAsync()), "U075");
+
+        // POST api/Report/DiscountClear { ids: [1, 2] } - clears the discount % / Rs set on the items (as clearing them in
+        // Item Entry); the tills take it at their next item sync. The old values go to the log.
+        [HttpPost("DiscountClear")]
+        public Task<IActionResult> DiscountClear([FromBody] RptIdsRequest req) =>
+            Run(async () =>
+            {
+                var ids = req?.Ids?.Where(i => i > 0).Distinct().ToList() ?? new();
+                if (ids.Count == 0)
+                    return BadRequest(new { message = "Tick the items first." });
+                if (ids.Count > 5000)
+                    return BadRequest(new { message = "Up to 5000 items at a time." });
+                var done = await _db.ClearItemDiscountsAsync(ids);
+                Serilog.Log.Information("{Who} cleared the discount of {N} items (ItemId:old%/oldRs): {Old}", Who(), done.Count,
+                    string.Join(",", done.Select(d => $"{d.ItemId}:{d.OldPercent}/{d.OldAmount}")));
+                return Ok(new { changed = done.Count, message = $"Discount cleared on {done.Count} item(s)." });
+            }, "U075");
+
         // POST api/Report/ItemStatus { ids: [1, 2], active: false } - Admin only. Deactivated items stop selling on the
         // tills at their next item sync; nothing is deleted (bills / GRNs keep them). Refused for an item with stock.
         [Authorize(Roles = UserRoles.AdminName)]
@@ -70,7 +117,7 @@ namespace ItemApi.Controllers
                 return Ok(new { changed = n, message = $"{n} item(s) {(req.Active ? "activated" : "deactivated")}." });
             });
 
-        private async Task<IActionResult> Run(Func<Task<IActionResult>> work)
+        private async Task<IActionResult> Run(Func<Task<IActionResult>> work, string update = "U057")
         {
             try
             {
@@ -82,7 +129,7 @@ namespace ItemApi.Controllers
             }
             catch (SqlException ex) when (ex.Number == 2812)
             {
-                return BadRequest(new { message = "Run the back office update U057 first (reports)." });
+                return BadRequest(new { message = $"Run the back office update {update} first (reports)." });
             }
             catch (Exception ex)
             {
